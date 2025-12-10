@@ -102,12 +102,14 @@ impl SharedWebviewState {
     }
 
     fn respond_to_request(&mut self, response: IPCMessage) {
+        println!("Responding to request with response: {:?}", response);
         if let OngoingRequestState::Pending(responder) = self.ongoing_request.take() {
             if let IPCMessage::Evaluate { .. } = response {
                 self.ongoing_request = OngoingRequestState::Querying;
             } else {
                 self.ongoing_request = OngoingRequestState::Completed;
             }
+            println!("Responding to ongoing request with response: {:?}", response);
             responder.respond(
                 wry::http::Response::builder()
                     .status(200)
@@ -225,12 +227,12 @@ impl ApplicationHandler<IPCMessage> for State {
     }
 
     fn user_event(&mut self, _: &ActiveEventLoop, event: IPCMessage) {
-        let shared = self.shared.read().unwrap();
+        let mut shared = self.shared.write().unwrap();
         println!("Received IPCMessage: {:?}", event);
         println!("Ongoing request state: {:?}", shared.ongoing_request);
         match &shared.ongoing_request {
             OngoingRequestState::Pending(_) => {
-                self.shared.write().unwrap().respond_to_request(event);
+                shared.respond_to_request(event);
                 return;
             }
             _ => {}
