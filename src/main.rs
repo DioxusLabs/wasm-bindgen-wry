@@ -2,6 +2,7 @@ use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use slotmap::{DefaultKey, Key, KeyData, SecondaryMap, SlotMap};
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, OnceLock, RwLock, mpsc};
@@ -74,6 +75,16 @@ enum OngoingRequestState {
     Completed,
 }
 
+impl Debug for OngoingRequestState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OngoingRequestState::Pending(_) => write!(f, "Pending"),
+            OngoingRequestState::Querying => write!(f, "Querying"),
+            OngoingRequestState::Completed => write!(f, "Completed"),
+        }
+    }
+}
+
 impl OngoingRequestState {
     fn take(&mut self) -> OngoingRequestState {
         std::mem::replace(self, OngoingRequestState::Completed)
@@ -86,19 +97,6 @@ struct SharedWebviewState {
 }
 
 impl SharedWebviewState {
-    fn finish_pending_request(&mut self, response: Vec<u8>) {
-        println!("response as string: {}", String::from_utf8_lossy(&response));
-        match serde_json::from_slice::<IPCMessage>(&response) {
-            Ok(msg) => {
-                EVENT_LOOP_PROXY
-                    .get()
-                    .expect("Event loop proxy not set")
-                    .queue_rust_call(msg);
-            }
-            Err(e) => println!("Failed to decode IPCMessage: {}", e),
-        }
-    }
-
     fn push_ongoing_request(&mut self, ongoing: OngoingRustCall) {
         self.ongoing_request = OngoingRequestState::Pending(ongoing.responder);
     }
@@ -165,14 +163,24 @@ impl ApplicationHandler<IPCMessage> for State {
                     return;
                 };
                 if real_path == "handler" {
-                    shared.finish_pending_request(data);
-                    return;
-                } else if real_path == "callback" {
-                    EVENT_LOOP_PROXY
-                        .get()
-                        .expect("Event loop proxy not set")
-                        .queue_rust_call(serde_json::from_slice(&data).unwrap());
-                    shared.push_ongoing_request(OngoingRustCall { responder });
+                    match serde_json::from_slice::<IPCMessage>(&data) {
+                        Ok(msg) => {
+                            match &msg {
+                                IPCMessage::Evaluate { .. } => {
+                                    shared.push_ongoing_request(OngoingRustCall { responder });
+                                }
+                                _ => {
+                                    shared.ongoing_request = OngoingRequestState::Completed;
+                                    responder.respond(blank_response());
+                                }
+                            }
+                            EVENT_LOOP_PROXY
+                                .get()
+                                .expect("Event loop proxy not set")
+                                .queue_rust_call(msg);
+                        }
+                        Err(e) => println!("Failed to decode IPCMessage: {}", e),
+                    }
                     return;
                 }
 
@@ -218,6 +226,8 @@ impl ApplicationHandler<IPCMessage> for State {
 
     fn user_event(&mut self, _: &ActiveEventLoop, event: IPCMessage) {
         let shared = self.shared.read().unwrap();
+        println!("Received IPCMessage: {:?}", event);
+        println!("Ongoing request state: {:?}", shared.ongoing_request);
         match &shared.ongoing_request {
             OngoingRequestState::Pending(_) => {
                 self.shared.write().unwrap().respond_to_request(event);
@@ -327,8 +337,11 @@ thread_local! {
 }
 
 fn encode_in_thread_local<T: RustEncode<P>, P>(value: T) -> serde_json::Value {
+    println!("Encoding value in Rust...");
     THREAD_LOCAL_ENCODER.with(|tle| {
+        println!("Encoding value in thread local...");
         let mut encoder = tle.encoder.write().unwrap();
+        println!("Got encoder lock...");
         encoder.encode(value)
     })
 }
@@ -381,6 +394,7 @@ fn main() -> wry::Result<()> {
 fn app() {
     let add_function = ADD_NUMBERS;
     let assert_sum_works = move || {
+        println!("calling add_function from JS...");
         let sum: i32 = add_function.call(5, 7);
         println!("Sum from JS: {}", sum);
         assert_eq!(sum, 12);
@@ -392,12 +406,13 @@ fn app() {
         println!("Button clicked!");
         assert_sum_works();
     });
+    wait_for_js_event::<()>();
 }
 
 struct Encoder {
     functions: SlotMap<
         DefaultKey,
-        Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync>,
+        Option<Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync>>,
     >,
 }
 
@@ -413,7 +428,7 @@ impl Encoder {
     }
 
     fn encode_function<T: IntoRustCallable<P>, P>(&mut self, function: T) -> serde_json::Value {
-        let key = self.functions.insert(function.into());
+        let key = self.functions.insert(Some(function.into()));
         serde_json::json!({
             "type": "function",
             "id": key.data().as_ffi(),
@@ -551,6 +566,7 @@ fn run_js_sync<T: DeserializeOwned>(
     fn_id: u64,
     args: Vec<serde_json::Value>,
 ) -> T {
+    println!("Sending JS evaluate request...");
     _ = proxy.send_event(IPCMessage::Evaluate { fn_id, args });
 
     wait_for_js_event()
@@ -568,12 +584,19 @@ fn wait_for_js_event<T: DeserializeOwned>() -> T {
                     return serde_json::from_value(response).unwrap();
                 }
                 IPCMessage::Evaluate { fn_id, args } => {
-                    let mut encoder = tle.encoder.write().unwrap();
-                    if let Some(function) =
-                        encoder.functions.get_mut(KeyData::from_ffi(fn_id).into())
+                    let key = KeyData::from_ffi(fn_id).into();
+                    let function = {
+                        let mut encoder = tle.encoder.write().unwrap();
+                        encoder.functions.get_mut(key).map(|f| f.take().expect("function cannot be called recursively"))
+                    };
+                    if let Some(mut function) =
+                        function
                     {
                         let result = function(args);
                         env.js_response(IPCMessage::Respond { response: result });
+                        // Insert it back
+                        let mut encoder = tle.encoder.write().unwrap();
+                        encoder.functions.get_mut(key).unwrap().replace(function);
                     }
                 }
                 IPCMessage::Shutdown => {
@@ -691,6 +714,9 @@ fn root_response() -> wry::http::Response<Vec<u8>> {
         }
 
         function handleResponse(response) {
+            if (!response) {
+                return;
+            }
             console.log("Handling response:", response);
             if (response.Respond) {
                 return response.Respond.response;
@@ -708,7 +734,7 @@ fn root_response() -> wry::http::Response<Vec<u8>> {
             }
 
             call(...args) {
-                const response = sync_request("wry://callback", {
+                const response = sync_request("wry://handler", {
                     Evaluate: {
                         fn_id: this.code,
                         args: args
