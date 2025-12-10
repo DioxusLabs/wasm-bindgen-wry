@@ -394,7 +394,8 @@ fn main() -> wry::Result<()> {
 }
 
 fn app() {
-    let add_function = ADD_NUMBERS;
+    let add_function = ADD_NUMBERS_JS;
+    let set_text_content = SET_TEXT_CONTENT;
     let assert_sum_works = move || {
         println!("calling add_function from JS...");
         let sum: i32 = add_function.call(5, 7);
@@ -404,9 +405,13 @@ fn app() {
     assert_sum_works();
     println!("Setting up event listener...");
     let add_event_listener: JSFunction<fn(_, _)> = JSFunction::new(3);
+    let mut count = 0;
     add_event_listener.call("click".to_string(), move || {
         println!("Button clicked!");
         assert_sum_works();
+        count += 1;
+        let new_text = format!("Button clicked {} times", count);
+        set_text_content.call("click-count".to_string(), new_text);
     });
     wait_for_js_event::<()>();
 }
@@ -522,8 +527,9 @@ where
 
 const CONSOLE_LOG: JSFunction<fn(String)> = JSFunction::new(0);
 const ALERT: JSFunction<fn(String)> = JSFunction::new(1);
-const ADD_NUMBERS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
+const ADD_NUMBERS_JS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
 const ADD_EVENT_LISTENER: JSFunction<fn(String, fn())> = JSFunction::new(3);
+const SET_TEXT_CONTENT: JSFunction<fn(String, String)> = JSFunction::new(4);
 
 struct JSFunction<T> {
     id: u64,
@@ -618,7 +624,7 @@ fn root_response() -> wry::http::Response<Vec<u8>> {
     <title>Wry Test</title>
 </head>
 <body>
-    <h1>Wry Custom Protocol Test</h1>
+    <h1 id="click-count">Button not clicked yet</h1>
 
     <script>
         // This function sends the event to the virtualdom and then waits for the virtualdom to process it
@@ -675,6 +681,16 @@ fn root_response() -> wry::http::Response<Vec<u8>> {
                         document.addEventListener(event_name, function(e) {
                             callback.call();
                         });
+                    };
+                    break;
+                case 4:
+                    f = function(element_id, text_content) {
+                        const element = document.getElementById(element_id);
+                        if (element) {
+                            element.textContent = text_content;
+                        } else {
+                            console.warn("Element with ID " + element_id + " not found.");
+                        }
                     };
                     break;
                 default:
