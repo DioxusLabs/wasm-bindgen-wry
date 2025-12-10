@@ -1,7 +1,7 @@
 use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use slotmap::{DefaultKey, Key, KeyData, SecondaryMap, SlotMap};
+use slotmap::{DefaultKey, Key, KeyData, SlotMap};
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::mpsc::{Receiver, Sender};
@@ -27,28 +27,6 @@ enum IPCMessage {
         response: serde_json::Value,
     },
     Shutdown,
-}
-
-struct Oneshot<T> {
-    lock: Arc<OnceLock<T>>,
-}
-
-impl<T> Oneshot<T> {
-    fn new() -> Self {
-        Self {
-            lock: Arc::new(OnceLock::new()),
-        }
-    }
-
-    fn set(&self, value: T) {
-        self.lock
-            .set(value)
-            .unwrap_or_else(|_| panic!("Oneshot value already set"));
-    }
-
-    fn take(&self) -> &T {
-        self.lock.wait()
-    }
 }
 
 struct OngoingRustCall {
