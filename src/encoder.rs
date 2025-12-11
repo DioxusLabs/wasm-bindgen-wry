@@ -1,5 +1,5 @@
 use serde::de::DeserializeOwned;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use slotmap::{DefaultKey, Key, KeyData, SlotMap};
 use std::marker::PhantomData;
 use std::sync::mpsc::Receiver;
@@ -8,6 +8,79 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::DomEnv;
 use crate::ipc::IPCMessage;
+
+struct EncoderBuffer {
+    u8_buf: Vec<u8>,
+    u16_buf: Vec<u16>,
+    u32_buf: Vec<u32>,
+    str_buf: Vec<u8>,
+}
+
+impl EncoderBuffer {
+    pub fn new() -> Self {
+        Self {
+            u8_buf: Vec::new(),
+            u16_buf: Vec::new(),
+            u32_buf: Vec::new(),
+            str_buf: Vec::new(),
+        }
+    }
+
+    fn to_bytes(&self) -> impl Iterator<Item = u8> + '_ {
+        self.u32_buf
+            .iter()
+            .flat_map(|&u| u.to_le_bytes())
+            .chain(self.u16_buf.iter().flat_map(|&u| u.to_le_bytes()))
+            .chain(self.u8_buf.iter().cloned())
+            .chain(self.str_buf.iter().cloned())
+    }
+
+    pub fn clear(&mut self) {
+        self.u8_buf.clear();
+        self.u16_buf.clear();
+        self.u32_buf.clear();
+        self.str_buf.clear();
+    }
+
+    pub fn push_u8(&mut self, value: u8) {
+        self.u8_buf.push(value);
+    }
+
+    pub fn push_u16(&mut self, value: u16) {
+        self.u16_buf.push(value);
+    }
+
+    pub fn push_u32(&mut self, value: u32) {
+        self.u32_buf.push(value);
+    }
+
+    pub fn push_str(&mut self, value: &str) {
+        self.str_buf.extend_from_slice(value.as_bytes());
+    }
+
+    pub fn push_op(&mut self, op: u32) {
+        self.push_u32(op);
+    }
+}
+
+/// A reference to a JavaScript heap object, identified by a unique ID.
+/// This allows Rust to hold references to arbitrary JS objects stored in the JS heap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct JSHeapRef {
+    id: u64,
+}
+
+impl JSHeapRef {
+    /// Create a new JSHeapRef from a raw ID (typically received from JS)
+    pub fn from_id(id: u64) -> Self {
+        Self { id }
+    }
+
+    /// Get the raw ID of this heap reference
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
 
 pub(crate) struct Encoder {
     functions: SlotMap<
@@ -55,6 +128,27 @@ impl RustEncode for () {
 impl RustEncode for i32 {
     fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
         serde_json::Value::Number(serde_json::Number::from(self))
+    }
+}
+
+impl RustEncode for serde_json::Value {
+    fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
+        self
+    }
+}
+
+impl RustEncode for u64 {
+    fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
+        serde_json::Value::Number(serde_json::Number::from(self))
+    }
+}
+
+impl RustEncode for JSHeapRef {
+    fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
+        serde_json::json!({
+            "type": "js_heap_ref",
+            "id": self.id,
+        })
     }
 }
 
@@ -118,7 +212,7 @@ where
     }
 }
 
-pub(crate) struct JSFunction<T> {
+pub struct JSFunction<T> {
     id: u64,
     function: PhantomData<T>,
 }
@@ -129,6 +223,15 @@ impl<T> JSFunction<T> {
             id,
             function: PhantomData,
         }
+    }
+}
+
+impl<R> JSFunction<fn() -> R> {
+    pub fn call(&self, _: ()) -> R
+    where
+        R: DeserializeOwned,
+    {
+        run_js_sync(&get_dom().proxy, self.id, vec![])
     }
 }
 
@@ -153,6 +256,25 @@ impl<T1, T2, R> JSFunction<fn(T1, T2) -> R> {
         let arg1_json = encode_in_thread_local(arg1);
         let arg2_json = encode_in_thread_local(arg2);
         run_js_sync(&get_dom().proxy, self.id, vec![arg1_json, arg2_json])
+    }
+}
+
+impl<T1, T2, T3, R> JSFunction<fn(T1, T2, T3) -> R> {
+    pub fn call<P1, P2, P3>(&self, arg1: T1, arg2: T2, arg3: T3) -> R
+    where
+        T1: RustEncode<P1>,
+        T2: RustEncode<P2>,
+        T3: RustEncode<P3>,
+        R: DeserializeOwned,
+    {
+        let arg1_json = encode_in_thread_local(arg1);
+        let arg2_json = encode_in_thread_local(arg2);
+        let arg3_json = encode_in_thread_local(arg3);
+        run_js_sync(
+            &get_dom().proxy,
+            self.id,
+            vec![arg1_json, arg2_json, arg3_json],
+        )
     }
 }
 fn run_js_sync<T: DeserializeOwned>(

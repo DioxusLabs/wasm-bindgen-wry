@@ -3,7 +3,7 @@ use std::sync::RwLock;
 use winit::event_loop::EventLoopProxy;
 use winit::event_loop::EventLoop;
 
-use crate::encoder::{JSFunction, set_event_loop_proxy, wait_for_js_event};
+use crate::encoder::{JSFunction, JSHeapRef, set_event_loop_proxy, wait_for_js_event};
 use crate::ipc::IPCMessage;
 use crate::webview::State;
 
@@ -88,26 +88,104 @@ const ADD_NUMBERS_JS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
 const ADD_EVENT_LISTENER: JSFunction<fn(String, fn())> = JSFunction::new(3);
 const SET_TEXT_CONTENT: JSFunction<fn(String, String)> = JSFunction::new(4);
 
+// JSHeap operations - these allow Rust to work with arbitrary JS objects
+const HEAP_INSERT: JSFunction<fn(serde_json::Value) -> JSHeapRef> = JSFunction::new(5);
+const HEAP_GET: JSFunction<fn(JSHeapRef) -> serde_json::Value> = JSFunction::new(6);
+const HEAP_REMOVE: JSFunction<fn(u64) -> serde_json::Value> = JSFunction::new(7);
+const HEAP_HAS: JSFunction<fn(u64) -> bool> = JSFunction::new(8);
+
+// DOM operations using heap refs
+const GET_BODY: JSFunction<fn() -> JSHeapRef> = JSFunction::new(13);
+const QUERY_SELECTOR: JSFunction<fn(String) -> Option<JSHeapRef>> = JSFunction::new(14);
+const CREATE_ELEMENT: JSFunction<fn(String) -> JSHeapRef> = JSFunction::new(15);
+const APPEND_CHILD: JSFunction<fn(JSHeapRef, JSHeapRef)> = JSFunction::new(16);
+const SET_ATTRIBUTE: JSFunction<fn(JSHeapRef, String, String)> = JSFunction::new(17);
+const SET_TEXT: JSFunction<fn(JSHeapRef, String)> = JSFunction::new(18);
+
 fn app() {
-    let add_function = ADD_NUMBERS_JS;
-    let set_text_content = SET_TEXT_CONTENT;
-    let assert_sum_works = move || {
-        println!("calling add_function from JS...");
-        let sum: i32 = add_function.call(5, 7);
-        println!("Sum from JS: {}", sum);
-        assert_eq!(sum, 12);
-    };
-    assert_sum_works();
-    println!("Setting up event listener...");
+    println!("=== JSHeap Demo ===\n");
+
+    // Demo 1: Basic heap operations
+    println!("1. Testing basic heap insert/get...");
+    let obj = serde_json::json!({"name": "Rust", "version": 2024});
+    let heap_ref: JSHeapRef = HEAP_INSERT.call(obj);
+    println!("   Inserted object, got heap ref with id: {}", heap_ref.id());
+
+    let retrieved: serde_json::Value = HEAP_GET.call(heap_ref);
+    println!("   Retrieved from heap: {}", retrieved);
+
+    // Demo 2: Check if heap ref exists
+    println!("\n2. Testing heap_has...");
+    let exists: bool = HEAP_HAS.call(heap_ref.id());
+    println!("   Heap ref {} exists: {}", heap_ref.id(), exists);
+
+    // Demo 3: DOM manipulation using heap refs
+    println!("\n3. Creating DOM elements using heap refs...");
+
+    // Get document body
+    let body: JSHeapRef = GET_BODY.call(());
+    println!("   Got body element (heap id: {})", body.id());
+
+    // Create a container div
+    let container: JSHeapRef = CREATE_ELEMENT.call("div".to_string());
+    SET_ATTRIBUTE.call(container, "id".to_string(), "heap-demo".to_string());
+    SET_ATTRIBUTE.call(container, "style".to_string(),
+        "margin: 20px; padding: 15px; border: 2px solid #4CAF50; border-radius: 8px; background: #f9f9f9;".to_string());
+
+    // Create a heading
+    let heading: JSHeapRef = CREATE_ELEMENT.call("h2".to_string());
+    SET_TEXT.call(heading, "JSHeap Demo".to_string());
+    SET_ATTRIBUTE.call(heading, "style".to_string(), "color: #333; margin-top: 0;".to_string());
+    APPEND_CHILD.call(container, heading);
+
+    // Create info paragraph
+    let info: JSHeapRef = CREATE_ELEMENT.call("p".to_string());
+    SET_TEXT.call(info, format!("Heap ref ID for this container: {}", container.id()));
+    APPEND_CHILD.call(container, info);
+
+    // Create a counter display
+    let counter_display: JSHeapRef = CREATE_ELEMENT.call("p".to_string());
+    SET_ATTRIBUTE.call(counter_display, "id".to_string(), "heap-counter".to_string());
+    SET_ATTRIBUTE.call(counter_display, "style".to_string(),
+        "font-size: 24px; font-weight: bold; color: #2196F3;".to_string());
+    SET_TEXT.call(counter_display, "Counter: 0".to_string());
+    APPEND_CHILD.call(container, counter_display);
+
+    // Create a button
+    let button: JSHeapRef = CREATE_ELEMENT.call("button".to_string());
+    SET_TEXT.call(button, "Click me (heap-managed)".to_string());
+    SET_ATTRIBUTE.call(button, "id".to_string(), "heap-button".to_string());
+    SET_ATTRIBUTE.call(button, "style".to_string(),
+        "padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;".to_string());
+    APPEND_CHILD.call(container, button);
+
+    // Append container to body
+    APPEND_CHILD.call(body, container);
+    println!("   Created demo UI with heap-managed elements");
+
+    // Demo 4: Event handling with heap refs
+    println!("\n4. Setting up click handler that updates heap-managed element...");
     let add_event_listener: JSFunction<fn(_, _)> = JSFunction::new(3);
     let mut count = 0;
+
+    // Store the counter display ref for use in the closure
+    let counter_ref = counter_display;
+
     add_event_listener.call("click".to_string(), move || {
-        println!("Button clicked!");
-        assert_sum_works();
         count += 1;
-        let new_text = format!("Button clicked {} times", count);
-        set_text_content.call("click-count".to_string(), new_text);
+        println!("   Button clicked! Count: {}", count);
+
+        // Update the counter display using the heap ref
+        SET_TEXT.call(counter_ref, format!("Counter: {}", count));
+
+        // Also update the original click-count element
+        SET_TEXT_CONTENT.call("click-count".to_string(), format!("Total clicks: {}", count));
+
         true
     });
+
+    println!("\n=== Demo ready! Click the button to interact ===\n");
+
+    // Keep running to handle events
     wait_for_js_event::<()>();
 }
