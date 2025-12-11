@@ -118,7 +118,7 @@ impl ApplicationHandler<IPCMessage> for State {
                 args: impl Iterator<Item = serde_json::Value>,
             ) -> String {
                 let mut call = String::new();
-                call.push_str("evaluate_from_rust(");
+                call.push_str("window.evaluate_from_rust(");
                 call.push_str(&function_id.to_string());
                 call.push_str(", [");
                 for (i, arg) in args.enumerate() {

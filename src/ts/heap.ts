@@ -1,9 +1,47 @@
+// Type definitions
+type SyncRequestContents = RespondPayload | EvaluatePayload;
+
+interface RespondPayload {
+  Respond: {
+    response: unknown;
+  };
+}
+
+interface EvaluatePayload {
+  Evaluate: {
+    fn_id: number;
+    args: SerializedArg[];
+  };
+}
+
+interface ResponseFromRust {
+  Respond?: {
+    response: unknown;
+  };
+  Evaluate?: {
+    fn_id: number;
+    args: SerializedArg[];
+  };
+}
+
+type SerializedArg =
+  | string
+  | number
+  | SerializedArg[]
+  | SerializedFunction
+  | { [key: string]: SerializedArg };
+
+interface SerializedFunction {
+  type: "function";
+  id: number;
+}
+
 // This function sends the event to the virtualdom and then waits for the virtualdom to process it
 //
 // However, it's not really suitable for liveview, because it's synchronous and will block the main thread
 // We should definitely consider using a websocket if we want to block... or just not block on liveview
 // Liveview is a little bit of a tricky beast
-function sync_request(endpoint, contents) {
+function sync_request(endpoint: string, contents: SyncRequestContents): ResponseFromRust | null {
   // Handle the event on the virtualdom and then process whatever its output was
   const xhr = new XMLHttpRequest();
 
@@ -21,22 +59,22 @@ function sync_request(endpoint, contents) {
   const json_string = JSON.stringify(contents);
   console.log("Sending request to Rust:", json_string);
   const contents_bytes = new TextEncoder().encode(json_string);
-  const contents_base64 = btoa(String.fromCharCode.apply(null, contents_bytes));
+  const contents_base64 = btoa(String.fromCharCode.apply(null, contents_bytes as unknown as number[]));
   xhr.setRequestHeader("dioxus-data", contents_base64);
   xhr.send();
 
   const response_text = xhr.responseText;
   console.log("Received response from Rust:", response_text);
   try {
-    return JSON.parse(response_text);
+    return JSON.parse(response_text) as ResponseFromRust;
   } catch (e) {
     console.error("Failed to parse response JSON:", e);
     return null;
   }
 }
 
-function run_code(code, args) {
-  let f;
+function run_code(code: number, args: unknown[]): unknown {
+  let f: (...args: unknown[]) => unknown;
   switch (code) {
     case 0:
       f = console.log;
@@ -45,13 +83,13 @@ function run_code(code, args) {
       f = alert;
       break;
     case 2:
-      f = function (a, b) {
+      f = function (a: unknown, b: unknown) {
         return a + b;
       };
       break;
     case 3:
-      f = function (event_name, callback) {
-        document.addEventListener(event_name, function (e) {
+      f = function (event_name: string, callback: RustFunction): void {
+        document.addEventListener(event_name, function (e: Event): void {
           if (callback.call()) {
             e.preventDefault();
             console.log(
@@ -62,7 +100,7 @@ function run_code(code, args) {
       };
       break;
     case 4:
-      f = function (element_id, text_content) {
+      f = function (element_id: string, text_content: string): void {
         const element = document.getElementById(element_id);
         if (element) {
           element.textContent = text_content;
@@ -77,10 +115,10 @@ function run_code(code, args) {
   return f.apply(null, args);
 }
 
-function evaluate_from_rust(code, args_json) {
-  let args = deserialize_args(args_json);
+function evaluate_from_rust(code: number, args_json: SerializedArg[]): unknown {
+  let args = deserialize_args(args_json) as unknown[];
   const result = run_code(code, args);
-  const response = {
+  const response: RespondPayload = {
     Respond: {
       response: result || null,
     },
@@ -89,7 +127,7 @@ function evaluate_from_rust(code, args_json) {
   return handleResponse(request_result);
 }
 
-function deserialize_args(args_json) {
+function deserialize_args(args_json: SerializedArg): unknown {
   if (typeof args_json === "string") {
     return args_json;
   } else if (typeof args_json === "number") {
@@ -97,19 +135,19 @@ function deserialize_args(args_json) {
   } else if (Array.isArray(args_json)) {
     return args_json.map(deserialize_args);
   } else if (typeof args_json === "object" && args_json !== null) {
-    if (args_json.type === "function") {
-      return new RustFunction(args_json.id);
+    if ((args_json as SerializedFunction).type === "function") {
+      return new RustFunction((args_json as SerializedFunction).id);
     } else {
-      const obj = {};
+      const obj: { [key: string]: unknown } = {};
       for (const key in args_json) {
-        obj[key] = deserialize_args(args_json[key]);
+        obj[key] = deserialize_args((args_json as { [key: string]: SerializedArg })[key]);
       }
       return obj;
     }
   }
 }
 
-function handleResponse(response) {
+function handleResponse(response: ResponseFromRust | null): unknown {
   if (!response) {
     return;
   }
@@ -124,17 +162,22 @@ function handleResponse(response) {
 }
 
 class RustFunction {
-  constructor(code) {
+  code: number;
+
+  constructor(code: number) {
     this.code = code;
   }
 
-  call(...args) {
+  call(...args: unknown[]): unknown {
     const response = sync_request("wry://handler", {
       Evaluate: {
         fn_id: this.code,
-        args: args,
+        args: args as SerializedArg[],
       },
     });
     return handleResponse(response);
   }
 }
+
+// @ts-ignore
+window.evaluate_from_rust = evaluate_from_rust;
