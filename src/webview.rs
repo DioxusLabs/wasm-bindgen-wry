@@ -11,7 +11,7 @@ use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
 
 use crate::encoder::get_dom;
 use crate::ipc::{IPCMessage, decode_data};
-use crate::root_response;
+use crate::home::root_response;
 
 fn decode_request_data(request: &wry::http::Request<Vec<u8>>) -> Option<IPCMessage> {
     if let Some(header_value) = request.headers().get("dioxus-data") {
@@ -154,6 +154,7 @@ impl ApplicationHandler<IPCMessage> for State {
         }
     }
 }
+
 #[derive(Default)]
 struct SharedWebviewState {
     ongoing_request: OngoingRequestState,

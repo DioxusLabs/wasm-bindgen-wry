@@ -1,4 +1,3 @@
-use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use slotmap::{DefaultKey, Key, KeyData, SlotMap};
@@ -132,6 +131,7 @@ impl<T> JSFunction<T> {
         }
     }
 }
+
 impl<T, R> JSFunction<fn(T) -> R> {
     pub fn call<P>(&self, args: T) -> R
     where

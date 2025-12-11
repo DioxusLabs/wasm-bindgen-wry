@@ -1208,6 +1208,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "lazy-js-bundle"
+version = "0.7.2"
+source = "git+https://github.com/DioxusLabs/dioxus#552b553a44f48ed159c7a2cf43d077d6ca310d95"
+
+[[package]]
 name = "libc"
 version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3563,6 +3568,7 @@ name = "wry-testing"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "lazy-js-bundle",
  "serde",
  "serde_json",
  "slotmap",
