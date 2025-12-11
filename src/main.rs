@@ -1,268 +1,20 @@
-use base64::Engine;
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use slotmap::{DefaultKey, Key, KeyData, SlotMap};
-use std::fmt::Debug;
-use std::marker::PhantomData;
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, OnceLock, RwLock, mpsc};
+use std::sync::mpsc::Sender;
+use std::sync::RwLock;
 use winit::event_loop::EventLoopProxy;
-use winit::{
-    application::ApplicationHandler,
-    event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
-    window::{Window, WindowId},
-};
-use wry::dpi::{LogicalPosition, LogicalSize};
-use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
+use winit::event_loop::EventLoop;
 
-// Message types for thread communication
-#[derive(Serialize, Deserialize, Debug)]
-enum IPCMessage {
-    Evaluate {
-        fn_id: u64,
-        args: Vec<serde_json::Value>,
-    },
-    Respond {
-        response: serde_json::Value,
-    },
-    Shutdown,
-}
+use crate::encoder::{JSFunction, set_event_loop_proxy, wait_for_js_event};
+use crate::ipc::IPCMessage;
+use crate::webview::State;
 
-struct OngoingRustCall {
-    // The request associated with this call
-    responder: RequestAsyncResponder,
-}
+mod encoder;
+mod ipc;
+mod webview;
 
-fn decode_request_data(request: &wry::http::Request<Vec<u8>>) -> Option<Vec<u8>> {
-    if let Some(header_value) = request.headers().get("dioxus-data") {
-        // Decode base64 header
-        let engine = base64::engine::general_purpose::STANDARD;
-        if let Ok(decoded_bytes) = engine.decode(header_value) {
-            return Some(decoded_bytes);
-        }
-    }
-    None
-}
-
-#[derive(Default)]
-enum OngoingRequestState {
-    Pending(RequestAsyncResponder),
-    Querying,
-    #[default]
-    Completed,
-}
-
-impl Debug for OngoingRequestState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OngoingRequestState::Pending(_) => write!(f, "Pending"),
-            OngoingRequestState::Querying => write!(f, "Querying"),
-            OngoingRequestState::Completed => write!(f, "Completed"),
-        }
-    }
-}
-
-impl OngoingRequestState {
-    fn take(&mut self) -> OngoingRequestState {
-        std::mem::replace(self, OngoingRequestState::Completed)
-    }
-}
-
-#[derive(Default)]
-struct SharedWebviewState {
-    ongoing_request: OngoingRequestState,
-}
-
-impl SharedWebviewState {
-    fn push_ongoing_request(&mut self, ongoing: OngoingRustCall) {
-        self.ongoing_request = OngoingRequestState::Pending(ongoing.responder);
-    }
-
-    fn respond_to_request(&mut self, response: IPCMessage) {
-        println!("Responding to request with response: {:?}", response);
-        if let OngoingRequestState::Pending(responder) = self.ongoing_request.take() {
-            if let IPCMessage::Evaluate { .. } = response {
-                self.ongoing_request = OngoingRequestState::Querying;
-            } else {
-                self.ongoing_request = OngoingRequestState::Completed;
-            }
-            println!("Responding to ongoing request with response: {:?}", response);
-            responder.respond(
-                wry::http::Response::builder()
-                    .status(200)
-                    .body(serde_json::to_vec(&response).unwrap())
-                    .expect("Failed to build response"),
-            );
-        }
-    }
-}
-
-fn error_response() -> wry::http::Response<Vec<u8>> {
-    wry::http::Response::builder()
-        .status(400)
-        .body(vec![])
-        .expect("Failed to build error response")
-}
-
-fn blank_response() -> wry::http::Response<Vec<u8>> {
-    wry::http::Response::builder()
-        .status(200)
-        .body(vec![])
-        .expect("Failed to build blank response")
-}
-
-#[derive(Default)]
-struct State {
-    window: Option<Window>,
-    webview: Option<wry::WebView>,
-    shared: Arc<RwLock<SharedWebviewState>>,
-}
-
-impl ApplicationHandler<IPCMessage> for State {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let mut attributes = Window::default_attributes();
-        attributes.inner_size = Some(LogicalSize::new(800, 800).into());
-        let window = event_loop.create_window(attributes).unwrap();
-        let shared = self.shared.clone();
-
-        let webview = WebViewBuilder::new()
-            .with_asynchronous_custom_protocol("wry".into(), move |_, request, responder| {
-                // path is the string slice, request is the Request object
-                let real_path = request.uri().to_string().replace("wry://", "");
-                let real_path = real_path.as_str().trim_matches('/');
-                println!("Handling request for path: {}", real_path);
-                println!("Request: {:?}", request);
-                if real_path == "index" {
-                    responder.respond(root_response());
-                    return;
-                }
-                let mut shared = shared.write().unwrap();
-                let Some(data) = decode_request_data(&request) else {
-                    responder.respond(error_response());
-                    return;
-                };
-                if real_path == "handler" {
-                    match serde_json::from_slice::<IPCMessage>(&data) {
-                        Ok(msg) => {
-                            match &msg {
-                                IPCMessage::Evaluate { .. } => {
-                                    shared.push_ongoing_request(OngoingRustCall { responder });
-                                }
-                                _ => {
-                                    shared.ongoing_request = OngoingRequestState::Completed;
-                                    responder.respond(blank_response());
-                                }
-                            }
-                            EVENT_LOOP_PROXY
-                                .get()
-                                .expect("Event loop proxy not set")
-                                .queue_rust_call(msg);
-                        }
-                        Err(e) => println!("Failed to decode IPCMessage: {}", e),
-                    }
-                    return;
-                }
-
-                responder.respond(blank_response());
-            })
-            .with_url("wry://index")
-            .build_as_child(&window)
-            .unwrap();
-
-        webview.open_devtools();
-
-        self.window = Some(window);
-        self.webview = Some(webview);
-    }
-
-    fn window_event(
-        &mut self,
-        _event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::Resized(size) => {
-                let window = self.window.as_ref().unwrap();
-                let webview = self.webview.as_ref().unwrap();
-
-                let size = size.to_logical::<u32>(window.scale_factor());
-                webview
-                    .set_bounds(Rect {
-                        position: LogicalPosition::new(0, 0).into(),
-                        size: LogicalSize::new(size.width, size.height).into(),
-                    })
-                    .unwrap();
-            }
-            WindowEvent::CloseRequested => {
-                std::process::exit(0);
-            }
-            _ => {
-                // println!("got event\n{:#?}", event);
-            }
-        }
-    }
-
-    fn user_event(&mut self, _: &ActiveEventLoop, event: IPCMessage) {
-        let mut shared = self.shared.write().unwrap();
-        println!("Received IPCMessage: {:?}", event);
-        println!("Ongoing request state: {:?}", shared.ongoing_request);
-        match &shared.ongoing_request {
-            OngoingRequestState::Pending(_) => {
-                shared.respond_to_request(event);
-                return;
-            }
-            _ => {}
-        }
-
-        if let IPCMessage::Evaluate { fn_id, args } = event {
-            fn format_call<'a>(
-                function_id: u64,
-                args: impl Iterator<Item = serde_json::Value>,
-            ) -> String {
-                let mut call = String::new();
-                call.push_str("evaluate_from_rust(");
-                call.push_str(&function_id.to_string());
-                call.push_str(", [");
-                for (i, arg) in args.enumerate() {
-                    if i > 0 {
-                        call.push_str(", ");
-                    }
-                    call.push_str(&arg.to_string());
-                }
-                call.push_str("])");
-                call
-            }
-            let code = format_call(fn_id, args.into_iter());
-            self.webview
-                .as_ref()
-                .unwrap()
-                .evaluate_script(&code)
-                .unwrap();
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        #[cfg(any(
-            target_os = "linux",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "netbsd",
-            target_os = "openbsd",
-        ))]
-        {
-            while gtk::events_pending() {
-                gtk::main_iteration_do(false);
-            }
-        }
-    }
-}
-
-struct DomEnv {
-    proxy: EventLoopProxy<IPCMessage>,
-    queued_rust_calls: RwLock<Vec<IPCMessage>>,
-    sender: RwLock<Option<Sender<IPCMessage>>>,
+pub(crate) struct DomEnv {
+    pub(crate) proxy: EventLoopProxy<IPCMessage>,
+    pub(crate) queued_rust_calls: RwLock<Vec<IPCMessage>>,
+    pub(crate) sender: RwLock<Option<Sender<IPCMessage>>>,
 }
 
 impl DomEnv {
@@ -297,48 +49,6 @@ impl DomEnv {
     }
 }
 
-static EVENT_LOOP_PROXY: OnceLock<DomEnv> = OnceLock::new();
-
-struct ThreadLocalEncoder {
-    encoder: RwLock<Encoder>,
-    receiver: Receiver<IPCMessage>,
-}
-
-thread_local! {
-    static THREAD_LOCAL_ENCODER: ThreadLocalEncoder = ThreadLocalEncoder {
-        encoder: RwLock::new(Encoder::new()),
-        receiver: {
-            let env = EVENT_LOOP_PROXY.get().expect("Event loop proxy not set");
-            let (sender, receiver) = mpsc::channel();
-            env.set_sender(sender);
-            receiver
-        },
-    };
-}
-
-fn encode_in_thread_local<T: RustEncode<P>, P>(value: T) -> serde_json::Value {
-    println!("Encoding value in Rust...");
-    THREAD_LOCAL_ENCODER.with(|tle| {
-        println!("Encoding value in thread local...");
-        let mut encoder = tle.encoder.write().unwrap();
-        println!("Got encoder lock...");
-        encoder.encode(value)
-    })
-}
-
-fn set_event_loop_proxy(proxy: EventLoopProxy<IPCMessage>) {
-    EVENT_LOOP_PROXY
-        .set(DomEnv::new(proxy))
-        .unwrap_or_else(|_| panic!("Event loop proxy already set"));
-}
-
-fn get_event_loop_proxy() -> &'static EventLoopProxy<IPCMessage> {
-    &EVENT_LOOP_PROXY
-        .get()
-        .expect("Event loop proxy not set")
-        .proxy
-}
-
 fn main() -> wry::Result<()> {
     #[cfg(any(
         target_os = "linux",
@@ -371,6 +81,12 @@ fn main() -> wry::Result<()> {
     Ok(())
 }
 
+const CONSOLE_LOG: JSFunction<fn(String)> = JSFunction::new(0);
+const ALERT: JSFunction<fn(String)> = JSFunction::new(1);
+const ADD_NUMBERS_JS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
+const ADD_EVENT_LISTENER: JSFunction<fn(String, fn())> = JSFunction::new(3);
+const SET_TEXT_CONTENT: JSFunction<fn(String, String)> = JSFunction::new(4);
+
 fn app() {
     let add_function = ADD_NUMBERS_JS;
     let set_text_content = SET_TEXT_CONTENT;
@@ -390,208 +106,9 @@ fn app() {
         count += 1;
         let new_text = format!("Button clicked {} times", count);
         set_text_content.call("click-count".to_string(), new_text);
+        true
     });
     wait_for_js_event::<()>();
-}
-
-struct Encoder {
-    functions: SlotMap<
-        DefaultKey,
-        Option<Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync>>,
-    >,
-}
-
-impl Encoder {
-    fn new() -> Self {
-        Self {
-            functions: SlotMap::new(),
-        }
-    }
-
-    fn encode<T: RustEncode<P>, P>(&mut self, value: T) -> serde_json::Value {
-        value.encode(self)
-    }
-
-    fn encode_function<T: IntoRustCallable<P>, P>(&mut self, function: T) -> serde_json::Value {
-        let key = self.functions.insert(Some(function.into()));
-        serde_json::json!({
-            "type": "function",
-            "id": key.data().as_ffi(),
-        })
-    }
-}
-
-trait RustEncode<P = ()> {
-    fn encode(self, encoder: &mut Encoder) -> serde_json::Value;
-}
-
-impl RustEncode for String {
-    fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
-        serde_json::Value::String(self)
-    }
-}
-
-impl RustEncode for () {
-    fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
-        serde_json::Value::Null
-    }
-}
-
-impl RustEncode for i32 {
-    fn encode(self, _encoder: &mut Encoder) -> serde_json::Value {
-        serde_json::Value::Number(serde_json::Number::from(self))
-    }
-}
-
-impl<F, P> RustEncode<P> for F
-where
-    F: IntoRustCallable<P>,
-{
-    fn encode(self, encoder: &mut Encoder) -> serde_json::Value {
-        encoder.encode_function(self)
-    }
-}
-
-trait IntoRustCallable<T> {
-    fn into(self) -> Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync>;
-}
-
-impl<R, F> IntoRustCallable<fn() -> R> for F
-where
-    F: FnMut() -> R + Send + Sync + 'static,
-    R: serde::Serialize,
-{
-    fn into(mut self) -> Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync> {
-        Box::new(move |_: Vec<serde_json::Value>| {
-            let result: R = (self)();
-            serde_json::to_value(result).unwrap()
-        })
-    }
-}
-
-impl<T, R, F> IntoRustCallable<fn(T) -> R> for F
-where
-    F: FnMut(T) -> R + Send + Sync + 'static,
-    T: for<'de> Deserialize<'de>,
-    R: serde::Serialize,
-{
-    fn into(mut self) -> Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync> {
-        Box::new(move |args: Vec<serde_json::Value>| {
-            let mut args_iter = args.into_iter();
-            let arg: T = serde_json::from_value(args_iter.next().unwrap()).unwrap();
-            let result: R = (self)(arg);
-            serde_json::to_value(result).unwrap()
-        })
-    }
-}
-
-impl<T1, T2, R, F> IntoRustCallable<fn(T1, T2) -> R> for F
-where
-    F: FnMut(T1, T2) -> R + Send + Sync + 'static,
-    T1: for<'de> Deserialize<'de>,
-    T2: for<'de> Deserialize<'de>,
-    R: serde::Serialize,
-{
-    fn into(mut self) -> Box<dyn FnMut(Vec<serde_json::Value>) -> serde_json::Value + Send + Sync> {
-        Box::new(move |args: Vec<serde_json::Value>| {
-            let mut args_iter = args.into_iter();
-            let arg1: T1 = serde_json::from_value(args_iter.next().unwrap()).unwrap();
-            let arg2: T2 = serde_json::from_value(args_iter.next().unwrap()).unwrap();
-            let result: R = (self)(arg1, arg2);
-            serde_json::to_value(result).unwrap()
-        })
-    }
-}
-
-const CONSOLE_LOG: JSFunction<fn(String)> = JSFunction::new(0);
-const ALERT: JSFunction<fn(String)> = JSFunction::new(1);
-const ADD_NUMBERS_JS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
-const ADD_EVENT_LISTENER: JSFunction<fn(String, fn())> = JSFunction::new(3);
-const SET_TEXT_CONTENT: JSFunction<fn(String, String)> = JSFunction::new(4);
-
-struct JSFunction<T> {
-    id: u64,
-    function: PhantomData<T>,
-}
-
-impl<T> JSFunction<T> {
-    const fn new(id: u64) -> Self {
-        Self {
-            id,
-            function: PhantomData,
-        }
-    }
-}
-
-impl<T, R> JSFunction<fn(T) -> R> {
-    fn call<P>(&self, args: T) -> R
-    where
-        T: RustEncode<P>,
-        R: DeserializeOwned,
-    {
-        let args_json = encode_in_thread_local(args);
-        run_js_sync(get_event_loop_proxy(), self.id, vec![args_json])
-    }
-}
-
-impl<T1, T2, R> JSFunction<fn(T1, T2) -> R> {
-    fn call<P1, P2>(&self, arg1: T1, arg2: T2) -> R
-    where
-        T1: RustEncode<P1>,
-        T2: RustEncode<P2>,
-        R: DeserializeOwned,
-    {
-        let arg1_json = encode_in_thread_local(arg1);
-        let arg2_json = encode_in_thread_local(arg2);
-        run_js_sync(get_event_loop_proxy(), self.id, vec![arg1_json, arg2_json])
-    }
-}
-
-fn run_js_sync<T: DeserializeOwned>(
-    proxy: &EventLoopProxy<IPCMessage>,
-    fn_id: u64,
-    args: Vec<serde_json::Value>,
-) -> T {
-    println!("Sending JS evaluate request...");
-    _ = proxy.send_event(IPCMessage::Evaluate { fn_id, args });
-
-    wait_for_js_event()
-}
-
-fn wait_for_js_event<T: DeserializeOwned>() -> T {
-    let env = EVENT_LOOP_PROXY.get().expect("Event loop proxy not set");
-    THREAD_LOCAL_ENCODER.with(|tle| {
-        println!("Waiting for JS response...");
-        while let Some(response) = tle.receiver.recv().ok() {
-            println!("Received response: {:?}", response);
-            match response {
-                IPCMessage::Respond { response } => {
-                    println!("Got response from JS: {:?}", response);
-                    return serde_json::from_value(response).unwrap();
-                }
-                IPCMessage::Evaluate { fn_id, args } => {
-                    let key = KeyData::from_ffi(fn_id).into();
-                    let function = {
-                        let mut encoder = tle.encoder.write().unwrap();
-                        encoder.functions.get_mut(key).map(|f| f.take().expect("function cannot be called recursively"))
-                    };
-                    if let Some(mut function) =
-                        function
-                    {
-                        let result = function(args);
-                        env.js_response(IPCMessage::Respond { response: result });
-                        // Insert it back
-                        let mut encoder = tle.encoder.write().unwrap();
-                        encoder.functions.get_mut(key).unwrap().replace(function);
-                    }
-                }
-                IPCMessage::Shutdown => {
-                    panic!()
-                }
-            }
-        }
-        panic!()
-    })
 }
 
 fn root_response() -> wry::http::Response<Vec<u8>> {
@@ -657,7 +174,10 @@ fn root_response() -> wry::http::Response<Vec<u8>> {
                 case 3:
                     f = function(event_name, callback) {
                         document.addEventListener(event_name, function(e) {
-                            callback.call();
+                            if (callback.call()) {
+                                e.preventDefault();
+                                console.log("Event " + event_name + " default prevented by Rust callback.");
+                            }
                         });
                     };
                     break;
