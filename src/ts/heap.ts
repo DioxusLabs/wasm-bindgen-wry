@@ -41,6 +41,13 @@ class DataEncoder {
     this.u32Buf.push(value >>> 0);
   }
 
+  pushU64(value: number) {
+    const low = value >>> 0;
+    const high = Math.floor(value / 0x100000000) >>> 0;
+    this.pushU32(low);
+    this.pushU32(high);
+  }
+
   pushStr(value: string) {
     const encoded = new TextEncoder().encode(value);
     this.pushU32(encoded.length);
@@ -142,6 +149,12 @@ class DataDecoder {
     return this.u32Buf[this.u32Offset++];
   }
 
+  takeU64(): number {
+    const low = this.takeU32();
+    const high = this.takeU32();
+    return low + high * 0x100000000;
+  }
+
   takeStr(): string {
     const len = this.takeU32();
     const bytes = this.strBuf.subarray(this.strOffset, this.strOffset + len);
@@ -232,7 +245,8 @@ class RustFunction {
     // Build Evaluate message: [0, fn_id]
     const encoder = new DataEncoder();
     encoder.pushU32(0); // Message type: Evaluate
-    encoder.pushU32(this.fnId);
+    encoder.pushU32(0); // Call argument function
+    encoder.pushU64(this.fnId);
     
     const response = sync_request_binary("wry://handler", encoder.finalize());
     return handleBinaryResponse(response);
@@ -281,11 +295,11 @@ functionRegistry.set(2, {
   impl: (a: unknown, b: unknown) => (a as number) + (b as number),
 });
 
-// 3: add_event_listener(event_name: String, callback_id: u32) -> ()
-// Deserialize: takeStr(), takeU32()
+// 3: add_event_listener(event_name: String, callback_id: u64) -> ()
+// Deserialize: takeStr(), takeU64()
 // Serialize return: nothing
 functionRegistry.set(3, {
-  deserializeArgs: (d) => [d.takeStr(), d.takeU32()],
+  deserializeArgs: (d) => [d.takeStr(), d.takeU64()],
   serializeReturn: () => {},
   impl: (eventName: unknown, callbackId: unknown) => {
     const rustFn = new RustFunction(callbackId as number);
@@ -315,27 +329,27 @@ functionRegistry.set(4, {
   },
 });
 
-// 8: heap_has(id: u32) -> bool
-// Deserialize: takeU32()
+// 8: heap_has(id: u64) -> bool
+// Deserialize: takeU64()
 // Serialize return: pushU8(0 or 1)
 functionRegistry.set(8, {
-  deserializeArgs: (d) => [d.takeU32()],
+  deserializeArgs: (d) => [d.takeU64()],
   serializeReturn: (e, v) => e.pushU8((v as boolean) ? 1 : 0),
   impl: (id: unknown) => jsHeap.has(id as number),
 });
 
 // 13: get_body() -> JSHeapRef
 // Deserialize: nothing
-// Serialize return: pushU32(heap_id)
+// Serialize return: pushU64(heap_id)
 functionRegistry.set(13, {
   deserializeArgs: () => [],
-  serializeReturn: (e, v) => e.pushU32(v as number),
+  serializeReturn: (e, v) => e.pushU64(v as number),
   impl: () => jsHeap.insert(document.body),
 });
 
 // 14: query_selector(selector: String) -> Option<JSHeapRef>
 // Deserialize: takeStr()
-// Serialize return: pushU8(has_value), pushU32(heap_id) if has_value
+// Serialize return: pushU8(has_value), pushU64(heap_id) if has_value
 functionRegistry.set(14, {
   deserializeArgs: (d) => [d.takeStr()],
   serializeReturn: (e, v) => {
@@ -343,7 +357,7 @@ functionRegistry.set(14, {
       e.pushU8(0);
     } else {
       e.pushU8(1);
-      e.pushU32(v as number);
+      e.pushU64(v as number);
     }
   },
   impl: (selector: unknown) => {
@@ -354,18 +368,18 @@ functionRegistry.set(14, {
 
 // 15: create_element(tag: String) -> JSHeapRef
 // Deserialize: takeStr()
-// Serialize return: pushU32(heap_id)
+// Serialize return: pushU64(heap_id)
 functionRegistry.set(15, {
   deserializeArgs: (d) => [d.takeStr()],
-  serializeReturn: (e, v) => e.pushU32(v as number),
+  serializeReturn: (e, v) => e.pushU64(v as number),
   impl: (tag: unknown) => jsHeap.insert(document.createElement(tag as string)),
 });
 
 // 16: append_child(parent: JSHeapRef, child: JSHeapRef) -> ()
-// Deserialize: takeU32(), takeU32()
+// Deserialize: takeU64(), takeU64()
 // Serialize return: nothing
 functionRegistry.set(16, {
-  deserializeArgs: (d) => [d.takeU32(), d.takeU32()],
+  deserializeArgs: (d) => [d.takeU64(), d.takeU64()],
   serializeReturn: () => {},
   impl: (parentId: unknown, childId: unknown) => {
     const parent = jsHeap.get(parentId as number) as Element;
@@ -375,10 +389,10 @@ functionRegistry.set(16, {
 });
 
 // 17: set_attribute(element: JSHeapRef, name: String, value: String) -> ()
-// Deserialize: takeU32(), takeStr(), takeStr()
+// Deserialize: takeU64(), takeStr(), takeStr()
 // Serialize return: nothing
 functionRegistry.set(17, {
-  deserializeArgs: (d) => [d.takeU32(), d.takeStr(), d.takeStr()],
+  deserializeArgs: (d) => [d.takeU64(), d.takeStr(), d.takeStr()],
   serializeReturn: () => {},
   impl: (elId: unknown, name: unknown, value: unknown) => {
     const el = jsHeap.get(elId as number) as Element;
@@ -387,10 +401,10 @@ functionRegistry.set(17, {
 });
 
 // 18: set_text(element: JSHeapRef, text: String) -> ()
-// Deserialize: takeU32(), takeStr()
+// Deserialize: takeU64(), takeStr()
 // Serialize return: nothing
 functionRegistry.set(18, {
-  deserializeArgs: (d) => [d.takeU32(), d.takeStr()],
+  deserializeArgs: (d) => [d.takeU64(), d.takeStr()],
   serializeReturn: () => {},
   impl: (elId: unknown, text: unknown) => {
     const el = jsHeap.get(elId as number) as Element;

@@ -3,7 +3,7 @@ use std::sync::RwLock;
 use winit::event_loop::EventLoopProxy;
 use winit::event_loop::EventLoop;
 
-use crate::encoder::{JSFunction, JSHeapRef, RustCallback, Callback, set_event_loop_proxy, wait_for_js_event};
+use crate::encoder::{JSFunction, JSHeapRef, set_event_loop_proxy, wait_for_js_event};
 use crate::ipc::IPCMessage;
 use crate::webview::State;
 
@@ -115,7 +115,8 @@ const ADD_NUMBERS_JS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
 /// add_event_listener(event_name: String, callback: Callback) -> ()
 /// Serialize: push_str(event_name), push_u32(callback_id)
 /// The callback returns bool: take_u8() != 0
-const ADD_EVENT_LISTENER: JSFunction<fn(String, Callback)> = JSFunction::new(3);
+const ADD_EVENT_LISTENER: JSFunction<fn(String, Box<dyn FnMut() -> bool>) -> ()> =
+    JSFunction::new(3);
 
 /// set_text_content(element_id: String, text: String) -> ()
 /// Serialize: push_str(element_id), push_str(text)
@@ -213,7 +214,7 @@ fn app() {
     // Store the counter display ref for use in the closure
     let counter_ref = counter_display;
 
-    ADD_EVENT_LISTENER.call("click".to_string(), move || {
+    ADD_EVENT_LISTENER.call("click".to_string(), Box::new(move || {
         count += 1;
         println!("   Button clicked! Count: {}", count);
 
@@ -224,7 +225,7 @@ fn app() {
         SET_TEXT_CONTENT.call("click-count".to_string(), format!("Total clicks: {}", count));
 
         true
-    });
+    }));
 
     println!("\n=== Demo ready! Click the button to interact ===\n");
 

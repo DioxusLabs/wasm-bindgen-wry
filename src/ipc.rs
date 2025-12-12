@@ -97,6 +97,12 @@ impl<'a> DecodedData<'a> {
         Ok(val)
     }
 
+    pub fn take_u64(&mut self) -> Result<u64, ()> {
+        let low = self.take_u32()? as u64;
+        let high = self.take_u32()? as u64;
+        Ok((high << 32) | low)
+    }
+
     pub fn take_str(&mut self) -> Result<&'a str, ()> {
         let len = self.take_u32()? as usize;
         if self.str_offset + len > self.str_buf.len() {
@@ -137,6 +143,11 @@ impl EncodedData {
 
     pub fn push_u32(&mut self, value: u32) {
         self.u32_buf.push(value);
+    }
+
+    pub fn push_u64(&mut self, value: u64) {
+        self.push_u32((value & 0xFFFFFFFF) as u32);
+        self.push_u32((value >> 32) as u32);
     }
 
     pub fn push_str(&mut self, value: &str) {
