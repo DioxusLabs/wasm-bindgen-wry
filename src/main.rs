@@ -1,16 +1,16 @@
-use std::sync::mpsc::Sender;
 use std::sync::RwLock;
-use winit::event_loop::EventLoopProxy;
+use std::sync::mpsc::Sender;
 use winit::event_loop::EventLoop;
+use winit::event_loop::EventLoopProxy;
 
 use crate::encoder::{JSFunction, JSHeapRef, set_event_loop_proxy, wait_for_js_event};
 use crate::ipc::IPCMessage;
 use crate::webview::State;
 
 mod encoder;
+mod home;
 mod ipc;
 mod webview;
-mod home;
 
 pub(crate) struct DomEnv {
     pub(crate) proxy: EventLoopProxy<IPCMessage>,
@@ -83,10 +83,10 @@ fn main() -> wry::Result<()> {
 }
 
 /// JS Function definitions with binary serialization instructions:
-/// 
+///
 /// Each function has a unique ID and specifies how arguments are serialized/deserialized.
 /// The binary format is NOT self-describing, so each side must know the schema.
-/// 
+///
 /// Format: Arguments are encoded in order using push_* methods:
 /// - String: push_str (length as u32, then UTF-8 bytes in str buffer)
 /// - u32/i32: push_u32
@@ -160,15 +160,10 @@ const SET_ATTRIBUTE: JSFunction<fn(JSHeapRef, String, String) -> ()> = JSFunctio
 const SET_TEXT: JSFunction<fn(JSHeapRef, String) -> ()> = JSFunction::new(18);
 
 fn app() {
-    
-
-
     // Demo 3: DOM manipulation using heap refs
-    
 
     // Get document body
     let body: JSHeapRef = GET_BODY.call(());
-    
 
     // Create a container div
     let container: JSHeapRef = CREATE_ELEMENT.call("div".to_string());
@@ -179,19 +174,33 @@ fn app() {
     // Create a heading
     let heading: JSHeapRef = CREATE_ELEMENT.call("h2".to_string());
     SET_TEXT.call(heading, "JSHeap Demo".to_string());
-    SET_ATTRIBUTE.call(heading, "style".to_string(), "color: #333; margin-top: 0;".to_string());
+    SET_ATTRIBUTE.call(
+        heading,
+        "style".to_string(),
+        "color: #333; margin-top: 0;".to_string(),
+    );
     APPEND_CHILD.call(container, heading);
 
     // Create info paragraph
     let info: JSHeapRef = CREATE_ELEMENT.call("p".to_string());
-    SET_TEXT.call(info, format!("Heap ref ID for this container: {}", container.id()));
+    SET_TEXT.call(
+        info,
+        format!("Heap ref ID for this container: {}", container.id()),
+    );
     APPEND_CHILD.call(container, info);
 
     // Create a counter display
     let counter_display: JSHeapRef = CREATE_ELEMENT.call("p".to_string());
-    SET_ATTRIBUTE.call(counter_display, "id".to_string(), "heap-counter".to_string());
-    SET_ATTRIBUTE.call(counter_display, "style".to_string(),
-        "font-size: 24px; font-weight: bold; color: #2196F3;".to_string());
+    SET_ATTRIBUTE.call(
+        counter_display,
+        "id".to_string(),
+        "heap-counter".to_string(),
+    );
+    SET_ATTRIBUTE.call(
+        counter_display,
+        "style".to_string(),
+        "font-size: 24px; font-weight: bold; color: #2196F3;".to_string(),
+    );
     SET_TEXT.call(counter_display, "Counter: 0".to_string());
     APPEND_CHILD.call(container, counter_display);
 
@@ -205,29 +214,36 @@ fn app() {
 
     // Append container to body
     APPEND_CHILD.call(body, container);
-    
 
     // Demo 4: Event handling with heap refs
-    
     let mut count = 0;
 
     // Store the counter display ref for use in the closure
     let counter_ref = counter_display;
 
-    ADD_EVENT_LISTENER.call("click".to_string(), Box::new(move || {
-        count += 1;
-        
+    ADD_EVENT_LISTENER.call(
+        "click".to_string(),
+        Box::new(move || {
+            count += 1;
 
-        // Update the counter display using the heap ref
-        SET_TEXT.call(counter_ref, format!("Counter: {}", count));
+            // Update the counter display using the heap ref
+            let start = std::time::Instant::now();
+            SET_TEXT.call(counter_ref, format!("Counter: {}", count));
+            let duration = start.elapsed();
+            println!(
+                "Updated counter display in {:?} microseconds",
+                duration.as_micros()
+            );
 
-        // Also update the original click-count element
-        SET_TEXT_CONTENT.call("click-count".to_string(), format!("Total clicks: {}", count));
+            // Also update the original click-count element
+            SET_TEXT_CONTENT.call(
+                "click-count".to_string(),
+                format!("Total clicks: {}", count),
+            );
 
-        true
-    }));
-
-    
+            true
+        }),
+    );
 
     // Keep running to handle events
     wait_for_js_event::<()>();

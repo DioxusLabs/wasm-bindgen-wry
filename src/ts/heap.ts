@@ -8,10 +8,15 @@
  * - u8 buffer: from u8_offset to str_offset
  * - string buffer: from str_offset to end
  * 
- * Message format in the u32 buffer:
- * - First u32: message type (0 = Evaluate, 1 = Respond)
+ * Message format in the u8 buffer:
+ * - First u8: message type (0 = Evaluate, 1 = Respond)
  * - Remaining data depends on message type
  */
+
+enum MessageType {
+  Evaluate = 0,
+  Respond = 1,
+}
 
 /**
  * Encoder for building binary messages to send to Rust.
@@ -244,7 +249,7 @@ class RustFunction {
   call(): unknown {
     // Build Evaluate message: [0, fn_id]
     const encoder = new DataEncoder();
-    encoder.pushU8(0); // Message type: Evaluate
+    encoder.pushU8(MessageType.Evaluate);
     encoder.pushU32(0); // Call argument function
     encoder.pushU64(this.fnId);
     
@@ -445,7 +450,7 @@ function evaluate_from_rust_binary(fnId: number, dataBase64: string): unknown {
 
   // Serialize the result and send response
   const encoder = new DataEncoder();
-  encoder.pushU8(1); // Message type: Respond
+  encoder.pushU8(MessageType.Respond);
   spec.serializeReturn(encoder, result);
 
   const response = sync_request_binary("wry://handler", encoder.finalize());
@@ -461,12 +466,13 @@ function handleBinaryResponse(response: ArrayBuffer | null): unknown {
   }
 
   const decoder = new DataDecoder(response);
-  const msgType = decoder.takeU8();
+  const rawMsgType = decoder.takeU8();
+  const msgType: MessageType = rawMsgType;
 
-  if (msgType === 1) {
+  if (msgType === MessageType.Respond) {
     // Respond - just return (caller will decode the value)
     return undefined;
-  } else if (msgType === 0) {
+  } else if (msgType === MessageType.Evaluate) {
     // Evaluate - Rust is calling a JS function
     const fnId = decoder.takeU32();
     
@@ -480,7 +486,7 @@ function handleBinaryResponse(response: ArrayBuffer | null): unknown {
 
     // Send response back
     const encoder = new DataEncoder();
-    encoder.pushU8(1); // Respond
+    encoder.pushU8(MessageType.Respond);
     spec.serializeReturn(encoder, result);
 
     const nextResponse = sync_request_binary("wry://handler", encoder.finalize());

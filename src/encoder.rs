@@ -7,7 +7,7 @@ use std::sync::{OnceLock, mpsc};
 use winit::event_loop::EventLoopProxy;
 
 use crate::DomEnv;
-use crate::ipc::{DecodedData, DecodedVariant, EncodedData, IPCMessage, MessageType};
+use crate::ipc::{DecodedData, DecodedVariant, EncodedData, IPCMessage};
 
 /// A reference to a JavaScript heap object, identified by a unique ID.
 /// References are encoded as u64 in the binary protocol.
@@ -310,11 +310,10 @@ pub(crate) fn wait_for_js_event<R: BinaryDecode>() -> R {
                                     .downcast_mut::<RustCallback>()
                                     .expect("Failed to downcast to RustCallback");
 
-                                let mut response = IPCMessage::new_respond(|encoder| {
-                                    
+                                let response = IPCMessage::new_respond(|encoder| {
                                     (&mut function_callback.f)(&mut data, encoder);
                                 });
-                                
+
                                 env.js_response(response);
 
                                 // Insert it back into the thread-local encoder
