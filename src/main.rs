@@ -121,8 +121,13 @@ impl FunctionRegistry {
         if self.function_count > 0 {
             self.functions.push_str(",\n");
         }
-        F::wrap_js_function_with_encoder_decoder(&mut self.functions);
-        write!(&mut self.functions, "({})", f).unwrap();
+        let args: Vec<String> = F::function_args().into_iter().collect();
+        write!(
+            &mut self.functions,
+            "window.createWrapperFunction([{}], {}, {f})",
+            args.join(", "),
+            F::return_type()
+        ).unwrap();
 
         let f = JSFunction::new(self.function_count);
         self.function_count += 1;

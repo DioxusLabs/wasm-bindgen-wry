@@ -16,17 +16,6 @@ class DataEncoder {
     this.strBuf = [];
   }
 
-  pushNull() {}
-
-  pushBool(value: boolean) {
-    this.u8Buf.push(value ? 1 : 0);
-  }
-
-  pushHeapRef(obj: unknown) {
-    const id = window.jsHeap.insert(obj);
-    this.pushU64(id);
-  }
-
   pushU8(value: number) {
     this.u8Buf.push(value & 0xff);
   }
@@ -133,26 +122,6 @@ class DataDecoder {
     // string buffer
     this.strBuf = new Uint8Array(data, strByteOffset);
     this.strOffset = 0;
-  }
-
-  takeNull(): null {
-    return null;
-  }
-
-  takeBool(): boolean {
-    const val = this.takeU8();
-    return val !== 0;
-  }
-
-  takeHeapRef(): unknown {
-    const id = this.takeU64();
-    return window.jsHeap.get(id);
-  }
-
-  takeRustCallback(): () => unknown {
-    const fnId = this.takeU64();
-    const f = new RustFunction(fnId);
-    return () => f.call();
   }
 
   takeU8(): number {

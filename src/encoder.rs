@@ -1,7 +1,6 @@
 use slotmap::{DefaultKey, Key, KeyData, SlotMap};
 use std::any::Any;
 use std::cell::RefCell;
-use std::fmt::Write;
 use std::marker::PhantomData;
 use std::sync::mpsc::Receiver;
 use std::sync::{OnceLock, mpsc};
@@ -24,29 +23,33 @@ impl JSHeapRef {
     }
 }
 
+/// Trait for creating a JavaScript type instance.
+/// Used to map Rust types to their JavaScript type constructors.
+pub(crate) trait TypeConstructor {
+    fn create_type_instance() -> String;
+}
+
 /// Trait for encoding Rust values into the binary protocol.
 /// Each type specifies how to serialize itself.
 pub(crate) trait BinaryEncode<P = ()> {
     fn encode(self, encoder: &mut EncodedData);
-
-    fn decode_js(write: impl Write) -> Result<(), ()>;
 }
 
 /// Trait for decoding values from the binary protocol.
 /// Each type specifies how to deserialize itself.
 pub(crate) trait BinaryDecode: Sized {
     fn decode(decoder: &mut DecodedData) -> Result<Self, ()>;
+}
 
-    fn encode_js(write: impl Write) -> Result<(), ()>;
+impl TypeConstructor for () {
+    fn create_type_instance() -> String {
+        "new window.NullType()".to_string()
+    }
 }
 
 impl BinaryEncode for () {
     fn encode(self, _encoder: &mut EncodedData) {
         // Unit type encodes as nothing
-    }
-
-    fn decode_js(mut write: impl Write) -> Result<Self, ()> {
-        write!(&mut write, "popNull()").map_err(|_| ())
     }
 }
 
@@ -54,9 +57,11 @@ impl BinaryDecode for () {
     fn decode(_decoder: &mut DecodedData) -> Result<Self, ()> {
         Ok(())
     }
+}
 
-    fn encode_js(mut write: impl Write) -> Result<Self, ()> {
-        write!(&mut write, "pushNull").map_err(|_| ())
+impl TypeConstructor for bool {
+    fn create_type_instance() -> String {
+        "new window.BoolType()".to_string()
     }
 }
 
@@ -64,19 +69,17 @@ impl BinaryEncode for bool {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u8(if self { 1 } else { 0 });
     }
-
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(&mut write, "takeBool").map_err(|_| ())
-    }
 }
 
 impl BinaryDecode for bool {
     fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
         Ok(decoder.take_u8()? != 0)
     }
+}
 
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(&mut write, "pushU8").map_err(|_| ())
+impl TypeConstructor for u8 {
+    fn create_type_instance() -> String {
+        "window.U8Type".to_string()
     }
 }
 
@@ -84,18 +87,17 @@ impl BinaryEncode for u8 {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u8(self);
     }
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeU8").map_err(|_| ())
-    }
 }
 
 impl BinaryDecode for u8 {
     fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
         decoder.take_u8()
     }
+}
 
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "pushU8").map_err(|_| ())
+impl TypeConstructor for u16 {
+    fn create_type_instance() -> String {
+        "window.U16Type".to_string()
     }
 }
 
@@ -103,17 +105,17 @@ impl BinaryEncode for u16 {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u16(self);
     }
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeU16").map_err(|_| ())
-    }
 }
 
 impl BinaryDecode for u16 {
     fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
         decoder.take_u16()
     }
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "pushU16").map_err(|_| ())
+}
+
+impl TypeConstructor for u32 {
+    fn create_type_instance() -> String {
+        "window.U32Type".to_string()
     }
 }
 
@@ -121,19 +123,17 @@ impl BinaryEncode for u32 {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self);
     }
-
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeU32").map_err(|_| ())
-    }
 }
 
 impl BinaryDecode for u32 {
     fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
         decoder.take_u32()
     }
+}
 
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "pushU32").map_err(|_| ())
+impl TypeConstructor for str {
+    fn create_type_instance() -> String {
+        "new window.HeapRefType()".to_string()
     }
 }
 
@@ -141,9 +141,11 @@ impl BinaryEncode for &str {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_str(self);
     }
+}
 
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeStr").map_err(|_| ())
+impl TypeConstructor for String {
+    fn create_type_instance() -> String {
+        "new window.HeapRefType()".to_string()
     }
 }
 
@@ -151,18 +153,11 @@ impl BinaryEncode for String {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_str(&self);
     }
-
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeStr").map_err(|_| ())
-    }
 }
 
 impl BinaryDecode for String {
     fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
         Ok(decoder.take_str()?.to_string())
-    }
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "pushStr").map_err(|_| ())
     }
 }
 
@@ -197,29 +192,17 @@ where
 
         encoder.push_u64(value.data().as_ffi());
     }
-
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeRustCallback").map_err(|_| ())
-    }
 }
 
-// impl<T: BinaryDecode, R: BinaryEncode<P>, P, F> BinaryEncode<RustCallbackMarker<(P,P,)>> for F where F: Fn(T) -> R + 'static {
-//     fn encode(self, _: &mut EncodedData) {
-//         register_callback(RustCallback::new(move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-//             let arg1 = T::decode(decoder).expect("Failed to decode argument");
-//             let result = (self)(arg1);
-//             result.encode(encoder);
-//         }));
-//     }
-// }
+impl TypeConstructor for JSHeapRef {
+    fn create_type_instance() -> String {
+        "new window.HeapRefType()".to_string()
+    }
+}
 
 impl BinaryEncode for JSHeapRef {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u64(self.id);
-    }
-
-    fn decode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeHeapRef").map_err(|_| ())
     }
 }
 
@@ -229,9 +212,17 @@ impl BinaryDecode for JSHeapRef {
             id: decoder.take_u64()?,
         })
     }
+}
 
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "pushHeapRef").map_err(|_| ())
+impl<T: TypeConstructor> TypeConstructor for Option<T> {
+    fn create_type_instance() -> String {
+        format!("new window.OptionType({})", T::create_type_instance())
+    }
+}
+
+impl<R: TypeConstructor> TypeConstructor for Box<dyn FnMut() -> R> {
+    fn create_type_instance() -> String {
+        format!("new window.CallbackType({})", R::create_type_instance())
     }
 }
 
@@ -243,10 +234,6 @@ impl<T: BinaryDecode> BinaryDecode for Option<T> {
         } else {
             Ok(None)
         }
-    }
-
-    fn encode_js(mut write: impl Write) -> Result<(), ()> {
-        write!(write, "takeOption").map_err(|_| ())
     }
 }
 
@@ -341,120 +328,63 @@ impl<T1, T2, T3, R: BinaryDecode> JSFunction<fn(T1, T2, T3) -> R> {
 }
 
 pub trait WrapJsFunction<P> {
-    fn wrap_js_function_with_encoder_decoder(function: impl Write);
+    fn function_args() -> impl IntoIterator<Item = String>;
+    fn return_type() -> String;
 }
 
-impl<R: BinaryDecode> WrapJsFunction<()> for fn() -> R {
-    fn wrap_js_function_with_encoder_decoder(mut function: impl Write) {
-        writeln!(
-            &mut function,
-            "(function(f) {{
-                return (decoder, encoder) => {{
-                    const result = f();"
-        )
-        .unwrap();
-        writeln!(&mut function, "encoder.").unwrap();
-        R::encode_js(&mut function).unwrap();
-         write!(
-            &mut function,
-            "(result);
-            }}
-            }})"
-        )
-        .unwrap();
+impl<R: BinaryDecode + TypeConstructor> WrapJsFunction<()> for fn() -> R {
+    fn function_args() -> impl IntoIterator<Item = String> {
+        Vec::new()
+    }
+
+    fn return_type() -> String {
+        R::create_type_instance()
     }
 }
 
-impl<R: BinaryDecode, T1, P1> WrapJsFunction<(P1,)> for fn(T1) -> R
+impl<R: BinaryDecode + TypeConstructor, T1, P1> WrapJsFunction<(P1,)> for fn(T1) -> R
 where
-    T1: BinaryEncode<P1>,
+    T1: BinaryEncode<P1> + TypeConstructor,
 {
-    fn wrap_js_function_with_encoder_decoder(mut function: impl Write) {
-        writeln!(
-            &mut function,
-            "(function(f) {{
-                return (decoder, encoder) => {{"
-        )
-        .unwrap();
-        write!(&mut function, "const arg1 = decoder.").unwrap();
-        T1::decode_js(&mut function).unwrap();
-        writeln!(&mut function, "();").unwrap();
-        writeln!(&mut function, "const result = f(arg1);").unwrap();
-        writeln!(&mut function, "encoder.").unwrap();
-        R::encode_js(&mut function).unwrap();
-         write!(
-            &mut function,
-            "(result);
-            }}
-            }})"
-        )
-        .unwrap();
+    fn function_args() -> impl IntoIterator<Item = String> {
+        vec![T1::create_type_instance()]
+    }
+
+    fn return_type() -> String {
+        R::create_type_instance()
     }
 }
 
-impl<R: BinaryDecode, T1, T2, P1, P2> WrapJsFunction<(P1, P2)> for fn(T1, T2) -> R
+impl<R: BinaryDecode + TypeConstructor, T1, T2, P1, P2> WrapJsFunction<(P1, P2)> for fn(T1, T2) -> R
 where
-    T1: BinaryEncode<P1>,
-    T2: BinaryEncode<P2>,
+    T1: BinaryEncode<P1> + TypeConstructor,
+    T2: BinaryEncode<P2> + TypeConstructor,
 {
-    fn wrap_js_function_with_encoder_decoder(mut function: impl Write) {
-        writeln!(
-            &mut function,
-            "(function(f) {{
-                return (decoder, encoder) => {{"
-        )
-        .unwrap();
-        write!(&mut function, "const arg1 = decoder.").unwrap();
-        T1::decode_js(&mut function).unwrap();
-        writeln!(&mut function, "();").unwrap();
-        write!(&mut function, "const arg2 = decoder.").unwrap();
-        T2::decode_js(&mut function).unwrap();
-        writeln!(&mut function, "();").unwrap();
-        writeln!(&mut function, "const result = f(arg1, arg2);").unwrap();
-        writeln!(&mut function, "encoder.").unwrap();
-        R::encode_js(&mut function).unwrap();
-        write!(
-            &mut function,
-            "(result);
-            }}
-            }})"
-        )
-        .unwrap();
+    fn function_args() -> impl IntoIterator<Item = String> {
+        vec![T1::create_type_instance(), T2::create_type_instance()]
+    }
+
+    fn return_type() -> String {
+        R::create_type_instance()
     }
 }
 
-impl<R: BinaryDecode, T1, T2, T3, P1, P2, P3> WrapJsFunction<(P1, P2, P3)> for fn(T1, T2, T3) -> R
+impl<R: BinaryDecode + TypeConstructor, T1, T2, T3, P1, P2, P3> WrapJsFunction<(P1, P2, P3)> for fn(T1, T2, T3) -> R
 where
-    T1: BinaryEncode<P1>,
-    T2: BinaryEncode<P2>,
-    T3: BinaryEncode<P3>,
+    T1: BinaryEncode<P1> + TypeConstructor,
+    T2: BinaryEncode<P2> + TypeConstructor,
+    T3: BinaryEncode<P3> + TypeConstructor,
 {
-    fn wrap_js_function_with_encoder_decoder(mut function: impl Write) {
-        writeln!(
-            &mut function,
-            "(function(f) {{
-                return (decoder, encoder) => {{"
-        )
-        .unwrap();
-        write!(&mut function, "const arg1 = decoder.").unwrap();
-        T1::decode_js(&mut function).unwrap();
-        writeln!(&mut function, "();").unwrap();
-        write!(&mut function, "const arg2 = decoder.").unwrap();
-        T2::decode_js(&mut function).unwrap();
-        writeln!(&mut function, "();").unwrap();
-        write!(&mut function, "const arg3 = decoder.").unwrap();
-        T3::decode_js(&mut function).unwrap();
-        writeln!(&mut function, "();").unwrap();
-        writeln!(&mut function, "const result = f(arg1, arg2, arg3);").unwrap();
-        writeln!(&mut function, "encoder.").unwrap();
-        R::encode_js(&mut function).unwrap();
-         write!(
-            &mut function,
-            "(result);
-            }}
-            }})"
-        )
-        .unwrap();
+    fn function_args() -> impl IntoIterator<Item = String> {
+        vec![
+            T1::create_type_instance(),
+            T2::create_type_instance(),
+            T3::create_type_instance(),
+        ]
+    }
+
+    fn return_type() -> String {
+        R::create_type_instance()
     }
 }
 
