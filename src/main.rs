@@ -74,38 +74,60 @@ impl DomEnv {
     }
 }
 
-macro_rules! js_function {
-    ($($vis:vis fn $name:ident ($($arg_name:ident : $arg_type:ty),*) -> $ret_type:ty = $js_code:literal)*) => {
-        $(
-            $vis fn $name($($arg_name : $arg_type),*) -> $ret_type {
-                inventory::submit! {
-                    JsFunctionSpec::new(
-                        stringify!($name),
-                        $js_code,
-                        || (vec![$(<$arg_type as encoder::TypeConstructor<_>>::create_type_instance()),*], <$ret_type as encoder::TypeConstructor>::create_type_instance())
-                    )
-                }
+macro_rules! js_type {
+    ($vis:vis type $name:ident;) => {
+        #[derive(Copy, Clone, Debug)]
+        $vis struct $name(JSHeapRef);
 
-                let func: JSFunction<fn($($arg_type),*) -> $ret_type> = {
-                    FUNCTION_REGISTRY.get_function(stringify!($name)).expect("Function not found in registry")
-                };
-                func.call($($arg_name),*)
+        impl encoder::TypeConstructor for $name {
+            fn create_type_instance() -> String {
+                JSHeapRef::create_type_instance()
             }
-        )*
+        }
+
+        impl encoder::BinaryEncode for $name {
+            fn encode(self, encoder: &mut crate::ipc::EncodedData) {
+                self.0.encode(encoder);
+            }
+        }
+
+        impl encoder::BinaryDecode for $name {
+            fn decode(decoder: &mut crate::ipc::DecodedData) -> Result<Self, ()> {
+                JSHeapRef::decode(decoder).map(Self)
+            }
+        }
     };
 }
 
-js_function! {
-    pub fn console_log(msg: String) -> () = "(msg) => { console.log(msg); }"
-    pub fn alert(msg: String) -> () = "(msg) => { alert(msg); }"
-    pub fn add_numbers(a: u32, b: u32) -> u32 = "((a, b) => a + b)"
-    pub fn add_event_listener(event: String, callback: Box<dyn FnMut() -> bool>) -> () = "((event, callback) => { window.addEventListener(event, () => { return callback(); }); })"
-    pub fn create_element(tag: String) -> JSHeapRef = "(tag) => document.createElement(tag)"
-    pub fn append_child(parent: JSHeapRef, child: JSHeapRef) -> () = "((parent, child) => { parent.appendChild(child); })"
-    pub fn set_attribute(element: JSHeapRef, attr: String, value: String) -> () = "((element, attr, value) => { element.setAttribute(attr, value); })"
-    pub fn set_text(element: JSHeapRef, text: String) -> () = "((element, text) => { element.textContent = text; })"
-    pub fn get_body() -> JSHeapRef = "(() => document.body)"
+macro_rules! js_function {
+    ($vis:vis fn $name:ident ($($arg_name:ident : $arg_type:ty),*) -> $ret_type:ty = $js_code:literal;) => {
+        $vis fn $name($($arg_name : $arg_type),*) -> $ret_type {
+            inventory::submit! {
+                JsFunctionSpec::new(
+                    stringify!($name),
+                    $js_code,
+                    || (vec![$(<$arg_type as encoder::TypeConstructor<_>>::create_type_instance()),*], <$ret_type as encoder::TypeConstructor>::create_type_instance())
+                )
+            }
+
+            let func: JSFunction<fn($($arg_type),*) -> $ret_type> = {
+                FUNCTION_REGISTRY.get_function(stringify!($name)).expect("Function not found in registry")
+            };
+            func.call($($arg_name),*)
+        }
+    };
 }
+
+js_type!(pub type Element;);
+js_function!(pub fn console_log(msg: String) -> () = "(msg) => { console.log(msg); }";);
+js_function!(pub fn alert(msg: String) -> () = "(msg) => { alert(msg); }";);
+js_function!(pub fn add_numbers(a: u32, b: u32) -> u32 = "((a, b) => a + b)";);
+js_function!(pub fn add_event_listener(event: String, callback: Box<dyn FnMut() -> bool>) -> () = "((event, callback) => { window.addEventListener(event, () => { return callback(); }); })";);
+js_function!(pub fn create_element(tag: String) -> Element = "(tag) => document.createElement(tag)";);
+js_function!(pub fn append_child(parent: Element, child: Element) -> () = "((parent, child) => { parent.appendChild(child); })";);
+js_function!(pub fn set_attribute(element: Element, attr: String, value: String) -> () = "((element, attr, value) => { element.setAttribute(attr, value); })";);
+js_function!(pub fn set_text(element: Element, text: String) -> () = "((element, text) => { element.textContent = text; })";);
+js_function!(pub fn get_body() -> Element = "(() => document.body)";);
 
 fn main() -> wry::Result<()> {
     #[cfg(any(
@@ -150,9 +172,8 @@ struct JsFunctionId {
     name: &'static str,
 }
 
-static FUNCTION_REGISTRY: LazyLock<FunctionRegistry> = LazyLock::new(|| {
-    FunctionRegistry::collect_from_inventory()
-});
+static FUNCTION_REGISTRY: LazyLock<FunctionRegistry> =
+    LazyLock::new(|| FunctionRegistry::collect_from_inventory());
 
 impl FunctionRegistry {
     fn collect_from_inventory() -> Self {
@@ -218,16 +239,16 @@ fn app() {
     );
 
     // Get document body
-    let body: JSHeapRef = get_body();
+    let body = get_body();
 
     // Create a container div
-    let container: JSHeapRef = create_element("div".to_string());
+    let container = create_element("div".to_string());
     set_attribute(container, "id".to_string(), "heap-demo".to_string());
     set_attribute(container, "style".to_string(),
         "margin: 20px; padding: 15px; border: 2px solid #4CAF50; border-radius: 8px; background: #f9f9f9;".to_string());
 
     // Create a heading
-    let heading: JSHeapRef = create_element("h2".to_string());
+    let heading = create_element("h2".to_string());
     set_text(heading, "JSHeap Demo".to_string());
     set_attribute(
         heading,
@@ -236,15 +257,8 @@ fn app() {
     );
     append_child(container, heading);
 
-    // Create info paragraph
-    let info: JSHeapRef = create_element("p".to_string());
-    set_text(
-        info,
-        format!("Heap ref ID for this container: {}", container.id()),
-    );
-    append_child(container, info);
     // Create a counter display
-    let counter_display: JSHeapRef = create_element("p".to_string());
+    let counter_display = create_element("p".to_string());
     set_attribute(
         counter_display,
         "id".to_string(),
@@ -259,7 +273,7 @@ fn app() {
     append_child(container, counter_display);
 
     // Create a button
-    let button: JSHeapRef = create_element("button".to_string());
+    let button = create_element("button".to_string());
     set_text(button, "Click me (heap-managed)".to_string());
     set_attribute(button, "id".to_string(), "heap-button".to_string());
     set_attribute(button, "style".to_string(),
