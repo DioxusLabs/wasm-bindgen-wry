@@ -160,15 +160,15 @@ const SET_ATTRIBUTE: JSFunction<fn(JSHeapRef, String, String) -> ()> = JSFunctio
 const SET_TEXT: JSFunction<fn(JSHeapRef, String) -> ()> = JSFunction::new(18);
 
 fn app() {
-    println!("=== JSHeap Demo ===\n");
+    
 
 
     // Demo 3: DOM manipulation using heap refs
-    println!("\n3. Creating DOM elements using heap refs...");
+    
 
     // Get document body
     let body: JSHeapRef = GET_BODY.call(());
-    println!("   Got body element (heap id: {})", body.id());
+    
 
     // Create a container div
     let container: JSHeapRef = CREATE_ELEMENT.call("div".to_string());
@@ -205,10 +205,10 @@ fn app() {
 
     // Append container to body
     APPEND_CHILD.call(body, container);
-    println!("   Created demo UI with heap-managed elements");
+    
 
     // Demo 4: Event handling with heap refs
-    println!("\n4. Setting up click handler that updates heap-managed element...");
+    
     let mut count = 0;
 
     // Store the counter display ref for use in the closure
@@ -216,7 +216,7 @@ fn app() {
 
     ADD_EVENT_LISTENER.call("click".to_string(), Box::new(move || {
         count += 1;
-        println!("   Button clicked! Count: {}", count);
+        
 
         // Update the counter display using the heap ref
         SET_TEXT.call(counter_ref, format!("Counter: {}", count));
@@ -227,7 +227,7 @@ fn app() {
         true
     }));
 
-    println!("\n=== Demo ready! Click the button to interact ===\n");
+    
 
     // Keep running to handle events
     wait_for_js_event::<()>();

@@ -1,8 +1,15 @@
 use base64::Engine;
 use std::fmt::Debug;
 
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageType {
+    Evaluate = 0,
+    Respond = 1,
+}
+
 /// Binary protocol message types.
-/// 
+///
 /// The binary format uses aligned buffers for efficient memory access:
 /// - First 12 bytes: three u32 offsets (u16_offset, u8_offset, str_offset)
 /// - u32 buffer: from byte 12 to u16_offset
@@ -10,24 +17,81 @@ use std::fmt::Debug;
 /// - u8 buffer: from u8_offset to str_offset
 /// - string buffer: from str_offset to end
 ///
-/// Message format in the u32 buffer:
+/// Message format in the u8 buffer:
 /// - First u8: message type (0 = Evaluate, 1 = Respond)
 /// - Remaining data depends on message type
 #[derive(Debug)]
-pub(crate) enum IPCMessage {
-    /// Evaluate a JS function
-    /// Binary format: [0, fn_id] followed by serialized args
+pub(crate) struct IPCMessage {
+    data: Vec<u8>,
+}
+
+impl IPCMessage {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+
+    pub fn new_evaluate(fn_id: u32, push_args: impl FnOnce(&mut EncodedData)) -> Self {
+        let mut encoder = EncodedData::new();
+        encoder.push_u8(MessageType::Evaluate as u8);
+        encoder.push_u32(fn_id);
+
+        push_args(&mut encoder);
+
+        IPCMessage::new(encoder.to_bytes())
+    }
+
+    pub fn new_respond(push_data: impl FnOnce(&mut EncodedData)) -> Self {
+        let mut encoder = EncodedData::new();
+        encoder.push_u8(MessageType::Respond as u8);
+
+        push_data(&mut encoder);
+
+        IPCMessage::new(encoder.to_bytes())
+    }
+
+    pub fn ty(&self) -> Result<MessageType, ()> {
+        let mut decoded = DecodedData::from_bytes(&self.data)?;
+        let message_type = decoded.take_u8()?;
+        match message_type {
+            0 => Ok(MessageType::Evaluate),
+            1 => Ok(MessageType::Respond),
+            _ => Err(()),
+        }
+    }
+
+    pub fn decoded(&self) -> Result<DecodedVariant, ()> {
+        let mut decoded = DecodedData::from_bytes(&self.data)?;
+        let message_type = decoded.take_u8()?;
+        let message_type = match message_type {
+            0 => DecodedVariant::Evaluate {
+                fn_id: decoded.take_u32()?,
+                data: decoded,
+            },
+            1 => DecodedVariant::Respond {
+                data: decoded,
+            },
+            _ => return Err(()),
+        };
+        Ok(message_type)
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
+    }
+}
+
+pub enum DecodedVariant<'a> {
+    Respond {
+        data: DecodedData<'a>,
+    },
     Evaluate {
         fn_id: u32,
-        data: Vec<u8>,
+        data: DecodedData<'a>,
     },
-    /// Response from JS
-    /// Binary format: [1] followed by serialized response
-    Respond {
-        data: Vec<u8>,
-    },
-    #[allow(dead_code)]
-    Shutdown,
 }
 
 /// Decoded binary data with aligned buffer access
@@ -43,7 +107,7 @@ impl<'a> DecodedData<'a> {
         if bytes.len() < 12 {
             return Err(());
         }
-        
+
         let header: [u32; 3] = bytemuck::cast_slice(&bytes[0..12])
             .try_into()
             .map_err(|_| ())?;
@@ -96,8 +160,7 @@ impl<'a> DecodedData<'a> {
         let Some((buf, rem)) = self.str_buf.split_at_checked(len) else {
             return Err(());
         };
-        let s = std::str::from_utf8(buf)
-            .map_err(|_| ())?;
+        let s = std::str::from_utf8(buf).map_err(|_| ())?;
         self.str_buf = rem;
         Ok(s)
     }
@@ -147,31 +210,31 @@ impl EncodedData {
         let u16_offset = 12 + self.u32_buf.len() * 4;
         let u8_offset = u16_offset + self.u16_buf.len() * 2;
         let str_offset = u8_offset + self.u8_buf.len();
-        
+
         let total_len = str_offset + self.str_buf.len();
         let mut bytes = Vec::with_capacity(total_len);
-        
+
         // Write header offsets
         bytes.extend_from_slice(&(u16_offset as u32).to_le_bytes());
         bytes.extend_from_slice(&(u8_offset as u32).to_le_bytes());
         bytes.extend_from_slice(&(str_offset as u32).to_le_bytes());
-        
+
         // Write u32 buffer
         for &u in &self.u32_buf {
             bytes.extend_from_slice(&u.to_le_bytes());
         }
-        
+
         // Write u16 buffer
         for &u in &self.u16_buf {
             bytes.extend_from_slice(&u.to_le_bytes());
         }
-        
+
         // Write u8 buffer
         bytes.extend_from_slice(&self.u8_buf);
-        
+
         // Write string buffer
         bytes.extend_from_slice(&self.str_buf);
-        
+
         bytes
     }
 }
@@ -179,44 +242,7 @@ impl EncodedData {
 pub(crate) fn decode_data(bytes: &[u8]) -> Option<IPCMessage> {
     // Decode base64 header
     let engine = base64::engine::general_purpose::STANDARD;
-    let decoded_bytes = engine.decode(bytes).ok()?;
-    
-    if decoded_bytes.len() < 12 {
-        return None;
-    }
-    
-    let mut decoded = DecodedData::from_bytes(&decoded_bytes).ok()?;
-    let msg_type = decoded.take_u8().ok()?;
-    
-    match msg_type {
-        0 => {
-            // Evaluate: fn_id followed by args data
-            let fn_id = decoded.take_u32().ok()?;
-            Some(IPCMessage::Evaluate {
-                fn_id,
-                data: decoded_bytes,
-            })
-        }
-        1 => {
-            // Respond: just the response data
-            Some(IPCMessage::Respond {
-                data: decoded_bytes,
-            })
-        }
-        _ => None,
-    }
-}
+    let data = engine.decode(bytes).ok()?;
 
-pub(crate) fn encode_evaluate(fn_id: u32, args_data: &EncodedData) -> Vec<u8> {
-    let mut encoder = EncodedData::new();
-    encoder.push_u8(0); // Evaluate message type
-    encoder.push_u32(fn_id);
-    
-    // Merge the args data
-    encoder.u8_buf.extend_from_slice(&args_data.u8_buf);
-    encoder.u16_buf.extend_from_slice(&args_data.u16_buf);
-    encoder.u32_buf.extend_from_slice(&args_data.u32_buf);
-    encoder.str_buf.extend_from_slice(&args_data.str_buf);
-    
-    encoder.to_bytes()
+    Some(IPCMessage { data })
 }

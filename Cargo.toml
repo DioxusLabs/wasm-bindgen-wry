@@ -10,7 +10,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 slotmap = "1.1.1"
 winit = "0.30.12"
-wry = "0.53.5"
+wry = { version = "0.53.5", features = ["devtools"] }
 
 
 [build-dependencies]

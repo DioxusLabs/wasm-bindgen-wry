@@ -11,8 +11,8 @@ use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
 
 use crate::encoder::get_dom;
-use crate::ipc::{IPCMessage, decode_data};
 use crate::home::root_response;
+use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
 
 fn decode_request_data(request: &wry::http::Request<Vec<u8>>) -> Option<IPCMessage> {
     if let Some(header_value) = request.headers().get("dioxus-data") {
@@ -35,12 +35,13 @@ impl ApplicationHandler<IPCMessage> for State {
         let shared = self.shared.clone();
 
         let webview = WebViewBuilder::new()
+        .with_devtools(true)
             .with_asynchronous_custom_protocol("wry".into(), move |_, request, responder| {
                 // path is the string slice, request is the Request object
                 let real_path = request.uri().to_string().replace("wry://", "");
                 let real_path = real_path.as_str().trim_matches('/');
-                println!("Handling request for path: {}", real_path);
-                println!("Request: {:?}", request);
+                
+                
                 if real_path == "index" {
                     responder.respond(root_response());
                     return;
@@ -51,8 +52,8 @@ impl ApplicationHandler<IPCMessage> for State {
                     return;
                 };
                 if real_path == "handler" {
-                    match &msg {
-                        IPCMessage::Evaluate { .. } => {
+                    match msg.ty().unwrap() {
+                        MessageType::Evaluate => {
                             shared.push_ongoing_request(OngoingRustCall { responder });
                         }
                         _ => {
@@ -99,25 +100,29 @@ impl ApplicationHandler<IPCMessage> for State {
                 std::process::exit(0);
             }
             _ => {
-                // println!("got event\n{:#?}", event);
             }
         }
     }
 
     fn user_event(&mut self, _: &ActiveEventLoop, event: IPCMessage) {
         let mut shared = self.shared.write().unwrap();
-        println!("Received IPCMessage: {:?}", event);
-        println!("Ongoing request state: {:?}", shared.ongoing_request);
+        
+        
         if let OngoingRequestState::Pending(_) = &shared.ongoing_request {
             shared.respond_to_request(event);
             return;
         }
 
-        if let IPCMessage::Evaluate { fn_id, data } = event {
+        let decoded = event.decoded().unwrap();
+
+        if let DecodedVariant::Evaluate { fn_id, .. } = decoded {
             // Encode the binary data as base64 and pass to JS
             let engine = base64::engine::general_purpose::STANDARD;
-            let data_base64 = engine.encode(&data);
-            let code = format!("window.evaluate_from_rust_binary({}, \"{}\")", fn_id, data_base64);
+            let data_base64 = engine.encode(event.data());
+            let code = format!(
+                "window.evaluate_from_rust_binary({}, \"{}\")",
+                fn_id, data_base64
+            );
             self.webview
                 .as_ref()
                 .unwrap()
@@ -153,23 +158,16 @@ impl SharedWebviewState {
     }
 
     fn respond_to_request(&mut self, response: IPCMessage) {
-        println!("Responding to request with response: {:?}", response);
+        
         if let OngoingRequestState::Pending(responder) = self.ongoing_request.take() {
-            if let IPCMessage::Evaluate { .. } = response {
-                self.ongoing_request = OngoingRequestState::Querying;
-            } else {
-                self.ongoing_request = OngoingRequestState::Completed;
-            }
-            println!(
-                "Responding to ongoing request with response: {:?}",
-                response
-            );
-            // Send binary response data
-            let body = match response {
-                IPCMessage::Evaluate { data, .. } => data,
-                IPCMessage::Respond { data } => data,
-                IPCMessage::Shutdown => vec![],
+            let ty = response.ty().unwrap();
+            self.ongoing_request = match ty {
+                crate::ipc::MessageType::Evaluate => OngoingRequestState::Querying,
+                crate::ipc::MessageType::Respond => OngoingRequestState::Completed,
             };
+            
+            // Send binary response data
+            let body = response.into_data();
             responder.respond(
                 wry::http::Response::builder()
                     .status(200)
