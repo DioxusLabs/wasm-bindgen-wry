@@ -10,6 +10,7 @@ use winit::{
 use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
 
+use crate::FunctionRegistry;
 use crate::encoder::get_dom;
 use crate::home::root_response;
 use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
@@ -20,11 +21,22 @@ fn decode_request_data(request: &wry::http::Request<Vec<u8>>) -> Option<IPCMessa
     }
     None
 }
-#[derive(Default)]
 pub(crate) struct State {
+    function_registry: FunctionRegistry,
     window: Option<Window>,
     webview: Option<wry::WebView>,
     shared: Arc<RwLock<SharedWebviewState>>,
+}
+
+impl State {
+    pub fn new(function_registry: FunctionRegistry) -> Self {
+        Self {
+            function_registry,
+            window: None,
+            webview: None,
+            shared: Arc::new(RwLock::new(SharedWebviewState::default())),
+        }
+    }
 }
 
 impl ApplicationHandler<IPCMessage> for State {
@@ -71,6 +83,7 @@ impl ApplicationHandler<IPCMessage> for State {
             .build_as_child(&window)
             .unwrap();
 
+        webview.evaluate_script(&self.function_registry.build_registry_script()).unwrap();
         webview.open_devtools();
 
         self.window = Some(window);

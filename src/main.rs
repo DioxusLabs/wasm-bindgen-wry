@@ -1,8 +1,10 @@
+use std::fmt::{Display, Write};
 use std::sync::RwLock;
 use std::sync::mpsc::Sender;
 use winit::event_loop::EventLoop;
 use winit::event_loop::EventLoopProxy;
 
+use crate::encoder::WrapJsFunction;
 use crate::encoder::{JSFunction, JSHeapRef, set_event_loop_proxy, wait_for_js_event};
 use crate::ipc::IPCMessage;
 use crate::webview::State;
@@ -75,145 +77,126 @@ fn main() -> wry::Result<()> {
     let event_loop = EventLoop::with_user_event().build().unwrap();
     let proxy = event_loop.create_proxy();
     set_event_loop_proxy(proxy);
-    std::thread::spawn(app);
-    let mut state = State::default();
+    let mut registry = FunctionRegistry::new();
+    let console_log: JSFunction<fn(String)> = registry.push("(msg) => { console.log(msg); }");
+    let alert: JSFunction<fn(String) -> ()> = registry.push("(msg) => { alert(msg); }");
+    let add_numbers: JSFunction<fn(u32, u32) -> u32> = registry.push("((a, b) => a + b)");
+    let add_event_listener: JSFunction<fn(String, Box<dyn FnMut() -> bool>) -> ()> =
+        registry.push("((event, callback) => { window.addEventListener(event, () => { return callback(); }); })");
+    let create_element: JSFunction<fn(String) -> JSHeapRef> = registry.push("(tag) => document.createElement(tag)");
+    let append_child: JSFunction<fn(JSHeapRef, JSHeapRef) -> ()> = registry.push("((parent, child) => { parent.appendChild(child); })");
+    let set_attribute: JSFunction<fn(JSHeapRef, String, String) -> ()> = registry.push("((element, attr, value) => { element.setAttribute(attr, value); })");
+    let set_text: JSFunction<fn(JSHeapRef, String) -> ()> = registry.push("((element, text) => { element.textContent = text; })");
+    let get_body: JSFunction<fn() -> JSHeapRef> = registry.push("(() => document.body)");
+    std::thread::spawn(move || app(
+        console_log,
+        add_numbers,
+        add_event_listener,
+        create_element,
+        append_child,
+        set_attribute,
+        set_text,
+        get_body,
+    ));
+    let mut state = State::new(registry);
     event_loop.run_app(&mut state).unwrap();
 
     Ok(())
 }
 
-/// JS Function definitions with binary serialization instructions:
-///
-/// Each function has a unique ID and specifies how arguments are serialized/deserialized.
-/// The binary format is NOT self-describing, so each side must know the schema.
-///
-/// Format: Arguments are encoded in order using push_* methods:
-/// - String: push_str (length as u32, then UTF-8 bytes in str buffer)
-/// - u32/i32: push_u32
-/// - bool: push_u8 (0 or 1)
-/// - JSHeapRef: push_u32 (the reference ID)
-/// - fn(): push_u32 (callback ID registered with FunctionEncoder)
+struct FunctionRegistry {
+    functions: String,
+    function_count: u32,
+}
 
-/// console.log(message: String) -> ()
-/// Serialize: push_str(message)
-/// Deserialize return: nothing
-#[allow(dead_code)]
-const CONSOLE_LOG: JSFunction<fn(String) -> ()> = JSFunction::new(0);
+impl FunctionRegistry {
+    fn new() -> Self {
+        Self {
+            functions: String::from("window.setFunctionRegistry(["),
+            function_count: 0,
+        }
+    }
 
-/// alert(message: String) -> ()
-/// Serialize: push_str(message)
-/// Deserialize return: nothing
-#[allow(dead_code)]
-const ALERT: JSFunction<fn(String) -> ()> = JSFunction::new(1);
+    fn push<F: WrapJsFunction<P>, P>(&mut self, f: impl Display) -> JSFunction<F> {
+        if self.function_count > 0 {
+            self.functions.push_str(",\n");
+        }
+        F::wrap_js_function_with_encoder_decoder(&mut self.functions);
+        write!(&mut self.functions, "({})", f).unwrap();
 
-/// add_numbers(a: i32, b: i32) -> i32
-/// Serialize: push_u32(a), push_u32(b)
-/// Deserialize return: take_u32() as i32
-#[allow(dead_code)]
-const ADD_NUMBERS_JS: JSFunction<fn(i32, i32) -> i32> = JSFunction::new(2);
+        let f = JSFunction::new(self.function_count);
+        self.function_count += 1;
+        f
+    }
 
-/// add_event_listener(event_name: String, callback: Callback) -> ()
-/// Serialize: push_str(event_name), push_u32(callback_id)
-/// The callback returns bool: take_u8() != 0
-const ADD_EVENT_LISTENER: JSFunction<fn(String, Box<dyn FnMut() -> bool>) -> ()> =
-    JSFunction::new(3);
+    fn build_registry_script(&self) -> String {
+        let mut script = self.functions.clone();
+        script.push_str("]);");
+        println!("Function registry script:\n{}", script);
+        script
+    }
+}
 
-/// set_text_content(element_id: String, text: String) -> ()
-/// Serialize: push_str(element_id), push_str(text)
-/// Deserialize return: nothing
-const SET_TEXT_CONTENT: JSFunction<fn(String, String) -> ()> = JSFunction::new(4);
-
-/// heap_has(id: u32) -> bool
-/// Serialize: push_u32(id)
-/// Deserialize return: take_u8() != 0
-const HEAP_HAS: JSFunction<fn(u32) -> bool> = JSFunction::new(8);
-
-/// get_body() -> JSHeapRef
-/// Serialize: nothing
-/// Deserialize return: take_u32() as JSHeapRef
-const GET_BODY: JSFunction<fn() -> JSHeapRef> = JSFunction::new(13);
-
-/// query_selector(selector: String) -> Option<JSHeapRef>
-/// Serialize: push_str(selector)
-/// Deserialize return: take_u8() for has_value, then take_u32() if has_value
-#[allow(dead_code)]
-const QUERY_SELECTOR: JSFunction<fn(String) -> Option<JSHeapRef>> = JSFunction::new(14);
-
-/// create_element(tag: String) -> JSHeapRef
-/// Serialize: push_str(tag)
-/// Deserialize return: take_u32() as JSHeapRef
-const CREATE_ELEMENT: JSFunction<fn(String) -> JSHeapRef> = JSFunction::new(15);
-
-/// append_child(parent: JSHeapRef, child: JSHeapRef) -> ()
-/// Serialize: push_u32(parent.id), push_u32(child.id)
-/// Deserialize return: nothing
-const APPEND_CHILD: JSFunction<fn(JSHeapRef, JSHeapRef) -> ()> = JSFunction::new(16);
-
-/// set_attribute(element: JSHeapRef, name: String, value: String) -> ()
-/// Serialize: push_u32(element.id), push_str(name), push_str(value)
-/// Deserialize return: nothing
-const SET_ATTRIBUTE: JSFunction<fn(JSHeapRef, String, String) -> ()> = JSFunction::new(17);
-
-/// set_text(element: JSHeapRef, text: String) -> ()
-/// Serialize: push_u32(element.id), push_str(text)
-/// Deserialize return: nothing
-const SET_TEXT: JSFunction<fn(JSHeapRef, String) -> ()> = JSFunction::new(18);
-
-fn app() {
-    // Demo 3: DOM manipulation using heap refs
-
+fn app(
+    console_log: JSFunction<fn(String)>,
+    add_numbers: JSFunction<fn(u32, u32) -> u32>,
+    add_event_listener: JSFunction<fn(String, Box<dyn FnMut() -> bool>) -> ()>,
+    create_element: JSFunction<fn(String) -> JSHeapRef>,
+    append_child: JSFunction<fn(JSHeapRef, JSHeapRef) -> ()>,
+    set_attribute: JSFunction<fn(JSHeapRef, String, String) -> ()>,
+    set_text: JSFunction<fn(JSHeapRef, String) -> ()>,
+    get_body: JSFunction<fn() -> JSHeapRef>,
+) {
     // Get document body
-    let body: JSHeapRef = GET_BODY.call(());
+    let body: JSHeapRef = get_body.call(());
 
     // Create a container div
-    let container: JSHeapRef = CREATE_ELEMENT.call("div".to_string());
-    SET_ATTRIBUTE.call(container, "id".to_string(), "heap-demo".to_string());
-    SET_ATTRIBUTE.call(container, "style".to_string(),
+    let container: JSHeapRef = create_element.call("div".to_string());
+    set_attribute.call(container, "id".to_string(), "heap-demo".to_string());
+    set_attribute.call(container, "style".to_string(),
         "margin: 20px; padding: 15px; border: 2px solid #4CAF50; border-radius: 8px; background: #f9f9f9;".to_string());
 
     // Create a heading
-    let heading: JSHeapRef = CREATE_ELEMENT.call("h2".to_string());
-    SET_TEXT.call(heading, "JSHeap Demo".to_string());
-    SET_ATTRIBUTE.call(
+    let heading: JSHeapRef = create_element.call("h2".to_string());
+    set_text.call(heading, "JSHeap Demo".to_string());
+    set_attribute.call(
         heading,
         "style".to_string(),
         "color: #333; margin-top: 0;".to_string(),
     );
-    APPEND_CHILD.call(container, heading);
+    append_child.call(container, heading);
 
     // Create info paragraph
-    let info: JSHeapRef = CREATE_ELEMENT.call("p".to_string());
-    SET_TEXT.call(
+    let info: JSHeapRef = create_element.call("p".to_string());
+    set_text.call(
         info,
         format!("Heap ref ID for this container: {}", container.id()),
     );
-    APPEND_CHILD.call(container, info);
-
+    append_child.call(container, info);
     // Create a counter display
-    let counter_display: JSHeapRef = CREATE_ELEMENT.call("p".to_string());
-    SET_ATTRIBUTE.call(
+    let counter_display: JSHeapRef = create_element.call("p".to_string());
+    set_attribute.call(
         counter_display,
         "id".to_string(),
         "heap-counter".to_string(),
     );
-    SET_ATTRIBUTE.call(
+    set_attribute.call(
         counter_display,
         "style".to_string(),
         "font-size: 24px; font-weight: bold; color: #2196F3;".to_string(),
     );
-    SET_TEXT.call(counter_display, "Counter: 0".to_string());
-    APPEND_CHILD.call(container, counter_display);
+    set_text.call(counter_display, "Counter: 0".to_string());
+    append_child.call(container, counter_display);
 
     // Create a button
-    let button: JSHeapRef = CREATE_ELEMENT.call("button".to_string());
-    SET_TEXT.call(button, "Click me (heap-managed)".to_string());
-    SET_ATTRIBUTE.call(button, "id".to_string(), "heap-button".to_string());
-    SET_ATTRIBUTE.call(button, "style".to_string(),
+    let button: JSHeapRef = create_element.call("button".to_string());
+    set_text.call(button, "Click me (heap-managed)".to_string());
+    set_attribute.call(button, "id".to_string(), "heap-button".to_string());
+    set_attribute.call(button, "style".to_string(),
         "padding: 10px 20px; font-size: 16px; cursor: pointer; background: #4CAF50; color: white; border: none; border-radius: 4px;".to_string());
-    APPEND_CHILD.call(container, button);
-
+    append_child.call(container, button);
     // Append container to body
-    APPEND_CHILD.call(body, container);
+    append_child.call(body, container);
 
     // Demo 4: Event handling with heap refs
     let mut count = 0;
@@ -221,24 +204,18 @@ fn app() {
     // Store the counter display ref for use in the closure
     let counter_ref = counter_display;
 
-    ADD_EVENT_LISTENER.call(
+    add_event_listener.call(
         "click".to_string(),
         Box::new(move || {
             count += 1;
 
             // Update the counter display using the heap ref
             let start = std::time::Instant::now();
-            SET_TEXT.call(counter_ref, format!("Counter: {}", count));
+            set_text.call(counter_ref, format!("Counter: {}", count));
             let duration = start.elapsed();
             println!(
                 "Updated counter display in {:?} microseconds",
                 duration.as_micros()
-            );
-
-            // Also update the original click-count element
-            SET_TEXT_CONTENT.call(
-                "click-count".to_string(),
-                format!("Total clicks: {}", count),
             );
 
             true

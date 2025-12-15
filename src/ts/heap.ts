@@ -1,13 +1,13 @@
 /**
  * Binary Protocol Encoder/Decoder
- * 
+ *
  * The binary format uses aligned buffers for efficient memory access:
  * - First 12 bytes: three u32 offsets (u16_offset, u8_offset, str_offset)
  * - u32 buffer: from byte 12 to u16_offset
  * - u16 buffer: from u16_offset to u8_offset
  * - u8 buffer: from u8_offset to str_offset
  * - string buffer: from str_offset to end
- * 
+ *
  * Message format in the u8 buffer:
  * - First u8: message type (0 = Evaluate, 1 = Respond)
  * - Remaining data depends on message type
@@ -32,6 +32,17 @@ class DataEncoder {
     this.u16Buf = [];
     this.u32Buf = [];
     this.strBuf = [];
+  }
+
+  pushNull() {}
+
+  pushBool(value: boolean) {
+    this.u8Buf.push(value ? 1 : 0);
+  }
+
+  pushHeapRef(obj: unknown) {
+    const id = jsHeap.insert(obj);
+    this.pushU64(id);
   }
 
   pushU8(value: number) {
@@ -142,6 +153,26 @@ class DataDecoder {
     this.strOffset = 0;
   }
 
+  takeNull(): null {
+    return null;
+  }
+
+  takeBool(): boolean {
+    const val = this.takeU8();
+    return val !== 0;
+  }
+
+  takeHeapRef(): unknown {
+    const id = this.takeU64();
+    return jsHeap.get(id);
+  }
+
+  takeRustCallback(): () => unknown {
+    const fnId = this.takeU64();
+    const f = new RustFunction(fnId);
+    return () => f.call();
+  }
+
   takeU8(): number {
     return this.u8Buf[this.u8Offset++];
   }
@@ -215,7 +246,10 @@ const jsHeap = new JSHeap();
 /**
  * Sends binary data to Rust and receives binary response.
  */
-function sync_request_binary(endpoint: string, data: ArrayBuffer): ArrayBuffer | null {
+function sync_request_binary(
+  endpoint: string,
+  data: ArrayBuffer
+): ArrayBuffer | null {
   const xhr = new XMLHttpRequest();
   xhr.open("POST", endpoint, false);
   xhr.responseType = "arraybuffer";
@@ -240,7 +274,7 @@ function sync_request_binary(endpoint: string, data: ArrayBuffer): ArrayBuffer |
  * Rust function wrapper that can call back into Rust.
  */
 class RustFunction {
-  private fnId: number; 
+  private fnId: number;
 
   constructor(fnId: number) {
     this.fnId = fnId;
@@ -252,7 +286,7 @@ class RustFunction {
     encoder.pushU8(MessageType.Evaluate);
     encoder.pushU32(0); // Call argument function
     encoder.pushU64(this.fnId);
-    
+
     const response = sync_request_binary("wry://handler", encoder.finalize());
     return handleBinaryResponse(response);
   }
@@ -260,166 +294,18 @@ class RustFunction {
 
 /**
  * Function registry - maps function IDs to their serialization/deserialization specs.
- * 
+ *
  * Each function has:
  * - Argument deserialization: how to read args from decoder
  * - Return serialization: how to write return value to encoder
  */
-interface FunctionSpec {
-  deserializeArgs: (decoder: DataDecoder) => unknown[];
-  serializeReturn: (encoder: DataEncoder, value: unknown) => void;
-  impl: (...args: unknown[]) => unknown;
-}
+type FunctionSpec = (decoder: DataDecoder, encoder: DataEncoder) => void;
 
-const functionRegistry: Map<number, FunctionSpec> = new Map();
-
-// Register all functions with their serialization specs
-
-// 0: console.log(message: String) -> ()
-// Deserialize: takeStr()
-// Serialize return: nothing
-functionRegistry.set(0, {
-  deserializeArgs: (d) => [d.takeStr()],
-  serializeReturn: () => {},
-  impl: (msg: unknown) => console.log(msg),
-});
-
-// 1: alert(message: String) -> ()
-functionRegistry.set(1, {
-  deserializeArgs: (d) => [d.takeStr()],
-  serializeReturn: () => {},
-  impl: (msg: unknown) => alert(msg as string),
-});
-
-// 2: add_numbers(a: i32, b: i32) -> i32
-// Deserialize: takeU32(), takeU32()
-// Serialize return: pushU32()
-functionRegistry.set(2, {
-  deserializeArgs: (d) => [d.takeU32(), d.takeU32()],
-  serializeReturn: (e, v) => e.pushU32(v as number),
-  impl: (a: unknown, b: unknown) => (a as number) + (b as number),
-});
-
-// 3: add_event_listener(event_name: String, callback_id: u64) -> ()
-// Deserialize: takeStr(), takeU64()
-// Serialize return: nothing
-functionRegistry.set(3, {
-  deserializeArgs: (d) => [d.takeStr(), d.takeU64()],
-  serializeReturn: () => {},
-  impl: (eventName: unknown, callbackId: unknown) => {
-    const rustFn = new RustFunction(callbackId as number);
-    document.addEventListener(eventName as string, (e: Event) => {
-      const result = rustFn.call() as boolean;
-      if (result) {
-        e.preventDefault();
-        console.log("Event " + eventName + " default prevented by Rust callback.");
-      }
-    });
-  },
-});
-
-// 4: set_text_content(element_id: String, text: String) -> ()
-// Deserialize: takeStr(), takeStr()
-// Serialize return: nothing
-functionRegistry.set(4, {
-  deserializeArgs: (d) => [d.takeStr(), d.takeStr()],
-  serializeReturn: () => {},
-  impl: (elementId: unknown, textContent: unknown) => {
-    const element = document.getElementById(elementId as string);
-    if (element) {
-      element.textContent = textContent as string;
-    } else {
-      console.warn("Element with ID " + elementId + " not found.");
-    }
-  },
-});
-
-// 8: heap_has(id: u64) -> bool
-// Deserialize: takeU64()
-// Serialize return: pushU8(0 or 1)
-functionRegistry.set(8, {
-  deserializeArgs: (d) => [d.takeU64()],
-  serializeReturn: (e, v) => e.pushU8((v as boolean) ? 1 : 0),
-  impl: (id: unknown) => jsHeap.has(id as number),
-});
-
-// 13: get_body() -> JSHeapRef
-// Deserialize: nothing
-// Serialize return: pushU64(heap_id)
-functionRegistry.set(13, {
-  deserializeArgs: () => [],
-  serializeReturn: (e, v) => e.pushU64(v as number),
-  impl: () => jsHeap.insert(document.body),
-});
-
-// 14: query_selector(selector: String) -> Option<JSHeapRef>
-// Deserialize: takeStr()
-// Serialize return: pushU8(has_value), pushU64(heap_id) if has_value
-functionRegistry.set(14, {
-  deserializeArgs: (d) => [d.takeStr()],
-  serializeReturn: (e, v) => {
-    if (v === null || v === undefined) {
-      e.pushU8(0);
-    } else {
-      e.pushU8(1);
-      e.pushU64(v as number);
-    }
-  },
-  impl: (selector: unknown) => {
-    const el = document.querySelector(selector as string);
-    return el ? jsHeap.insert(el) : null;
-  },
-});
-
-// 15: create_element(tag: String) -> JSHeapRef
-// Deserialize: takeStr()
-// Serialize return: pushU64(heap_id)
-functionRegistry.set(15, {
-  deserializeArgs: (d) => [d.takeStr()],
-  serializeReturn: (e, v) => e.pushU64(v as number),
-  impl: (tag: unknown) => jsHeap.insert(document.createElement(tag as string)),
-});
-
-// 16: append_child(parent: JSHeapRef, child: JSHeapRef) -> ()
-// Deserialize: takeU64(), takeU64()
-// Serialize return: nothing
-functionRegistry.set(16, {
-  deserializeArgs: (d) => [d.takeU64(), d.takeU64()],
-  serializeReturn: () => {},
-  impl: (parentId: unknown, childId: unknown) => {
-    const parent = jsHeap.get(parentId as number) as Element;
-    const child = jsHeap.get(childId as number) as Element;
-    parent.appendChild(child);
-  },
-});
-
-// 17: set_attribute(element: JSHeapRef, name: String, value: String) -> ()
-// Deserialize: takeU64(), takeStr(), takeStr()
-// Serialize return: nothing
-functionRegistry.set(17, {
-  deserializeArgs: (d) => [d.takeU64(), d.takeStr(), d.takeStr()],
-  serializeReturn: () => {},
-  impl: (elId: unknown, name: unknown, value: unknown) => {
-    const el = jsHeap.get(elId as number) as Element;
-    el.setAttribute(name as string, value as string);
-  },
-});
-
-// 18: set_text(element: JSHeapRef, text: String) -> ()
-// Deserialize: takeU64(), takeStr()
-// Serialize return: nothing
-functionRegistry.set(18, {
-  deserializeArgs: (d) => [d.takeU64(), d.takeStr()],
-  serializeReturn: () => {},
-  impl: (elId: unknown, text: unknown) => {
-    const el = jsHeap.get(elId as number) as Element;
-    el.textContent = text as string;
-  },
-});
+let functionRegistry: FunctionSpec[] = [];
 
 /**
  * Entry point for Rust to call JS functions using binary protocol.
- * 
+ *
  * @param fnId - The function ID to call
  * @param dataBase64 - Base64 encoded binary data containing message
  */
@@ -437,21 +323,14 @@ function evaluate_from_rust_binary(fnId: number, dataBase64: string): unknown {
   const msgType = decoder.takeU8(); // Should be 0 (Evaluate)
   const decodedFnId = decoder.takeU32(); // Function ID
 
-  console.log("evaluate_from_rust_binary: fnId=" + fnId + ", msgType=" + msgType + ", decodedFnId=" + decodedFnId);
-
-  const spec = functionRegistry.get(fnId);
+  const spec = functionRegistry[fnId];
   if (!spec) {
     throw new Error("Unknown function ID: " + fnId);
   }
 
-  // Deserialize arguments and call the function
-  const args = spec.deserializeArgs(decoder);
-  const result = spec.impl(...args);
-
-  // Serialize the result and send response
   const encoder = new DataEncoder();
   encoder.pushU8(MessageType.Respond);
-  spec.serializeReturn(encoder, result);
+  spec(decoder, encoder);
 
   const response = sync_request_binary("wry://handler", encoder.finalize());
   return handleBinaryResponse(response);
@@ -475,21 +354,20 @@ function handleBinaryResponse(response: ArrayBuffer | null): unknown {
   } else if (msgType === MessageType.Evaluate) {
     // Evaluate - Rust is calling a JS function
     const fnId = decoder.takeU32();
-    
-    const spec = functionRegistry.get(fnId);
+
+    const spec = functionRegistry[fnId];
     if (!spec) {
       throw new Error("Unknown function ID in response: " + fnId);
     }
 
-    const args = spec.deserializeArgs(decoder);
-    const result = spec.impl(...args);
-
-    // Send response back
     const encoder = new DataEncoder();
     encoder.pushU8(MessageType.Respond);
-    spec.serializeReturn(encoder, result);
+    spec(decoder, encoder);
 
-    const nextResponse = sync_request_binary("wry://handler", encoder.finalize());
+    const nextResponse = sync_request_binary(
+      "wry://handler",
+      encoder.finalize()
+    );
     return handleBinaryResponse(nextResponse);
   }
 
@@ -500,3 +378,8 @@ function handleBinaryResponse(response: ArrayBuffer | null): unknown {
 window.evaluate_from_rust_binary = evaluate_from_rust_binary;
 // @ts-ignore
 window.jsHeap = jsHeap;
+// @ts-ignore
+window.setFunctionRegistry = (registry: FunctionSpec[]) => {
+  functionRegistry = registry;
+};
+
