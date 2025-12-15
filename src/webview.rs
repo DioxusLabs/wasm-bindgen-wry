@@ -22,14 +22,14 @@ fn decode_request_data(request: &wry::http::Request<Vec<u8>>) -> Option<IPCMessa
     None
 }
 pub(crate) struct State {
-    function_registry: FunctionRegistry,
+    function_registry: &'static FunctionRegistry,
     window: Option<Window>,
     webview: Option<wry::WebView>,
     shared: Arc<RwLock<SharedWebviewState>>,
 }
 
 impl State {
-    pub fn new(function_registry: FunctionRegistry) -> Self {
+    pub fn new(function_registry: &'static FunctionRegistry) -> Self {
         Self {
             function_registry,
             window: None,
@@ -83,7 +83,7 @@ impl ApplicationHandler<IPCMessage> for State {
             .build_as_child(&window)
             .unwrap();
 
-        webview.evaluate_script(&self.function_registry.build_registry_script()).unwrap();
+        webview.evaluate_script(self.function_registry.script()).unwrap();
         webview.open_devtools();
 
         self.window = Some(window);

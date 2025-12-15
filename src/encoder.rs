@@ -286,7 +286,7 @@ impl<T> JSFunction<T> {
 }
 
 impl<R: BinaryDecode> JSFunction<fn() -> R> {
-    pub fn call(&self, _: ()) -> R {
+    pub fn call(&self) -> R {
         run_js_sync::<R>(self.id, |_| {})
     }
 }
