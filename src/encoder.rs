@@ -25,7 +25,7 @@ impl JSHeapRef {
 
 /// Trait for creating a JavaScript type instance.
 /// Used to map Rust types to their JavaScript type constructors.
-pub(crate) trait TypeConstructor {
+pub(crate) trait TypeConstructor<P = ()> {
     fn create_type_instance() -> String;
 }
 
@@ -214,13 +214,16 @@ impl BinaryDecode for JSHeapRef {
     }
 }
 
-impl<T: TypeConstructor> TypeConstructor for Option<T> {
+impl<T: TypeConstructor<P>, P> TypeConstructor<P> for Option<T> {
     fn create_type_instance() -> String {
         format!("new window.OptionType({})", T::create_type_instance())
     }
 }
 
-impl<R: TypeConstructor> TypeConstructor for Box<dyn FnMut() -> R> {
+impl<R: TypeConstructor<P>, P, F> TypeConstructor<RustCallbackMarker<(P,)>> for F
+where
+    F: FnMut() -> R + 'static,
+{
     fn create_type_instance() -> String {
         format!("new window.CallbackType({})", R::create_type_instance())
     }
@@ -332,61 +335,33 @@ pub trait WrapJsFunction<P> {
     fn return_type() -> String;
 }
 
-impl<R: BinaryDecode + TypeConstructor> WrapJsFunction<()> for fn() -> R {
-    fn function_args() -> impl IntoIterator<Item = String> {
-        Vec::new()
-    }
+macro_rules! impl_wrap_js_function {
+    ( $([$T:ident, $P:ident]),* ) => {
+        impl<R, P, $($T, $P),*> WrapJsFunction<(P, $($P,)*)> for fn($($T),*) -> R
+        where
+            R: TypeConstructor<P>,
+            $(
+                $T: TypeConstructor<$P>,
+            )*
+        {
+            fn function_args() -> impl IntoIterator<Item = String> {
+                vec![$(
+                    $T::create_type_instance(),
+                )*]
+            }
 
-    fn return_type() -> String {
-        R::create_type_instance()
-    }
+            fn return_type() -> String {
+                R::create_type_instance()
+            }
+        }
+    };
 }
 
-impl<R: BinaryDecode + TypeConstructor, T1, P1> WrapJsFunction<(P1,)> for fn(T1) -> R
-where
-    T1: BinaryEncode<P1> + TypeConstructor,
-{
-    fn function_args() -> impl IntoIterator<Item = String> {
-        vec![T1::create_type_instance()]
-    }
-
-    fn return_type() -> String {
-        R::create_type_instance()
-    }
-}
-
-impl<R: BinaryDecode + TypeConstructor, T1, T2, P1, P2> WrapJsFunction<(P1, P2)> for fn(T1, T2) -> R
-where
-    T1: BinaryEncode<P1> + TypeConstructor,
-    T2: BinaryEncode<P2> + TypeConstructor,
-{
-    fn function_args() -> impl IntoIterator<Item = String> {
-        vec![T1::create_type_instance(), T2::create_type_instance()]
-    }
-
-    fn return_type() -> String {
-        R::create_type_instance()
-    }
-}
-
-impl<R: BinaryDecode + TypeConstructor, T1, T2, T3, P1, P2, P3> WrapJsFunction<(P1, P2, P3)> for fn(T1, T2, T3) -> R
-where
-    T1: BinaryEncode<P1> + TypeConstructor,
-    T2: BinaryEncode<P2> + TypeConstructor,
-    T3: BinaryEncode<P3> + TypeConstructor,
-{
-    fn function_args() -> impl IntoIterator<Item = String> {
-        vec![
-            T1::create_type_instance(),
-            T2::create_type_instance(),
-            T3::create_type_instance(),
-        ]
-    }
-
-    fn return_type() -> String {
-        R::create_type_instance()
-    }
-}
+impl_wrap_js_function!();
+impl_wrap_js_function!([T1, P1]);
+impl_wrap_js_function!([T1, P1], [T2, P2]);
+impl_wrap_js_function!([T1, P1], [T2, P2], [T3, P3]);
+impl_wrap_js_function!([T1, P1], [T2, P2], [T3, P3], [T4, P4]);
 
 fn run_js_sync<R: BinaryDecode>(fn_id: u32, add_args: impl FnOnce(&mut EncodedData)) -> R {
     let proxy = &get_dom().proxy;
