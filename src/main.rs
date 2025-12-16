@@ -236,7 +236,7 @@ impl FunctionRegistry {
 fn app() {
     std::thread::sleep(std::time::Duration::from_secs(1));
     // Store the counter display ref for use in the closure
-    let counter_ref = batch(|| {
+    batch(|| {
         let start = std::time::Instant::now();
         for _ in 0..1000 {
             let sum = add_numbers(123u32, 456u32);
@@ -298,28 +298,28 @@ fn app() {
         // Append container to body
         append_child(body, container);
 
-        counter_display
+        let counter_ref = counter_display;
+        // Demo 4: Event handling with heap refs
+        let mut count = 0;
+        add_event_listener(
+            "click".to_string(),
+            Box::new(move || {
+                count += 1;
+
+                // Update the counter display using the heap ref
+                let start = std::time::Instant::now();
+                set_text(counter_ref, format!("Counter: {}", count));
+                let duration = start.elapsed();
+                println!(
+                    "Updated counter display in {:?} microseconds",
+                    duration.as_micros()
+                );
+
+                true
+            }),
+        );
     });
-    // Demo 4: Event handling with heap refs
-    let mut count = 0;
-    add_event_listener(
-        "click".to_string(),
-        Box::new(move || {
-            count += 1;
-
-            // Update the counter display using the heap ref
-            let start = std::time::Instant::now();
-            set_text(counter_ref, format!("Counter: {}", count));
-            let duration = start.elapsed();
-            println!(
-                "Updated counter display in {:?} microseconds",
-                duration.as_micros()
-            );
-
-            true
-        }),
-    );
-
+    
     // Keep running to handle events
     wait_for_js_event::<()>();
 }
