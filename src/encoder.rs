@@ -577,7 +577,7 @@ pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     // Flush any remaining batched operations
     let has_pending = BATCH_STATE.with(|state| !state.borrow().is_empty());
     if has_pending {
-        flush_batch();
+        flush_and_return::<()>();
     }
 
     // End batching
@@ -586,14 +586,3 @@ pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     result
 }
 
-/// Flush all pending batched operations and execute them
-fn flush_batch() {
-    let msg = BATCH_STATE.with(|state| state.borrow_mut().take_message());
-
-    // Send the batch and wait for response
-    let proxy = &get_dom().proxy;
-    let _ = proxy.send_event(msg);
-
-    // Wait for response (we don't need the result value, just confirmation)
-    wait_for_js_event::<()>();
-}
