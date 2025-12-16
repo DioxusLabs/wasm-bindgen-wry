@@ -136,7 +136,8 @@ js_type!(
 js_function!(pub fn console_log(msg: String) -> () = "(msg) => { console.log(msg); }";);
 js_function!(pub fn alert(msg: String) -> () = "(msg) => { alert(msg); }";);
 js_function!(pub fn add_numbers(a: u32, b: u32) -> u32 = "((a, b) => a + b)";);
-js_function!(pub fn add_event_listener(event: String, callback: Box<dyn FnMut() -> bool>) -> () = "((event, callback) => { window.addEventListener(event, () => { return callback(); }); })";);
+js_function!(pub fn add_event_listener(event: String, callback: Box<dyn FnMut() -> bool>) -> JSHeapRef = "((event, callback) => { window.addEventListener(event, callback); return callback; })";);
+js_function!(pub fn remove_event_listener(event: String, listener: JSHeapRef) -> () = "((event, listener) => { window.removeEventListener(event, listener); })";);
 js_function!(pub fn create_element(tag: String) -> Element = "(tag) => document.createElement(tag)";);
 js_function!(pub fn append_child(parent: Element, child: Element) -> () = "((parent, child) => { parent.appendChild(child); })";);
 js_function!(pub fn set_attribute(element: Element, attr: String, value: String) -> () = "((element, attr, value) => { element.setAttribute(attr, value); })";);
@@ -234,26 +235,7 @@ impl FunctionRegistry {
 }
 
 fn app() {
-    std::thread::sleep(std::time::Duration::from_secs(1));
-    // Store the counter display ref for use in the closure
     batch(|| {
-        let start = std::time::Instant::now();
-        for _ in 0..1000 {
-            let sum = add_numbers(123u32, 456u32);
-            if sum != 579 {
-                panic!("Incorrect sum: {}", sum);
-            }
-        }
-        let duration = start.elapsed();
-        println!(
-            "Performed 100 add_numbers calls in {:?} milliseconds",
-            duration.as_millis()
-        );
-        println!(
-            "Average time per call: {:?} milliseconds",
-            duration.as_millis() as f64 / 1000.0
-        );
-
         // Get document body
         let body = get_body();
 
@@ -301,7 +283,7 @@ fn app() {
         let counter_ref = counter_display.clone();
         // Demo 4: Event handling with heap refs
         let mut count = 0;
-        add_event_listener(
+        let listener = add_event_listener(
             "click".to_string(),
             Box::new(move || {
                 count += 1;

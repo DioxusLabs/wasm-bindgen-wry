@@ -23,6 +23,9 @@ enum MessageType {
 // Reserved function ID for dropping heap refs - must match Rust's DROP_HEAP_REF_FN_ID
 const DROP_HEAP_REF_FN_ID = 0xFFFFFFFF;
 
+// Reserved function ID for dropping native Rust refs - must match Rust's DROP_NATIVE_REF_FN_ID
+const DROP_NATIVE_REF_FN_ID = 0xFFFFFFFF;
+
 /**
  * Sends binary data to Rust and receives binary response.
  */
@@ -120,4 +123,4 @@ function handleBinaryResponse(response: ArrayBuffer | null): unknown {
   return undefined;
 }
 
-export { evaluate_from_rust_binary, handleBinaryResponse, sync_request_binary, MessageType };
+export { evaluate_from_rust_binary, handleBinaryResponse, sync_request_binary, MessageType, DROP_NATIVE_REF_FN_ID };

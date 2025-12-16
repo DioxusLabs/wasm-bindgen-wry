@@ -14,6 +14,10 @@ use crate::ipc::{DecodedData, DecodedVariant, EncodedData, IPCMessage, MessageTy
 /// This should be handled specially in the JS runtime.
 pub const DROP_HEAP_REF_FN_ID: u32 = 0xFFFFFFFF;
 
+/// Reserved function ID for dropping native Rust refs when JS objects are GC'd.
+/// JS sends this when a FinalizationRegistry callback fires for a RustFunction.
+pub const DROP_NATIVE_REF_FN_ID: u32 = 0xFFFFFFFF;
+
 /// Inner type for JSHeapRef that holds the ID and implements Drop.
 /// When dropped, it releases the ID back to the free-list and queues
 /// a drop call to be sent to JS on the next flush.
@@ -522,6 +526,7 @@ pub(crate) fn wait_for_js_event<R: BinaryDecode>() -> R {
 fn handle_rust_callback(env: &DomEnv, data: &mut DecodedData) {
     let fn_id = data.take_u32().expect("Failed to read fn_id");
     match fn_id {
+        // Call a registered Rust callback
         0 => {
             let key = KeyData::from_ffi(data.take_u64().unwrap()).into();
 
@@ -556,6 +561,20 @@ fn handle_rust_callback(env: &DomEnv, data: &mut DecodedData) {
                         .replace(function);
                 });
             }
+        }
+        // Drop a native Rust object when JS GC'd the wrapper
+        DROP_NATIVE_REF_FN_ID => {
+            let key: DefaultKey = KeyData::from_ffi(data.take_u64().unwrap()).into();
+            println!("Dropping native Rust object with key: {:?}", key);
+
+            // Remove the object from the thread-local encoder
+            THREAD_LOCAL_FUNCTION_ENCODER.with(|fn_encoder| {
+                fn_encoder.borrow_mut().functions.remove(key);
+            });
+
+            // Send empty response
+            let response = IPCMessage::new_respond(|_| {});
+            env.js_response(response);
         }
         _ => todo!(),
     }
