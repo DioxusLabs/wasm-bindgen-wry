@@ -36,7 +36,7 @@ pub(crate) trait BinaryDecode: Sized {
 
 /// Trait for return types that can be used in batched JS calls.
 /// Determines how the type behaves during batching.
-pub trait BatchableResult: BinaryDecode + std::fmt::Debug{
+pub trait BatchableResult: BinaryDecode + std::fmt::Debug {
     /// Whether this result type requires flushing the batch to get the actual value.
     /// Returns false for opaque types (placeholder) and trivial types (known value).
     fn needs_flush() -> bool;
@@ -179,7 +179,7 @@ impl BinaryEncode for &str {
 
 impl TypeConstructor for String {
     fn create_type_instance() -> String {
-        "window.strType".to_string()
+        <str as TypeConstructor>::create_type_instance()
     }
 }
 
@@ -516,13 +516,17 @@ pub struct BatchState {
 
 impl BatchState {
     fn new() -> Self {
-        let mut encoder = EncodedData::new();
-        encoder.push_u8(MessageType::Evaluate as u8);
         Self {
-            encoder,
+            encoder: Self::new_encoder_for_evaluate(),
             next_heap_id: 0,
             is_batching: false,
         }
+    }
+
+    fn new_encoder_for_evaluate() -> EncodedData {
+        let mut encoder = EncodedData::new();
+        encoder.push_u8(MessageType::Evaluate as u8);
+        encoder
     }
 
     /// Get the next heap ID for placeholder allocation
@@ -540,14 +544,10 @@ impl BatchState {
     /// Take the message data and reset the batch for reuse
     fn take_message(&mut self) -> IPCMessage {
         let msg = IPCMessage::new(self.encoder.to_bytes());
-
-        // Reset for next batch
-        self.encoder = EncodedData::new();
-        self.encoder.push_u8(MessageType::Evaluate as u8);
-
+        self.encoder = Self::new_encoder_for_evaluate();
         msg
     }
-    
+
     fn is_empty(&self) -> bool {
         // 12 bytes for offsets + 1 byte for message type
         self.encoder.byte_len() <= 13
@@ -585,4 +585,3 @@ pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
 
     result
 }
-
