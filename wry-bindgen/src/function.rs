@@ -449,4 +449,3 @@ pub(crate) fn register_value(callback: RustValue) -> DefaultKey {
     THREAD_LOCAL_FUNCTION_ENCODER
         .with(|fn_encoder| fn_encoder.borrow_mut().register_value(callback))
 }
-

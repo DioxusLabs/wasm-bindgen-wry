@@ -1,7 +1,7 @@
 //! Javascript methods defined for use in JsValue methods
 
-use crate::wasm_bindgen;
 use crate::JsValue;
+use crate::wasm_bindgen;
 
 #[wasm_bindgen(crate = crate, inline_js = r#"
     export function __wry_is_undefined(x) { return x === undefined; }

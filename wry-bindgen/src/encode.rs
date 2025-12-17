@@ -4,11 +4,11 @@
 //! to/from the binary IPC protocol.
 
 use crate::batch::BatchState;
+use crate::function::{RustValue, register_value};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::value::JsValue;
-use std::marker::PhantomData;
-use crate::function::{RustValue, register_value};
 use slotmap::Key;
+use std::marker::PhantomData;
 
 /// Trait for creating a JavaScript type instance.
 /// Used to map Rust types to their JavaScript type constructors.

@@ -12,7 +12,7 @@ use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
 
 use wasm_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
-use wasm_bindgen::runtime::{get_runtime, AppEvent};
+use wasm_bindgen::runtime::{AppEvent, get_runtime};
 
 use crate::FunctionRegistry;
 use crate::home::root_response;

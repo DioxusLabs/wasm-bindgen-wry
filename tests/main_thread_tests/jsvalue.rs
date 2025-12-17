@@ -1,4 +1,4 @@
-use wasm_bindgen::{wasm_bindgen, JsValue};
+use wasm_bindgen::{JsValue, wasm_bindgen};
 
 pub(crate) fn test_jsvalue_constants() {
     // Test that undefined and null constants have correct identity checks
@@ -89,7 +89,10 @@ pub(crate) fn test_jsvalue_from_js() {
     // Get values from JS and verify using JsValue methods
     let undef = get_undefined();
     eprintln!("[TEST] get_undefined() returned idx={:?}", undef);
-    assert!(undef.is_undefined(), "get_undefined() should return undefined");
+    assert!(
+        undef.is_undefined(),
+        "get_undefined() should return undefined"
+    );
 
     let null = get_null();
     eprintln!("[TEST] get_null() returned idx={:?}", null);
@@ -113,6 +116,12 @@ pub(crate) fn test_jsvalue_pass_to_js() {
     }
 
     // Test that Rust-created constants are correctly interpreted by JS
-    assert!(check_is_undefined(&JsValue::undefined()), "JsValue::undefined() should be undefined in JS");
-    assert!(check_is_null(&JsValue::null()), "JsValue::null() should be null in JS");
+    assert!(
+        check_is_undefined(&JsValue::undefined()),
+        "JsValue::undefined() should be undefined in JS"
+    );
+    assert!(
+        check_is_null(&JsValue::null()),
+        "JsValue::null() should be null in JS"
+    );
 }

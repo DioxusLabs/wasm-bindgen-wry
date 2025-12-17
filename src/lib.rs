@@ -14,12 +14,14 @@ mod webview;
 use webview::State;
 
 // Re-export bindings for convenience
-pub use bindings::{Element, Document, Window, WINDOW, alert, console_log};
-pub use bindings::{set_on_log};
+pub use bindings::set_on_log;
+pub use bindings::{Document, Element, WINDOW, Window, alert, console_log};
 
 // Re-export prelude items that apps need
-pub use wasm_bindgen::prelude::{batch, set_event_loop_proxy, wait_for_js_result, shutdown, AppEvent};
 pub use wasm_bindgen::JsValue;
+pub use wasm_bindgen::prelude::{
+    AppEvent, batch, set_event_loop_proxy, shutdown, wait_for_js_result,
+};
 
 /// Run a webview application with the given app function.
 ///
@@ -73,7 +75,10 @@ where
     set_event_loop_proxy(proxy);
     let registry = &*FUNCTION_REGISTRY;
 
-    println!("=== Generated JS Script ===\n{}\n=== End Script ===", registry.script());
+    println!(
+        "=== Generated JS Script ===\n{}\n=== End Script ===",
+        registry.script()
+    );
 
     // Spawn the app thread with panic handling - if the app panics, shut down the webview
     std::thread::spawn(move || {

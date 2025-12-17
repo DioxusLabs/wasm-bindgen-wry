@@ -23,5 +23,6 @@ fn main() {
         jsvalue::test_jsvalue_equality();
         jsvalue::test_jsvalue_from_js();
         jsvalue::test_jsvalue_pass_to_js();
-    }).unwrap();
+    })
+    .unwrap();
 }

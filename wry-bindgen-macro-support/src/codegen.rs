@@ -366,10 +366,7 @@ fn generate_js_code(func: &ImportFunction) -> String {
         // Reference the pre-loaded module export
         return format!(
             "({}) => window.__wryModules[\"{}\"].{}({})",
-            args_str,
-            registry_name,
-            js_name,
-            args_str
+            args_str, registry_name, js_name, args_str
         );
     }
 
@@ -380,7 +377,13 @@ fn generate_js_code(func: &ImportFunction) -> String {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
             if let Some(ref ns) = func.js_namespace {
-                format!("({}) => {}.{}({})", args_str, ns.join("."), js_name, args_str)
+                format!(
+                    "({}) => {}.{}({})",
+                    args_str,
+                    ns.join("."),
+                    js_name,
+                    args_str
+                )
             } else {
                 format!("({}) => {}({})", args_str, js_name, args_str)
             }
@@ -439,7 +442,9 @@ fn generate_args(func: &ImportFunction, krate: &TokenStream) -> syn::Result<Gene
         | ImportFunctionKind::Setter { .. } => {
             fn_types.push(quote! { &#krate::JsValue });
             call_values.push(quote! { &self.obj });
-            type_constructors.push(quote! { <&#krate::JsValue as #krate::TypeConstructor<_>>::create_type_instance() });
+            type_constructors.push(
+                quote! { <&#krate::JsValue as #krate::TypeConstructor<_>>::create_type_instance() },
+            );
         }
         _ => {}
     }
@@ -451,7 +456,8 @@ fn generate_args(func: &ImportFunction, krate: &TokenStream) -> syn::Result<Gene
         fn_params.push(quote! { #name: #ty });
         fn_types.push(quote! { #ty });
         call_values.push(quote! { #name });
-        type_constructors.push(quote! { <#ty as #krate::TypeConstructor<_>>::create_type_instance() });
+        type_constructors
+            .push(quote! { <#ty as #krate::TypeConstructor<_>>::create_type_instance() });
     }
 
     let fn_params_tokens = if fn_params.is_empty() {
@@ -488,11 +494,10 @@ fn generate_args(func: &ImportFunction, krate: &TokenStream) -> syn::Result<Gene
 fn extract_type_name(ty: &syn::Type) -> syn::Result<&syn::Ident> {
     match ty {
         syn::Type::Reference(r) => extract_type_name(&r.elem),
-        syn::Type::Path(p) => {
-            p.path.get_ident().ok_or_else(|| {
-                syn::Error::new_spanned(ty, "expected simple type name")
-            })
-        }
+        syn::Type::Path(p) => p
+            .path
+            .get_ident()
+            .ok_or_else(|| syn::Error::new_spanned(ty, "expected simple type name")),
         _ => Err(syn::Error::new_spanned(ty, "unsupported receiver type")),
     }
 }
@@ -510,7 +515,8 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
     let js_code = generate_static_js_code(st);
 
     // Generate the type constructor for the return type
-    let ret_type_constructor = quote! { <#ty as #krate::TypeConstructor<_>>::create_type_instance() };
+    let ret_type_constructor =
+        quote! { <#ty as #krate::TypeConstructor<_>>::create_type_instance() };
 
     if st.thread_local_v2 {
         // Generate a lazily-initialized thread-local static

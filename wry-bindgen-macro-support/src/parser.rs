@@ -3,11 +3,11 @@
 //! This module parses the attributes on `#[wasm_bindgen(...)]` into a structured form.
 
 use proc_macro2::{Span, TokenStream};
+use quote::ToTokens;
 use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
 use syn::{Expr, Ident, LitStr, Path, Token};
-use quote::ToTokens;
 
 /// Parse an identifier or keyword as a string.
 /// This allows using Rust keywords like `return`, `self`, `type`, etc. as JS names.
@@ -276,7 +276,10 @@ impl Parse for BindgenAttr {
                 // Handle `crate` keyword specially since it's not a valid Path
                 let path = if input.peek(Token![crate]) {
                     let crate_token: Token![crate] = input.parse()?;
-                    syn::Path::from(syn::PathSegment::from(syn::Ident::new("crate", crate_token.span)))
+                    syn::Path::from(syn::PathSegment::from(syn::Ident::new(
+                        "crate",
+                        crate_token.span,
+                    )))
                 } else {
                     input.parse()?
                 };
