@@ -86,8 +86,8 @@ where
             } else if let Some(s) = panic_info.downcast_ref::<String>() {
                 eprintln!("Panic message: {}", s);
             }
-            shutdown();
         }
+        shutdown();
     });
 
     let mut state = State::new(registry);

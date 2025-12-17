@@ -29,3 +29,8 @@ wasm-bindgen-macro = { package = "wry-bindgen-macro", path = "wry-bindgen-macro"
 
 [build-dependencies]
 lazy-js-bundle = { git = "https://github.com/DioxusLabs/dioxus" }
+
+[[test]]
+name = "main_thread_tests"
+path = "tests/main_thread_tests/main.rs"
+harness = false
