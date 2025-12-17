@@ -11,8 +11,8 @@ use winit::{
 use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
 
-use wry_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
-use wry_bindgen::runtime::get_runtime;
+use wasm_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
+use wasm_bindgen::runtime::get_runtime;
 
 use crate::FunctionRegistry;
 use crate::home::root_response;

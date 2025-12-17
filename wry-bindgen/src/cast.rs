@@ -29,25 +29,25 @@ pub trait JsCast: AsRef<JsValue> + Into<JsValue> + Sized {
     /// the value is actually of the correct type.
     fn unchecked_from_js_ref(val: &JsValue) -> &Self;
 
-    /// Try to cast a JsValue to this type.
+    /// Try to cast this value to type T.
     ///
-    /// Returns `Ok(Self)` if the value is an instance of this type,
-    /// otherwise returns `Err(val)` with the original value.
-    fn dyn_into(val: JsValue) -> Result<Self, JsValue> {
-        if Self::instanceof(&val) {
-            Ok(Self::unchecked_from_js(val))
+    /// Returns `Ok(T)` if the value is an instance of T,
+    /// otherwise returns `Err(self)` with the original value.
+    fn dyn_into<T: JsCast>(self) -> Result<T, Self> {
+        if T::instanceof(self.as_ref()) {
+            Ok(T::unchecked_from_js(self.into()))
         } else {
-            Err(val)
+            Err(self)
         }
     }
 
-    /// Try to get a reference to this type from a JsValue reference.
+    /// Try to get a reference to type T from this value.
     ///
-    /// Returns `Some(&Self)` if the value is an instance of this type,
+    /// Returns `Some(&T)` if the value is an instance of T,
     /// otherwise returns `None`.
-    fn dyn_ref(val: &JsValue) -> Option<&Self> {
-        if Self::instanceof(val) {
-            Some(Self::unchecked_from_js_ref(val))
+    fn dyn_ref<T: JsCast>(&self) -> Option<&T> {
+        if T::instanceof(self.as_ref()) {
+            Some(T::unchecked_from_js_ref(self.as_ref()))
         } else {
             None
         }

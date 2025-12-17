@@ -3,9 +3,9 @@
 //! This crate contains the parsing, AST, and code generation logic for the
 //! `#[wasm_bindgen]` attribute macro that targets Wry's WebView.
 
-mod parser;
 mod ast;
 mod codegen;
+mod parser;
 
 use proc_macro2::TokenStream;
 

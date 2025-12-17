@@ -16,8 +16,8 @@ serde_json = "1.0.145"
 slotmap = "1.1.1"
 winit = "0.30.12"
 wry = { version = "0.53.5", features = ["devtools"] }
-wry-bindgen = { path = "wry-bindgen" }
-wry-bindgen-macro = { path = "wry-bindgen-macro" }
+wasm-bindgen = { package = "wry-bindgen", path = "wry-bindgen" }
+wasm-bindgen-macro = { package = "wry-bindgen-macro", path = "wry-bindgen-macro" }
 
 [build-dependencies]
 lazy-js-bundle = { git = "https://github.com/DioxusLabs/dioxus" }

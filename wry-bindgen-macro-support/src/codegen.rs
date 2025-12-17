@@ -11,6 +11,13 @@ use quote::{format_ident, quote};
 pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     let mut tokens = TokenStream::new();
 
+    // Collect type names being defined in this block
+    let type_names: std::collections::HashSet<String> = program
+        .types
+        .iter()
+        .map(|t| t.rust_name.to_string())
+        .collect();
+
     // Generate type definitions
     for ty in &program.types {
         tokens.extend(generate_type(ty)?);
@@ -18,7 +25,7 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
 
     // Generate function definitions
     for func in &program.functions {
-        tokens.extend(generate_function(func)?);
+        tokens.extend(generate_function(func, &type_names)?);
     }
 
     // Generate static definitions
@@ -34,20 +41,25 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
     let vis = &ty.vis;
     let rust_name = &ty.rust_name;
     let _js_name = &ty.js_name;
+    let derives = &ty.derives;
 
-    // Generate the struct definition using wry_bindgen::JsValue
+    // Generate the struct definition using wasm_bindgen::JsValue
     // repr(transparent) ensures the same memory layout
+    // Apply user-provided attributes (like #[derive(Debug, PartialEq, Eq)])
+    // Use named struct with `obj` field to match wasm-bindgen's generated types
     let struct_def = quote! {
-        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+        #(#derives)*
         #[repr(transparent)]
-        #vis struct #rust_name(wry_bindgen::JsValue);
+        #vis struct #rust_name {
+            pub obj: wasm_bindgen::JsValue,
+        }
     };
 
     // Generate AsRef<JsValue> implementation
     let as_ref_impl = quote! {
-        impl AsRef<wry_bindgen::JsValue> for #rust_name {
-            fn as_ref(&self) -> &wry_bindgen::JsValue {
-                &self.0
+        impl AsRef<wasm_bindgen::JsValue> for #rust_name {
+            fn as_ref(&self) -> &wasm_bindgen::JsValue {
+                &self.obj
             }
         }
 
@@ -58,17 +70,29 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
             /// This is safe because all imported JS types are #[repr(transparent)]
             /// wrappers around JsValue with identical memory layouts.
             #[inline]
-            pub fn unchecked_from_js_ref(val: &wry_bindgen::JsValue) -> &Self {
-                unsafe { &*(val as *const wry_bindgen::JsValue as *const Self) }
+            pub fn unchecked_from_js_ref(val: &wasm_bindgen::JsValue) -> &Self {
+                unsafe { &*(val as *const wasm_bindgen::JsValue as *const Self) }
             }
         }
     };
 
-    // Generate From<Type> for JsValue
+    // Generate From<Type> for JsValue and From<JsValue> for Type
     let into_jsvalue = quote! {
-        impl From<#rust_name> for wry_bindgen::JsValue {
+        impl From<#rust_name> for wasm_bindgen::JsValue {
             fn from(val: #rust_name) -> Self {
-                val.0
+                val.obj
+            }
+        }
+
+        impl From<&#rust_name> for wasm_bindgen::JsValue {
+            fn from(val: &#rust_name) -> Self {
+                val.obj.clone()
+            }
+        }
+
+        impl From<wasm_bindgen::JsValue> for #rust_name {
+            fn from(val: wasm_bindgen::JsValue) -> Self {
+                Self { obj: val }
             }
         }
     };
@@ -76,9 +100,9 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
     // Generate Deref to JsValue - this is always safe, just field access
     let deref_impls = quote! {
         impl std::ops::Deref for #rust_name {
-            type Target = wry_bindgen::JsValue;
+            type Target = wasm_bindgen::JsValue;
             fn deref(&self) -> &Self::Target {
-                &self.0
+                &self.obj
             }
         }
     };
@@ -89,13 +113,13 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
         from_parents.extend(quote! {
             impl From<#rust_name> for #parent {
                 fn from(val: #rust_name) -> #parent {
-                    #parent(val.0)
+                    #parent { obj: val.obj }
                 }
             }
 
             impl From<&#rust_name> for #parent {
                 fn from(val: &#rust_name) -> #parent {
-                    #parent(val.0.clone())
+                    #parent { obj: val.obj.clone() }
                 }
             }
 
@@ -111,40 +135,60 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
     // Generate TypeConstructor implementation
     // All JS types use HeapRefType since they're references to JS heap objects
     let type_constructor_impl = quote! {
-        impl wry_bindgen::TypeConstructor for #rust_name {
+        impl wasm_bindgen::TypeConstructor for #rust_name {
             fn create_type_instance() -> String {
-                <wry_bindgen::JsValue as wry_bindgen::TypeConstructor>::create_type_instance()
+                <wasm_bindgen::JsValue as wasm_bindgen::TypeConstructor>::create_type_instance()
             }
         }
     };
 
     // Generate BinaryEncode implementation
     let binary_encode_impl = quote! {
-        impl wry_bindgen::BinaryEncode for #rust_name {
-            fn encode(self, encoder: &mut wry_bindgen::EncodedData) {
-                self.0.encode(encoder);
+        impl wasm_bindgen::BinaryEncode for #rust_name {
+            fn encode(self, encoder: &mut wasm_bindgen::EncodedData) {
+                self.obj.encode(encoder);
             }
         }
     };
 
     // Generate BinaryDecode implementation
     let binary_decode_impl = quote! {
-        impl wry_bindgen::BinaryDecode for #rust_name {
-            fn decode(decoder: &mut wry_bindgen::DecodedData) -> Result<Self, wry_bindgen::DecodeError> {
-                wry_bindgen::JsValue::decode(decoder).map(Self)
+        impl wasm_bindgen::BinaryDecode for #rust_name {
+            fn decode(decoder: &mut wasm_bindgen::DecodedData) -> Result<Self, wasm_bindgen::DecodeError> {
+                wasm_bindgen::JsValue::decode(decoder).map(|v| Self { obj: v })
             }
         }
     };
 
     // Generate BatchableResult implementation
     let batchable_impl = quote! {
-        impl wry_bindgen::BatchableResult for #rust_name {
+        impl wasm_bindgen::BatchableResult for #rust_name {
             fn needs_flush() -> bool {
                 false
             }
 
-            fn batched_placeholder(batch: &mut wry_bindgen::batch::BatchState) -> Self {
-                Self(<wry_bindgen::JsValue as wry_bindgen::BatchableResult>::batched_placeholder(batch))
+            fn batched_placeholder(batch: &mut wasm_bindgen::batch::BatchState) -> Self {
+                Self { obj: <wasm_bindgen::JsValue as wasm_bindgen::BatchableResult>::batched_placeholder(batch) }
+            }
+        }
+    };
+
+    // Generate JsCast implementation
+    let jscast_impl = quote! {
+        impl wasm_bindgen::JsCast for #rust_name {
+            fn instanceof(val: &wasm_bindgen::JsValue) -> bool {
+                // For now, always return false - proper instanceof requires JS runtime check
+                let _ = val;
+                false
+            }
+
+            fn unchecked_from_js(val: wasm_bindgen::JsValue) -> Self {
+                Self { obj: val }
+            }
+
+            fn unchecked_from_js_ref(val: &wasm_bindgen::JsValue) -> &Self {
+                // SAFETY: #[repr(transparent)] guarantees same layout
+                unsafe { &*(val as *const wasm_bindgen::JsValue as *const Self) }
             }
         }
     };
@@ -159,17 +203,27 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
         #binary_encode_impl
         #binary_decode_impl
         #batchable_impl
+        #jscast_impl
     })
 }
 
 /// Generate code for an imported function
-fn generate_function(func: &ImportFunction) -> syn::Result<TokenStream> {
+fn generate_function(
+    func: &ImportFunction,
+    type_names: &std::collections::HashSet<String>,
+) -> syn::Result<TokenStream> {
     let vis = &func.vis;
     let rust_name = &func.rust_name;
 
     // Generate unique function name for registry
     let registry_name = match &func.kind {
-        ImportFunctionKind::Normal => func.rust_name.to_string(),
+        ImportFunctionKind::Normal => {
+            if let Some(ref ns) = func.js_namespace {
+                format!("{}::{}", ns.join("."), func.rust_name)
+            } else {
+                func.rust_name.to_string()
+            }
+        }
         ImportFunctionKind::Method { .. }
         | ImportFunctionKind::Getter { .. }
         | ImportFunctionKind::Setter { .. } => {
@@ -198,22 +252,22 @@ fn generate_function(func: &ImportFunction) -> syn::Result<TokenStream> {
 
     // Generate return type constructor
     let ret_type_constructor = match &func.ret {
-        Some(_ty) => quote! { <#ret_type as wry_bindgen::TypeConstructor<_>>::create_type_instance() },
+        Some(_ty) => quote! { <#ret_type as wasm_bindgen::TypeConstructor<_>>::create_type_instance() },
         None => quote! { "new window.NullType()".to_string() },
     };
 
     // Generate the inline_js option
     let js_name_str = &func.js_name;
     let inline_js_option = if let Some(inline_js) = func.inline_js.as_ref() {
-        quote! { Some(crate::InlineJsModule::new(#inline_js, #js_name_str)) }
+        quote! { Some(wasm_bindgen::InlineJsModule::new(#inline_js, #js_name_str)) }
     } else {
         quote! { None }
     };
 
     // Generate the function body
     let func_body = quote! {
-        inventory::submit! {
-            crate::JsFunctionSpec::new(
+        wasm_bindgen::inventory::submit! {
+            wasm_bindgen::JsFunctionSpec::new(
                 #registry_name,
                 #js_code,
                 || (#type_constructors, #ret_type_constructor),
@@ -222,8 +276,8 @@ fn generate_function(func: &ImportFunction) -> syn::Result<TokenStream> {
         }
 
         // Look up the function at runtime
-        let func: wry_bindgen::JSFunction<fn(#fn_types) -> #ret_type> =
-            crate::FUNCTION_REGISTRY
+        let func: wasm_bindgen::JSFunction<fn(#fn_types) -> #ret_type> =
+            wasm_bindgen::FUNCTION_REGISTRY
                 .get_function(#registry_name)
                 .expect(concat!("Function not found: ", #registry_name));
 
@@ -234,6 +288,20 @@ fn generate_function(func: &ImportFunction) -> syn::Result<TokenStream> {
     // Generate the full function based on kind
     match &func.kind {
         ImportFunctionKind::Normal => {
+            // Check if this function has a single-element js_namespace that matches a type
+            // defined in this extern block. If so, generate as a static method to avoid collisions.
+            if let Some(ns) = &func.js_namespace {
+                if ns.len() == 1 && type_names.contains(&ns[0]) {
+                    let class_ident = format_ident!("{}", &ns[0]);
+                    return Ok(quote! {
+                        impl #class_ident {
+                            #vis fn #rust_name(#fn_params) -> #ret_type {
+                                #func_body
+                            }
+                        }
+                    });
+                }
+            }
             Ok(quote! {
                 #vis fn #rust_name(#fn_params) -> #ret_type {
                     #func_body
@@ -263,9 +331,10 @@ fn generate_function(func: &ImportFunction) -> syn::Result<TokenStream> {
         }
         ImportFunctionKind::Constructor { class } => {
             let class_ident = format_ident!("{}", class);
+            // Use the actual return type (may be Result<T, JsValue> for catch constructors)
             Ok(quote! {
                 impl #class_ident {
-                    #vis fn #rust_name(#fn_params) -> #class_ident {
+                    #vis fn #rust_name(#fn_params) -> #ret_type {
                         #func_body
                     }
                 }
@@ -308,7 +377,11 @@ fn generate_js_code(func: &ImportFunction) -> String {
         ImportFunctionKind::Normal => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
-            format!("({}) => {}({})", args_str, js_name, args_str)
+            if let Some(ref ns) = func.js_namespace {
+                format!("({}) => {}.{}({})", args_str, ns.join("."), js_name, args_str)
+            } else {
+                format!("({}) => {}({})", args_str, js_name, args_str)
+            }
         }
         ImportFunctionKind::Method { .. } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
@@ -344,7 +417,7 @@ struct GeneratedArgs {
     fn_params: TokenStream,
     /// Just the types for fn pointer: `T1, T2`
     fn_types: TokenStream,
-    /// Values to pass to call: `self.0.clone(), arg1, arg2`
+    /// Values to pass to call: `&self.obj, arg1, arg2`
     call_values: TokenStream,
     /// Type constructor expressions
     type_constructors: TokenStream,
@@ -362,9 +435,9 @@ fn generate_args(func: &ImportFunction) -> syn::Result<GeneratedArgs> {
         ImportFunctionKind::Method { .. }
         | ImportFunctionKind::Getter { .. }
         | ImportFunctionKind::Setter { .. } => {
-            fn_types.push(quote! { &wry_bindgen::JsValue });
-            call_values.push(quote! { &self.0 });
-            type_constructors.push(quote! { <&wry_bindgen::JsValue as wry_bindgen::TypeConstructor<_>>::create_type_instance() });
+            fn_types.push(quote! { &wasm_bindgen::JsValue });
+            call_values.push(quote! { &self.obj });
+            type_constructors.push(quote! { <&wasm_bindgen::JsValue as wasm_bindgen::TypeConstructor<_>>::create_type_instance() });
         }
         _ => {}
     }
@@ -376,7 +449,7 @@ fn generate_args(func: &ImportFunction) -> syn::Result<GeneratedArgs> {
         fn_params.push(quote! { #name: #ty });
         fn_types.push(quote! { #ty });
         call_values.push(quote! { #name });
-        type_constructors.push(quote! { <#ty as wry_bindgen::TypeConstructor<_>>::create_type_instance() });
+        type_constructors.push(quote! { <#ty as wasm_bindgen::TypeConstructor<_>>::create_type_instance() });
     }
 
     let fn_params_tokens = if fn_params.is_empty() {
@@ -435,13 +508,13 @@ fn generate_static(st: &ImportStatic) -> syn::Result<TokenStream> {
     let js_code = generate_static_js_code(st);
 
     // Generate the type constructor for the return type
-    let ret_type_constructor = quote! { <#ty as wry_bindgen::TypeConstructor<_>>::create_type_instance() };
+    let ret_type_constructor = quote! { <#ty as wasm_bindgen::TypeConstructor<_>>::create_type_instance() };
 
     if st.thread_local_v2 {
         // Generate a lazily-initialized thread-local static
         Ok(quote! {
-            inventory::submit! {
-                crate::JsFunctionSpec::new(
+            wasm_bindgen::inventory::submit! {
+                wasm_bindgen::JsFunctionSpec::new(
                     #registry_name,
                     #js_code,
                     || (vec![] as Vec<String>, #ret_type_constructor),
@@ -449,26 +522,26 @@ fn generate_static(st: &ImportStatic) -> syn::Result<TokenStream> {
                 )
             }
 
-            #vis static #rust_name: wry_bindgen::JsThreadLocal<#ty> = {
+            #vis static #rust_name: wasm_bindgen::JsThreadLocal<#ty> = {
                 fn init() -> #ty {
                     // Look up the accessor function at runtime
-                    let func: wry_bindgen::JSFunction<fn() -> #ty> =
-                        crate::FUNCTION_REGISTRY
+                    let func: wasm_bindgen::JSFunction<fn() -> #ty> =
+                        wasm_bindgen::FUNCTION_REGISTRY
                             .get_function(#registry_name)
                             .expect(concat!("Static accessor not found: ", #registry_name));
 
                     // Call the accessor to get the value
                     func.call()
                 }
-                wry_bindgen::__wry_bindgen_thread_local!(#ty = init())
+                wasm_bindgen::__wry_bindgen_thread_local!(#ty = init())
             };
         })
     } else {
         // For non-thread-local statics, generate a regular function accessor
         // This matches the behavior of wasm-bindgen without thread_local_v2 attribute
         Ok(quote! {
-            inventory::submit! {
-                crate::JsFunctionSpec::new(
+            wasm_bindgen::inventory::submit! {
+                wasm_bindgen::JsFunctionSpec::new(
                     #registry_name,
                     #js_code,
                     || (vec![] as Vec<String>, #ret_type_constructor),
@@ -478,8 +551,8 @@ fn generate_static(st: &ImportStatic) -> syn::Result<TokenStream> {
 
             #vis fn #rust_name() -> #ty {
                 // Look up the accessor function at runtime
-                let func: wry_bindgen::JSFunction<fn() -> #ty> =
-                    crate::FUNCTION_REGISTRY
+                let func: wasm_bindgen::JSFunction<fn() -> #ty> =
+                    wasm_bindgen::FUNCTION_REGISTRY
                         .get_function(#registry_name)
                         .expect(concat!("Static accessor not found: ", #registry_name));
 

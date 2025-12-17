@@ -3,9 +3,22 @@
 //! This module parses the attributes on `#[wasm_bindgen(...)]` into a structured form.
 
 use proc_macro2::{Span, TokenStream};
+use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream};
 use syn::punctuated::Punctuated;
-use syn::{Ident, LitStr, Token, Path};
+use syn::{Expr, Ident, LitStr, Path, Token};
+
+/// Parse an identifier or keyword as a string.
+/// This allows using Rust keywords like `return`, `self`, `type`, etc. as JS names.
+fn parse_any_ident(input: ParseStream) -> syn::Result<String> {
+    // Try to parse as a regular identifier first
+    if input.peek(Ident::peek_any) {
+        let ident = input.call(Ident::parse_any)?;
+        return Ok(ident.to_string());
+    }
+
+    Err(input.error("expected identifier"))
+}
 
 /// Parsed wasm_bindgen attributes
 #[derive(Debug, Default)]
@@ -40,6 +53,18 @@ pub struct BindgenAttrs {
     pub inline_js: Option<(Span, String)>,
     /// The `thread_local_v2` attribute - marks a static as lazily initialized
     pub thread_local_v2: Option<Span>,
+    /// The `is_type_of` attribute - custom type checking expression
+    pub is_type_of: Option<(Span, Expr)>,
+    /// The `indexing_getter` attribute - array-like indexing getter
+    pub indexing_getter: Option<Span>,
+    /// The `indexing_setter` attribute - array-like indexing setter
+    pub indexing_setter: Option<Span>,
+    /// The `indexing_deleter` attribute - array-like indexing deleter
+    pub indexing_deleter: Option<Span>,
+    /// The `final` attribute - mark type as final
+    pub final_: Option<Span>,
+    /// The `readonly` attribute - mark property as read-only
+    pub readonly: Option<Span>,
 }
 
 impl BindgenAttrs {
@@ -101,6 +126,12 @@ enum BindgenAttr {
     TypescriptType(Span, String),
     InlineJs(Span, String),
     ThreadLocalV2(Span),
+    IsTypeOf(Span, Expr),
+    IndexingGetter(Span),
+    IndexingSetter(Span),
+    IndexingDeleter(Span),
+    Final(Span),
+    Readonly(Span),
 }
 
 impl Parse for BindgenAttr {
@@ -122,7 +153,8 @@ impl Parse for BindgenAttr {
                 let name = if input.peek(LitStr) {
                     input.parse::<LitStr>()?.value()
                 } else {
-                    input.parse::<Ident>()?.to_string()
+                    // Support keywords like `return`, `self`, etc.
+                    parse_any_ident(input)?
                 };
                 Ok(BindgenAttr::JsName(span, name))
             }
@@ -196,7 +228,12 @@ impl Parse for BindgenAttr {
 
             "typescript_type" => {
                 input.parse::<Token![=]>()?;
-                let ty = input.parse::<LitStr>()?.value();
+                let ty = if input.peek(LitStr) {
+                    input.parse::<LitStr>()?.value()
+                } else {
+                    // Also accept identifier (for macro expansion like $name)
+                    parse_any_ident(input)?
+                };
                 Ok(BindgenAttr::TypescriptType(span, ty))
             }
 
@@ -205,6 +242,18 @@ impl Parse for BindgenAttr {
                 let js = input.parse::<LitStr>()?.value();
                 Ok(BindgenAttr::InlineJs(span, js))
             }
+
+            "is_type_of" => {
+                input.parse::<Token![=]>()?;
+                let expr: Expr = input.parse()?;
+                Ok(BindgenAttr::IsTypeOf(span, expr))
+            }
+
+            "indexing_getter" => Ok(BindgenAttr::IndexingGetter(span)),
+            "indexing_setter" => Ok(BindgenAttr::IndexingSetter(span)),
+            "indexing_deleter" => Ok(BindgenAttr::IndexingDeleter(span)),
+            "final" => Ok(BindgenAttr::Final(span)),
+            "readonly" => Ok(BindgenAttr::Readonly(span)),
 
             _ => Err(syn::Error::new(
                 span,
@@ -219,6 +268,10 @@ struct BindgenAttrList(Vec<BindgenAttr>);
 
 impl Parse for BindgenAttrList {
     fn parse(input: ParseStream) -> syn::Result<Self> {
+        // Handle empty input (e.g., #[wasm_bindgen] with no parentheses)
+        if input.is_empty() {
+            return Ok(BindgenAttrList(Vec::new()));
+        }
         let attrs = Punctuated::<BindgenAttr, Token![,]>::parse_terminated(input)?;
         Ok(BindgenAttrList(attrs.into_iter().collect()))
     }
@@ -226,6 +279,10 @@ impl Parse for BindgenAttrList {
 
 /// Parse the attribute token stream into BindgenAttrs
 pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
+    // Handle empty token stream - allows #[wasm_bindgen] without parentheses
+    if attr.is_empty() {
+        return Ok(BindgenAttrs::default());
+    }
     let list: BindgenAttrList = syn::parse2(attr)?;
     let mut result = BindgenAttrs::default();
 
@@ -290,7 +347,10 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
             }
             BindgenAttr::StaticMethodOf(span, ident) => {
                 if result.static_method_of.is_some() {
-                    return Err(syn::Error::new(span, "duplicate `static_method_of` attribute"));
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `static_method_of` attribute",
+                    ));
                 }
                 result.static_method_of = Some((span, ident));
             }
@@ -302,7 +362,10 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
             }
             BindgenAttr::TypescriptType(span, ty) => {
                 if result.typescript_type.is_some() {
-                    return Err(syn::Error::new(span, "duplicate `typescript_type` attribute"));
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `typescript_type` attribute",
+                    ));
                 }
                 result.typescript_type = Some((span, ty));
             }
@@ -314,9 +377,57 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
             }
             BindgenAttr::ThreadLocalV2(span) => {
                 if result.thread_local_v2.is_some() {
-                    return Err(syn::Error::new(span, "duplicate `thread_local_v2` attribute"));
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `thread_local_v2` attribute",
+                    ));
                 }
                 result.thread_local_v2 = Some(span);
+            }
+            BindgenAttr::IsTypeOf(span, expr) => {
+                if result.is_type_of.is_some() {
+                    return Err(syn::Error::new(span, "duplicate `is_type_of` attribute"));
+                }
+                result.is_type_of = Some((span, expr));
+            }
+            BindgenAttr::IndexingGetter(span) => {
+                if result.indexing_getter.is_some() {
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `indexing_getter` attribute",
+                    ));
+                }
+                result.indexing_getter = Some(span);
+            }
+            BindgenAttr::IndexingSetter(span) => {
+                if result.indexing_setter.is_some() {
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `indexing_setter` attribute",
+                    ));
+                }
+                result.indexing_setter = Some(span);
+            }
+            BindgenAttr::IndexingDeleter(span) => {
+                if result.indexing_deleter.is_some() {
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `indexing_deleter` attribute",
+                    ));
+                }
+                result.indexing_deleter = Some(span);
+            }
+            BindgenAttr::Final(span) => {
+                if result.final_.is_some() {
+                    return Err(syn::Error::new(span, "duplicate `final` attribute"));
+                }
+                result.final_ = Some(span);
+            }
+            BindgenAttr::Readonly(span) => {
+                if result.readonly.is_some() {
+                    return Err(syn::Error::new(span, "duplicate `readonly` attribute"));
+                }
+                result.readonly = Some(span);
             }
         }
     }

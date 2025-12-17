@@ -3,7 +3,7 @@
 //! This module provides types for lazily initializing and caching JavaScript
 //! global values, similar to wasm-bindgen's thread_local_v2 support.
 
-use std::{ thread::LocalKey};
+use std::thread::LocalKey;
 
 /// A thread-local accessor for lazily initialized JavaScript values.
 ///

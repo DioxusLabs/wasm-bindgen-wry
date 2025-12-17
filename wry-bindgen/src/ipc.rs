@@ -42,13 +42,21 @@ impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DecodeError::MessageTooShort { expected, actual } => {
-                write!(f, "message too short: expected at least {} bytes, got {}", expected, actual)
+                write!(
+                    f,
+                    "message too short: expected at least {} bytes, got {}",
+                    expected, actual
+                )
             }
             DecodeError::U8BufferEmpty => write!(f, "u8 buffer empty when trying to read"),
             DecodeError::U16BufferEmpty => write!(f, "u16 buffer empty when trying to read"),
             DecodeError::U32BufferEmpty => write!(f, "u32 buffer empty when trying to read"),
             DecodeError::StringBufferTooShort { expected, actual } => {
-                write!(f, "string buffer too short: expected {} bytes, got {}", expected, actual)
+                write!(
+                    f,
+                    "string buffer too short: expected {} bytes, got {}",
+                    expected, actual
+                )
             }
             DecodeError::InvalidUtf8 { position } => {
                 write!(f, "invalid UTF-8 at position {}", position)
@@ -56,7 +64,12 @@ impl fmt::Display for DecodeError {
             DecodeError::InvalidMessageType { value } => {
                 write!(f, "invalid message type: {}", value)
             }
-            DecodeError::InvalidHeaderOffsets { u16_offset, u8_offset, str_offset, total_len } => {
+            DecodeError::InvalidHeaderOffsets {
+                u16_offset,
+                u8_offset,
+                str_offset,
+                total_len,
+            } => {
                 write!(
                     f,
                     "invalid header offsets: u16={}, u8={}, str={}, total_len={}",
@@ -286,7 +299,10 @@ impl EncodedData {
 
     /// Get the total byte length of the encoded data.
     pub fn byte_len(&self) -> usize {
-        12 + self.u32_buf.len() * 4 + self.u16_buf.len() * 2 + self.u8_buf.len() + self.str_buf.len()
+        12 + self.u32_buf.len() * 4
+            + self.u16_buf.len() * 2
+            + self.u8_buf.len()
+            + self.str_buf.len()
     }
 
     /// Push a u8 to the buffer.

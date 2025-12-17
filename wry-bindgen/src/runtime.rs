@@ -10,9 +10,7 @@ use slotmap::{DefaultKey, KeyData};
 use winit::event_loop::EventLoopProxy;
 
 use crate::encode::BinaryDecode;
-use crate::function::{
-    RustValue, DROP_NATIVE_REF_FN_ID, THREAD_LOCAL_FUNCTION_ENCODER,
-};
+use crate::function::{DROP_NATIVE_REF_FN_ID, RustValue, THREAD_LOCAL_FUNCTION_ENCODER};
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 
 /// The runtime environment for communicating with JavaScript.

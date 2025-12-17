@@ -5,6 +5,35 @@
 use crate::parser::BindgenAttrs;
 use syn::{FnArg, Ident, Pat, Path, ReturnType, Type, Visibility};
 
+/// Extract a simple type name from a Type
+/// Handles simple types like `Foo` and generic types like `Result<Foo, Bar>`
+fn extract_simple_type_name(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Path(p) => {
+            // Check for simple ident first
+            if let Some(ident) = p.path.get_ident() {
+                return Some(ident.to_string());
+            }
+            // Check for generic types like Result<Foo, Bar> - extract the first type arg
+            if let Some(segment) = p.path.segments.last() {
+                let seg_name = segment.ident.to_string();
+                if seg_name == "Result" || seg_name == "Option" {
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
+                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
+                            return extract_simple_type_name(inner_ty);
+                        }
+                    }
+                } else {
+                    // For other types, return the segment name
+                    return Some(seg_name);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Top-level program containing all parsed items
 #[derive(Debug, Default)]
 pub struct Program {
@@ -29,6 +58,8 @@ pub struct ImportType {
     pub extends: Vec<Path>,
     /// TypeScript type override
     pub typescript_type: Option<String>,
+    /// User-provided derive attributes (e.g., Clone, Debug)
+    pub derives: Vec<syn::Attribute>,
 }
 
 /// An imported JavaScript function
@@ -123,11 +154,7 @@ pub struct ImportStatic {
 }
 
 /// Parse a syn::Item into our AST
-pub fn parse_item(
-    program: &mut Program,
-    item: syn::Item,
-    attrs: BindgenAttrs,
-) -> syn::Result<()> {
+pub fn parse_item(program: &mut Program, item: syn::Item, attrs: BindgenAttrs) -> syn::Result<()> {
     match item {
         syn::Item::ForeignMod(foreign) => {
             parse_foreign_mod(program, foreign, attrs)?;
@@ -196,7 +223,17 @@ fn extract_wasm_bindgen_attrs(attrs: &[syn::Attribute]) -> syn::Result<BindgenAt
 
     for attr in attrs {
         if attr.path().is_ident("wasm_bindgen") {
-            let tokens = attr.meta.require_list()?.tokens.clone();
+            // Handle both #[wasm_bindgen] and #[wasm_bindgen(...)]
+            let tokens = match &attr.meta {
+                syn::Meta::Path(_) => proc_macro2::TokenStream::new(), // Empty - no parentheses
+                syn::Meta::List(list) => list.tokens.clone(),
+                syn::Meta::NameValue(_) => {
+                    return Err(syn::Error::new_spanned(
+                        attr,
+                        "wasm_bindgen does not support = syntax at top level",
+                    ));
+                }
+            };
             let parsed = crate::parser::parse_attrs(tokens)?;
 
             // Merge attributes
@@ -306,7 +343,18 @@ fn parse_foreign_fn(
 
     // Determine function kind
     let kind = if attrs.is_constructor() {
-        let class = js_class.clone().unwrap_or_else(|| js_name.clone());
+        // For constructors, ALWAYS use return type for the Rust impl block
+        // js_class is for JavaScript, not for Rust type name
+        let class = if let Some(ref ret_ty) = ret {
+            if let Some(name) = extract_simple_type_name(ret_ty) {
+                name
+            } else {
+                // Fallback to js_class or js_name if return type isn't simple
+                js_class.clone().unwrap_or_else(|| js_name.clone())
+            }
+        } else {
+            js_class.clone().unwrap_or_else(|| js_name.clone())
+        };
         ImportFunctionKind::Constructor { class }
     } else if let Some((_, ref ident)) = attrs.static_method_of {
         ImportFunctionKind::StaticMethod {
@@ -361,10 +409,7 @@ fn parse_foreign_fn(
 }
 
 /// Parse a foreign type declaration
-fn parse_foreign_type(
-    t: syn::ForeignItemType,
-    attrs: BindgenAttrs,
-) -> syn::Result<ImportType> {
+fn parse_foreign_type(t: syn::ForeignItemType, attrs: BindgenAttrs) -> syn::Result<ImportType> {
     let rust_name = t.ident.clone();
     let js_name = attrs
         .js_name()
@@ -374,12 +419,21 @@ fn parse_foreign_type(
     let extends: Vec<Path> = attrs.extends.into_iter().map(|(_, p)| p).collect();
     let typescript_type = attrs.typescript_type.map(|(_, t)| t);
 
+    // Extract derive attributes (non-wasm_bindgen attributes that should be preserved)
+    let derives: Vec<syn::Attribute> = t
+        .attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("wasm_bindgen"))
+        .cloned()
+        .collect();
+
     Ok(ImportType {
         vis: t.vis,
         rust_name,
         js_name,
         extends,
         typescript_type,
+        derives,
     })
 }
 

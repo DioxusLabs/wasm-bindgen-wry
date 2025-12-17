@@ -3,11 +3,12 @@
 //! This module provides DOM API bindings using the wry_bindgen macro,
 //! which generates code compatible with the IPC protocol.
 
-use wry_bindgen_macro::wasm_bindgen;
+use wasm_bindgen_macro::wasm_bindgen;
 
 #[wasm_bindgen]
 extern "C" {
     /// A DOM Element type
+    #[derive(Clone)]
     pub type Element;
 
     /// Log a message to the console
