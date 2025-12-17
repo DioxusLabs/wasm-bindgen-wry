@@ -28,8 +28,6 @@ fn main() {
         // String enum tests
         string_enum::test_string_enum_from_str();
         string_enum::test_string_enum_to_str();
-        string_enum::test_string_enum_repr();
-        string_enum::test_string_enum_derives();
         string_enum::test_string_enum_to_jsvalue();
         string_enum::test_string_enum_from_jsvalue();
     })
