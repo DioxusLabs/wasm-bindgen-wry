@@ -206,11 +206,13 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
 /// Flush the current batch and return the decoded result.
 #[cfg(feature = "runtime")]
 pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
+    use crate::runtime::AppEvent;
+
     let batch_msg = BATCH_STATE.with(|state| state.borrow_mut().take_message());
 
     // Send and wait for result
     let runtime = get_runtime();
-    let _ = runtime.proxy.send_event(batch_msg);
+    let _ = runtime.proxy.send_event(AppEvent::Ipc(batch_msg));
     let result: R = crate::runtime::wait_for_js_event();
 
     result

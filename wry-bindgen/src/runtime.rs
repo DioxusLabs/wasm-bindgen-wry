@@ -13,19 +13,31 @@ use crate::encode::BinaryDecode;
 use crate::function::{DROP_NATIVE_REF_FN_ID, RustValue, THREAD_LOCAL_FUNCTION_ENCODER};
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 
+/// Application-level events that can be sent through the event loop.
+///
+/// This enum wraps both IPC messages from JavaScript and control messages
+/// from the application (like shutdown requests).
+#[derive(Debug)]
+pub enum AppEvent {
+    /// An IPC message from JavaScript
+    Ipc(IPCMessage),
+    /// Request to shut down the application
+    Shutdown,
+}
+
 /// The runtime environment for communicating with JavaScript.
 ///
 /// This struct holds the event loop proxy for sending messages to the
 /// WebView and manages queued Rust calls.
 pub struct WryRuntime {
-    pub proxy: EventLoopProxy<IPCMessage>,
+    pub proxy: EventLoopProxy<AppEvent>,
     pub(crate) queued_rust_calls: RwLock<Vec<IPCMessage>>,
     pub(crate) sender: RwLock<Option<Sender<IPCMessage>>>,
 }
 
 impl WryRuntime {
     /// Create a new runtime with the given event loop proxy.
-    pub fn new(proxy: EventLoopProxy<IPCMessage>) -> Self {
+    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
         Self {
             proxy,
             queued_rust_calls: RwLock::new(Vec::new()),
@@ -35,7 +47,12 @@ impl WryRuntime {
 
     /// Send a response back to JavaScript.
     pub fn js_response(&self, responder: IPCMessage) {
-        let _ = self.proxy.send_event(responder);
+        let _ = self.proxy.send_event(AppEvent::Ipc(responder));
+    }
+
+    /// Request the application to shut down.
+    pub fn shutdown(&self) {
+        let _ = self.proxy.send_event(AppEvent::Shutdown);
     }
 
     /// Queue a Rust call from JavaScript.
@@ -64,10 +81,18 @@ static RUNTIME: OnceLock<WryRuntime> = OnceLock::new();
 /// Set the event loop proxy for the runtime.
 ///
 /// This must be called once before any JS operations are performed.
-pub fn set_event_loop_proxy(proxy: EventLoopProxy<IPCMessage>) {
+pub fn set_event_loop_proxy(proxy: EventLoopProxy<AppEvent>) {
     RUNTIME
         .set(WryRuntime::new(proxy))
         .unwrap_or_else(|_| panic!("Event loop proxy already set"));
+}
+
+/// Request the application to shut down.
+///
+/// This sends a shutdown event through the event loop, which will cause
+/// the webview to close and the application to exit.
+pub fn shutdown() {
+    get_runtime().shutdown();
 }
 
 /// Get the runtime environment.

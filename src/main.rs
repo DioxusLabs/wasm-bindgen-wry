@@ -1,52 +1,11 @@
-use winit::event_loop::EventLoop;
+//! Example application using wry-testing library
 
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::{FUNCTION_REGISTRY, FunctionRegistry};
-
-use crate::{bindings::WINDOW, webview::State};
-
-pub mod bindings;
-mod home;
-mod webview;
-
-// Re-export bindings for convenience
-pub use bindings::{Element, alert, console_log};
-use bindings::set_on_log;
+use wry_testing::{
+    WINDOW, batch, run, set_on_log, wait_for_js_event
+};
 
 fn main() -> wry::Result<()> {
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-    ))]
-    {
-        use gtk::prelude::DisplayExtManual;
-
-        gtk::init().unwrap();
-        if gtk::gdk::Display::default().unwrap().backend().is_wayland() {
-            panic!("This example doesn't support wayland!");
-        }
-
-        winit::platform::x11::register_xlib_error_hook(Box::new(|_display, error| {
-            let error = error as *mut x11_dl::xlib::ErrorEvent;
-            (unsafe { (*error).error_code }) == 170
-        }));
-    }
-
-    let event_loop = EventLoop::with_user_event().build().unwrap();
-    let proxy = event_loop.create_proxy();
-    set_event_loop_proxy(proxy);
-    let registry = &*FUNCTION_REGISTRY;
-
-    println!("=== Generated JS Script ===\n{}\n=== End Script ===", registry.script());
-
-    std::thread::spawn(app);
-    let mut state = State::new(registry);
-    event_loop.run_app(&mut state).unwrap();
-
-    Ok(())
+    run(app)
 }
 
 fn app() {

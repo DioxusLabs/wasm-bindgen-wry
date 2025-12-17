@@ -298,7 +298,7 @@ pub mod prelude {
     pub use crate::function::JSFunction;
     pub use crate::lazy::JsThreadLocal;
     #[cfg(feature = "runtime")]
-    pub use crate::runtime::{set_event_loop_proxy, wait_for_js_event};
+    pub use crate::runtime::{set_event_loop_proxy, wait_for_js_event, shutdown, AppEvent};
     pub use crate::value::JsValue;
     pub use crate::wasm_bindgen;
 }

@@ -7,6 +7,14 @@ name = "wry-testing"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "wry_testing"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wry-testing"
+path = "src/main.rs"
+
 [dependencies]
 base64 = "0.22.1"
 bytemuck = "1.24.0"

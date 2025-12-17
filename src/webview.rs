@@ -12,7 +12,7 @@ use wry::dpi::{LogicalPosition, LogicalSize};
 use wry::{Rect, RequestAsyncResponder, WebViewBuilder};
 
 use wasm_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
-use wasm_bindgen::runtime::get_runtime;
+use wasm_bindgen::runtime::{get_runtime, AppEvent};
 
 use crate::FunctionRegistry;
 use crate::home::root_response;
@@ -41,7 +41,7 @@ impl State {
     }
 }
 
-impl ApplicationHandler<IPCMessage> for State {
+impl ApplicationHandler<AppEvent> for State {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let mut attributes = Window::default_attributes();
         attributes.inner_size = Some(LogicalSize::new(800, 800).into());
@@ -130,27 +130,34 @@ impl ApplicationHandler<IPCMessage> for State {
         }
     }
 
-    fn user_event(&mut self, _: &ActiveEventLoop, event: IPCMessage) {
-        let mut shared = self.shared.borrow_mut();
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
+        match event {
+            AppEvent::Shutdown => {
+                event_loop.exit();
+            }
+            AppEvent::Ipc(ipc_msg) => {
+                let mut shared = self.shared.borrow_mut();
 
-        if let OngoingRequestState::Pending(_) = &shared.ongoing_request {
-            shared.respond_to_request(event);
-            return;
-        }
+                if let OngoingRequestState::Pending(_) = &shared.ongoing_request {
+                    shared.respond_to_request(ipc_msg);
+                    return;
+                }
 
-        let decoded = event.decoded().unwrap();
+                let decoded = ipc_msg.decoded().unwrap();
 
-        if let DecodedVariant::Evaluate { .. } = decoded {
-            // Encode the binary data as base64 and pass to JS
-            // JS will iterate over operations in the buffer
-            let engine = base64::engine::general_purpose::STANDARD;
-            let data_base64 = engine.encode(event.data());
-            let code = format!("window.evaluate_from_rust_binary(\"{}\")", data_base64);
-            self.webview
-                .as_ref()
-                .unwrap()
-                .evaluate_script(&code)
-                .unwrap();
+                if let DecodedVariant::Evaluate { .. } = decoded {
+                    // Encode the binary data as base64 and pass to JS
+                    // JS will iterate over operations in the buffer
+                    let engine = base64::engine::general_purpose::STANDARD;
+                    let data_base64 = engine.encode(ipc_msg.data());
+                    let code = format!("window.evaluate_from_rust_binary(\"{}\")", data_base64);
+                    self.webview
+                        .as_ref()
+                        .unwrap()
+                        .evaluate_script(&code)
+                        .unwrap();
+                }
+            }
         }
     }
 
