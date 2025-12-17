@@ -8,6 +8,67 @@
 //! - string buffer: from str_offset to end
 
 use base64::Engine;
+use std::fmt;
+
+/// Error type for decoding binary IPC messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodeError {
+    /// The message is too short (less than 12 bytes for header)
+    MessageTooShort { expected: usize, actual: usize },
+    /// The u8 buffer is empty when trying to read
+    U8BufferEmpty,
+    /// The u16 buffer is empty when trying to read
+    U16BufferEmpty,
+    /// The u32 buffer is empty when trying to read
+    U32BufferEmpty,
+    /// The string buffer doesn't have enough bytes
+    StringBufferTooShort { expected: usize, actual: usize },
+    /// Invalid UTF-8 in string buffer
+    InvalidUtf8 { position: usize },
+    /// Invalid message type byte
+    InvalidMessageType { value: u8 },
+    /// Header offsets are invalid (e.g., overlapping or out of bounds)
+    InvalidHeaderOffsets {
+        u16_offset: u32,
+        u8_offset: u32,
+        str_offset: u32,
+        total_len: usize,
+    },
+    /// Generic decode failure with context
+    Custom(String),
+}
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DecodeError::MessageTooShort { expected, actual } => {
+                write!(f, "message too short: expected at least {} bytes, got {}", expected, actual)
+            }
+            DecodeError::U8BufferEmpty => write!(f, "u8 buffer empty when trying to read"),
+            DecodeError::U16BufferEmpty => write!(f, "u16 buffer empty when trying to read"),
+            DecodeError::U32BufferEmpty => write!(f, "u32 buffer empty when trying to read"),
+            DecodeError::StringBufferTooShort { expected, actual } => {
+                write!(f, "string buffer too short: expected {} bytes, got {}", expected, actual)
+            }
+            DecodeError::InvalidUtf8 { position } => {
+                write!(f, "invalid UTF-8 at position {}", position)
+            }
+            DecodeError::InvalidMessageType { value } => {
+                write!(f, "invalid message type: {}", value)
+            }
+            DecodeError::InvalidHeaderOffsets { u16_offset, u8_offset, str_offset, total_len } => {
+                write!(
+                    f,
+                    "invalid header offsets: u16={}, u8={}, str={}, total_len={}",
+                    u16_offset, u8_offset, str_offset, total_len
+                )
+            }
+            DecodeError::Custom(msg) => write!(f, "{}", msg),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
 
 /// Message type identifier for IPC protocol.
 #[repr(u8)]
@@ -57,24 +118,24 @@ impl IPCMessage {
     }
 
     /// Get the message type.
-    pub fn ty(&self) -> Result<MessageType, ()> {
+    pub fn ty(&self) -> Result<MessageType, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
         let message_type = decoded.take_u8()?;
         match message_type {
             0 => Ok(MessageType::Evaluate),
             1 => Ok(MessageType::Respond),
-            _ => Err(()),
+            v => Err(DecodeError::InvalidMessageType { value: v }),
         }
     }
 
     /// Decode the message into its variant form.
-    pub fn decoded(&self) -> Result<DecodedVariant<'_>, ()> {
+    pub fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
         let message_type = decoded.take_u8()?;
         let message_type = match message_type {
             0 => DecodedVariant::Evaluate { data: decoded },
             1 => DecodedVariant::Respond { data: decoded },
-            _ => return Err(()),
+            v => return Err(DecodeError::InvalidMessageType { value: v }),
         };
         Ok(message_type)
     }
@@ -108,15 +169,35 @@ pub struct DecodedData<'a> {
 
 impl<'a> DecodedData<'a> {
     /// Parse decoded data from raw bytes.
-    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, ()> {
+    pub fn from_bytes(bytes: &'a [u8]) -> Result<Self, DecodeError> {
         if bytes.len() < 12 {
-            return Err(());
+            return Err(DecodeError::MessageTooShort {
+                expected: 12,
+                actual: bytes.len(),
+            });
         }
 
         let header: [u32; 3] = bytemuck::cast_slice(&bytes[0..12])
             .try_into()
-            .map_err(|_| ())?;
+            .map_err(|_| DecodeError::Custom("failed to parse header".to_string()))?;
         let [u16_offset, u8_offset, str_offset] = header;
+
+        // Validate offsets
+        let total_len = bytes.len();
+        if u16_offset as usize > total_len
+            || u8_offset as usize > total_len
+            || str_offset as usize > total_len
+            || u16_offset < 12
+            || u8_offset < u16_offset
+            || str_offset < u8_offset
+        {
+            return Err(DecodeError::InvalidHeaderOffsets {
+                u16_offset,
+                u8_offset,
+                str_offset,
+                total_len,
+            });
+        }
 
         let u32_buf = bytemuck::cast_slice(&bytes[12..u16_offset as usize]);
         let u16_buf = bytemuck::cast_slice(&bytes[u16_offset as usize..u8_offset as usize]);
@@ -132,46 +213,52 @@ impl<'a> DecodedData<'a> {
     }
 
     /// Take a u8 from the buffer.
-    pub fn take_u8(&mut self) -> Result<u8, ()> {
+    pub fn take_u8(&mut self) -> Result<u8, DecodeError> {
         let [first, rest @ ..] = &self.u8_buf else {
-            return Err(());
+            return Err(DecodeError::U8BufferEmpty);
         };
         self.u8_buf = rest;
         Ok(*first)
     }
 
     /// Take a u16 from the buffer.
-    pub fn take_u16(&mut self) -> Result<u16, ()> {
+    pub fn take_u16(&mut self) -> Result<u16, DecodeError> {
         let [first, rest @ ..] = &self.u16_buf else {
-            return Err(());
+            return Err(DecodeError::U16BufferEmpty);
         };
         self.u16_buf = rest;
         Ok(*first)
     }
 
     /// Take a u32 from the buffer.
-    pub fn take_u32(&mut self) -> Result<u32, ()> {
+    pub fn take_u32(&mut self) -> Result<u32, DecodeError> {
         let [first, rest @ ..] = &self.u32_buf else {
-            return Err(());
+            return Err(DecodeError::U32BufferEmpty);
         };
         self.u32_buf = rest;
         Ok(*first)
     }
 
     /// Take a u64 from the buffer (stored as two u32s).
-    pub fn take_u64(&mut self) -> Result<u64, ()> {
+    pub fn take_u64(&mut self) -> Result<u64, DecodeError> {
         let low = self.take_u32()? as u64;
         let high = self.take_u32()? as u64;
         Ok((high << 32) | low)
     }
 
     /// Take a string from the buffer.
-    pub fn take_str(&mut self) -> Result<&'a str, ()> {
+    pub fn take_str(&mut self) -> Result<&'a str, DecodeError> {
         let len = self.take_u32()? as usize;
+        let actual_len = self.str_buf.len();
         let Some((buf, rem)) = self.str_buf.split_at_checked(len) else {
-            return Err(());
+            return Err(DecodeError::StringBufferTooShort {
+                expected: len,
+                actual: actual_len,
+            });
         };
-        let s = std::str::from_utf8(buf).map_err(|_| ())?;
+        let s = std::str::from_utf8(buf).map_err(|e| DecodeError::InvalidUtf8 {
+            position: e.valid_up_to(),
+        })?;
         self.str_buf = rem;
         Ok(s)
     }
@@ -180,10 +267,10 @@ impl<'a> DecodedData<'a> {
 /// Encoder for building binary messages.
 #[derive(Debug, Default)]
 pub struct EncodedData {
-    u8_buf: Vec<u8>,
-    u16_buf: Vec<u16>,
-    u32_buf: Vec<u32>,
-    str_buf: Vec<u8>,
+    pub(crate) u8_buf: Vec<u8>,
+    pub(crate) u16_buf: Vec<u16>,
+    pub(crate) u32_buf: Vec<u32>,
+    pub(crate) str_buf: Vec<u8>,
 }
 
 impl EncodedData {

@@ -9,7 +9,7 @@ use crate::encode::{BatchableResult, BinaryDecode};
 use crate::function::JSFunction;
 use crate::ipc::{EncodedData, IPCMessage, MessageType};
 use crate::runtime::get_runtime;
-use crate::value::DROP_HEAP_REF_FN_ID;
+use crate::value::{DROP_HEAP_REF_FN_ID, JSIDX_RESERVED};
 
 /// State for batching operations.
 /// Every evaluation is a batch - it may just have one operation.
@@ -34,7 +34,8 @@ impl BatchState {
         Self {
             encoder: Self::new_encoder_for_evaluate(),
             free_ids: Vec::new(),
-            max_id: 0,
+            // Start allocating heap IDs from JSIDX_RESERVED to match JS heap
+            max_id: JSIDX_RESERVED,
             ids_to_free: Vec::new(),
             is_batching: false,
         }
@@ -60,6 +61,11 @@ impl BatchState {
 
     /// Release a heap ID back to the free-list and queue it for JS drop.
     pub fn release_heap_id(&mut self, id: u64) {
+        // Never release reserved IDs
+        if id < JSIDX_RESERVED {
+            unreachable!("Attempted to release reserved JS heap ID {}", id);
+        }
+
         match self.ids_to_free.last_mut() {
             Some(ids) => ids.push(id),
             None => self.free_ids.push(id),
@@ -69,9 +75,7 @@ impl BatchState {
     /// Take the message data and reset the batch for reuse.
     /// Includes any pending drops at the start of the message.
     pub(crate) fn take_message(&mut self) -> IPCMessage {
-        let msg = IPCMessage::new(self.encoder.to_bytes());
-        self.encoder = Self::new_encoder_for_evaluate();
-        msg
+        IPCMessage::new(self.take_encoder().to_bytes())
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -100,15 +104,15 @@ impl BatchState {
     }
 
     pub(crate) fn take_encoder(&mut self) -> EncodedData {
-        std::mem::take(&mut self.encoder)
-    }
-
-    pub(crate) fn set_encoder(&mut self, encoder: EncodedData) {
-        self.encoder = encoder;
+        std::mem::replace(&mut self.encoder, Self::new_encoder_for_evaluate())
     }
 
     pub(crate) fn extend_encoder(&mut self, other: &EncodedData) {
-        self.encoder.extend(other);
+        // Manually extend to avoid adding an extra message type byte
+        self.encoder.u8_buf.extend_from_slice(&other.u8_buf[1..]);
+        self.encoder.u16_buf.extend_from_slice(&other.u16_buf);
+        self.encoder.u32_buf.extend_from_slice(&other.u32_buf);
+        self.encoder.str_buf.extend_from_slice(&other.str_buf);
     }
 }
 
@@ -152,47 +156,49 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     fn_id: u32,
     add_args: impl FnOnce(&mut EncodedData),
 ) -> R {
-    // Step 1: Encode the operation into the batch and get placeholder for non-flush types
-    // We take the current encoder out of the thread-local state to avoid borrowing issues
-    // and then put it back after adding the operation. Drops or other calls may happen while
-    // we are encoding, but they should be queued after this operation.
-    let mut batch = BATCH_STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        // Push a new operation into the batch
-        state.push_ids_to_free();
-        state.take_encoder()
-    });
-    add_operation(&mut batch, fn_id, add_args);
-
-    BATCH_STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        let encoded_during_op = std::mem::replace(&mut batch, EncodedData::new());
-        state.set_encoder(batch);
-        state.extend_encoder(&encoded_during_op);
-    });
-
-    // Get placeholder for types that don't need flush
-    // This also increments opaque_count to keep heap IDs in sync
-    let result = if !R::needs_flush() {
-        let placeholder = BATCH_STATE.with(|state| {
+    // Always batch together the call and any potential drops that may happen during encoding
+    batch(|| {
+        // Step 1: Encode the operation into the batch and get placeholder for non-flush types
+        // We take the current encoder out of the thread-local state to avoid borrowing issues
+        // and then put it back after adding the operation. Drops or other calls may happen while
+        // we are encoding, but they should be queued after this operation.
+        let mut batch = BATCH_STATE.with(|state| {
             let mut state = state.borrow_mut();
-            R::batched_placeholder(&mut state)
+            // Push a new operation into the batch
+            state.push_ids_to_free();
+            state.take_encoder()
         });
-        if !is_batching() {
-            flush_and_return::<R>()
+        add_operation(&mut batch, fn_id, add_args);
+
+        BATCH_STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let encoded_during_op = std::mem::replace(&mut state.encoder, batch);
+            state.extend_encoder(&encoded_during_op);
+        });
+
+        // Get placeholder for types that don't need flush
+        // This also increments opaque_count to keep heap IDs in sync
+        let result = if !R::needs_flush() {
+            let placeholder = BATCH_STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                R::batched_placeholder(&mut state)
+            });
+            if !is_batching() {
+                flush_and_return::<R>()
+            } else {
+                placeholder
+            }
         } else {
-            placeholder
-        }
-    } else {
-        flush_and_return::<R>()
-    };
+            flush_and_return::<R>()
+        };
 
-    // After running, free any queued IDs for this operation
-    BATCH_STATE.with(|state| {
-        state.borrow_mut().pop_and_release_ids();
-    });
+        // After running, free any queued IDs for this operation
+        BATCH_STATE.with(|state| {
+            state.borrow_mut().pop_and_release_ids();
+        });
 
-    result
+        result
+    })
 }
 
 /// Flush the current batch and return the decoded result.
@@ -211,20 +217,23 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 /// will be batched and executed together. Operations that return non-opaque types will
 /// flush the batch to get the actual result.
 pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
+    let currently_batching = is_batching();
     // Start batching
     BATCH_STATE.with(|state| state.borrow_mut().set_batching(true));
 
     // Execute the closure
     let result = f();
 
-    // Flush any remaining batched operations
-    let has_pending = BATCH_STATE.with(|state| !state.borrow().is_empty());
-    if has_pending {
-        flush_and_return::<()>();
+    if !currently_batching {
+        // Flush any remaining batched operations
+        let has_pending = BATCH_STATE.with(|state| !state.borrow().is_empty());
+        if has_pending {
+            flush_and_return::<()>();
+        }
     }
 
     // End batching
-    BATCH_STATE.with(|state| state.borrow_mut().set_batching(false));
+    BATCH_STATE.with(|state| state.borrow_mut().set_batching(currently_batching));
 
     result
 }

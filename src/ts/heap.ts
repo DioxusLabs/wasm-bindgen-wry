@@ -1,3 +1,11 @@
+// Reserved indices - must match Rust's value.rs constants
+const JSIDX_OFFSET = 128;
+const JSIDX_UNDEFINED = JSIDX_OFFSET;
+const JSIDX_NULL = JSIDX_OFFSET + 1;
+const JSIDX_TRUE = JSIDX_OFFSET + 2;
+const JSIDX_FALSE = JSIDX_OFFSET + 3;
+const JSIDX_RESERVED = JSIDX_OFFSET + 4;
+
 // SlotMap implementation for JS heap types
 class JSHeap {
   private slots: (unknown | undefined)[];
@@ -5,9 +13,19 @@ class JSHeap {
   private maxId: number;
 
   constructor() {
+    // Pre-allocate slots array - slots 0-127 are unused gaps,
+    // slots 128-131 are reserved for special values (undefined, null, true, false),
+    // heap allocation starts at 132 (JSIDX_RESERVED)
     this.slots = [];
+
+    this.slots[JSIDX_NULL] = null;
+    this.slots[JSIDX_TRUE] = true;
+    this.slots[JSIDX_FALSE] = false;
+    this.slots[JSIDX_UNDEFINED] = undefined;
+
     this.freeIds = [];
-    this.maxId = 0;
+    // Start allocating from JSIDX_RESERVED (132)
+    this.maxId = JSIDX_RESERVED;
   }
 
   insert(value: unknown): number {
@@ -27,6 +45,11 @@ class JSHeap {
   }
 
   remove(id: number): unknown | undefined {
+    // Never remove reserved slots
+    if (id < JSIDX_RESERVED) {
+      return this.slots[id];
+    }
+
     const value = this.slots[id];
     if (value !== undefined) {
       this.slots[id] = undefined;

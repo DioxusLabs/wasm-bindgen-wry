@@ -4,7 +4,7 @@
 //! to/from the binary IPC protocol.
 
 use crate::batch::BatchState;
-use crate::ipc::{DecodedData, EncodedData};
+use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::value::JsValue;
 use std::marker::PhantomData;
 
@@ -23,7 +23,7 @@ pub trait BinaryEncode<P = ()> {
 /// Trait for decoding values from the binary protocol.
 /// Each type specifies how to deserialize itself.
 pub trait BinaryDecode: Sized {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()>;
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError>;
 }
 
 /// Trait for return types that can be used in batched JS calls.
@@ -63,7 +63,7 @@ impl BinaryEncode for () {
 }
 
 impl BinaryDecode for () {
-    fn decode(_decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(_decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         Ok(())
     }
 }
@@ -83,7 +83,7 @@ impl BinaryEncode for bool {
 }
 
 impl BinaryDecode for bool {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         Ok(decoder.take_u8()? != 0)
     }
 }
@@ -103,7 +103,7 @@ impl BinaryEncode for u8 {
 }
 
 impl BinaryDecode for u8 {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         decoder.take_u8()
     }
 }
@@ -123,7 +123,7 @@ impl BinaryEncode for u16 {
 }
 
 impl BinaryDecode for u16 {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         decoder.take_u16()
     }
 }
@@ -143,7 +143,7 @@ impl BinaryEncode for u32 {
 }
 
 impl BinaryDecode for u32 {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         decoder.take_u32()
     }
 }
@@ -157,7 +157,7 @@ impl BinaryEncode for u64 {
 }
 
 impl BinaryDecode for u64 {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         decoder.take_u64()
     }
 }
@@ -189,7 +189,7 @@ impl BinaryEncode for String {
 }
 
 impl BinaryDecode for String {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         Ok(decoder.take_str()?.to_string())
     }
 }
@@ -203,7 +203,7 @@ impl<T: TypeConstructor<P>, P> TypeConstructor<P> for Option<T> {
 }
 
 impl<T: BinaryDecode> BinaryDecode for Option<T> {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         let has_value = decoder.take_u8()? != 0;
         if has_value {
             Ok(Some(T::decode(decoder)?))
@@ -245,7 +245,7 @@ impl BinaryEncode for &JsValue {
 }
 
 impl BinaryDecode for JsValue {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, ()> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         Ok(JsValue::from_id(decoder.take_u64()?))
     }
 }

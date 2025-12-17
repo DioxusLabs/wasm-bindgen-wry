@@ -130,7 +130,7 @@ fn generate_type(ty: &ImportType) -> syn::Result<TokenStream> {
     // Generate BinaryDecode implementation
     let binary_decode_impl = quote! {
         impl wry_bindgen::BinaryDecode for #rust_name {
-            fn decode(decoder: &mut wry_bindgen::DecodedData) -> Result<Self, ()> {
+            fn decode(decoder: &mut wry_bindgen::DecodedData) -> Result<Self, wry_bindgen::DecodeError> {
                 wry_bindgen::JsValue::decode(decoder).map(Self)
             }
         }

@@ -34,7 +34,7 @@ pub use value::JsValue;
 pub use batch::batch;
 pub use encode::{BatchableResult, BinaryDecode, BinaryEncode, TypeConstructor};
 pub use function::JSFunction;
-pub use ipc::{DecodedData, DecodedVariant, EncodedData, IPCMessage, MessageType, decode_data};
+pub use ipc::{DecodeError, DecodedData, DecodedVariant, EncodedData, IPCMessage, MessageType, decode_data};
 pub use runtime::{WryRuntime, get_runtime, set_event_loop_proxy, wait_for_js_event};
 
 // Re-export the macro

@@ -150,7 +150,6 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
         // Drop a native Rust object when JS GC'd the wrapper
         DROP_NATIVE_REF_FN_ID => {
             let key: DefaultKey = KeyData::from_ffi(data.take_u64().unwrap()).into();
-            println!("Dropping native Rust object with key: {:?}", key);
 
             // Remove the object from the thread-local encoder
             THREAD_LOCAL_FUNCTION_ENCODER.with(|fn_encoder| {
