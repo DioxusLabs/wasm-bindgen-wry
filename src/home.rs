@@ -8,7 +8,6 @@ pub fn root_response() -> wry::http::Response<Vec<u8>> {
     <script>{}</script>
 </head>
 <body>
-    <h1 id="click-count">Button not clicked yet</h1>
 </body>
 </html>"#,
         include_str!("./js/main.js")
