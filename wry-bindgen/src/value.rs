@@ -121,8 +121,6 @@ impl Clone for JsValue {
             return JsValue { idx: self.idx };
         }
 
-        eprintln!("[RUST] Clone JsValue idx={}", self.idx);
-
         // Clone the value on the JS heap
         let clone_fn: JSFunction<fn(u64) -> JsValue> = JSFunction::new(CLONE_HEAP_REF_FN_ID);
         clone_fn.call(self.idx)
@@ -136,8 +134,6 @@ impl Drop for JsValue {
         if self.idx < JSIDX_RESERVED {
             return;
         }
-
-        eprintln!("[RUST] Drop JsValue idx={}", self.idx);
 
         // Drop the value on the JS heap
         crate::batch::queue_js_drop(self.idx);

@@ -34,3 +34,8 @@ lazy-js-bundle = { git = "https://github.com/DioxusLabs/dioxus" }
 name = "main_thread_tests"
 path = "tests/main_thread_tests/main.rs"
 harness = false
+
+[[bench]]
+name = "main_thread_benches"
+path = "benches/main.rs"
+harness = false

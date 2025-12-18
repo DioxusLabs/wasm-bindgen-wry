@@ -25,7 +25,6 @@ pub fn test_string_enum_from_str() {
         Some(WebGlPowerPreference::HighPerformance)
     );
     assert_eq!(WebGlPowerPreference::from_str("invalid"), None);
-    println!("[RUST] test_string_enum_from_str passed");
 }
 
 pub fn test_string_enum_to_str() {
@@ -35,7 +34,6 @@ pub fn test_string_enum_to_str() {
         WebGlPowerPreference::HighPerformance.to_str(),
         "high-performance"
     );
-    println!("[RUST] test_string_enum_to_str passed");
 }
 
 pub fn test_string_enum_to_jsvalue() {
@@ -51,8 +49,6 @@ pub fn test_string_enum_to_jsvalue() {
     let pref2 = WebGlPowerPreference::HighPerformance;
     let js2: JsValue = pref2.into();
     assert_eq!(js2.as_string(), Some("high-performance".to_string()));
-
-    println!("[RUST] test_string_enum_to_jsvalue passed");
 }
 
 pub fn test_string_enum_from_jsvalue() {
@@ -67,6 +63,4 @@ pub fn test_string_enum_from_jsvalue() {
     let js_invalid = JsValue::from_str("not-a-valid-value");
     let pref_invalid = WebGlPowerPreference::from_js_value(&js_invalid);
     assert_eq!(pref_invalid, None);
-
-    println!("[RUST] test_string_enum_from_jsvalue passed");
 }

@@ -96,7 +96,6 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
 fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStream> {
     let vis = &ty.vis;
     let rust_name = &ty.rust_name;
-    let _js_name = &ty.js_name;
     let derives = &ty.derives;
 
     // Generate the struct definition using JsValue from the configured crate
