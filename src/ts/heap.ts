@@ -68,6 +68,10 @@ class JSHeap {
   has(id: number): boolean {
     return this.slots[id] !== undefined;
   }
+
+  heapObjectsAlive(): number {
+    return this.slots.length - this.freeIds.length - JSIDX_RESERVED;
+  }
 }
 
 export { JSHeap };

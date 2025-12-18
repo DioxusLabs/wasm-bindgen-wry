@@ -1,3 +1,4 @@
+use wasm_bindgen::wasm_bindgen;
 use wry_testing::set_on_log;
 
 mod add_number_js;
@@ -5,32 +6,48 @@ mod callbacks;
 mod jsvalue;
 mod string_enum;
 
+#[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
+        return window.jsHeap.heapObjectsAlive();
+    }")]
+extern "C" {
+    /// Get the number of alive JS heap objects
+    #[wasm_bindgen(js_name = heap_objects_alive)]
+    pub fn heap_objects_alive() -> u32;
+}
+
+fn test_with_js_context<F: FnOnce()>(f: F) {
+    let before = heap_objects_alive();
+    f();
+    let after = heap_objects_alive();
+    assert_eq!(before, after, "JS heap object leak detected");
+}
+
 fn main() {
     wry_testing::run(|| {
         set_on_log(Box::new(|msg: String| {
             println!("[JS] {}", msg);
         }));
 
-        // add_number_js::test_add_number_js();
-        // add_number_js::test_add_number_js_batch();
-        // callbacks::test_call_callback();
-        // callbacks::test_call_callback_async();
+        test_with_js_context(add_number_js::test_add_number_js);
+        test_with_js_context(add_number_js::test_add_number_js_batch);
+        test_with_js_context(callbacks::test_call_callback);
+        test_with_js_context(callbacks::test_call_callback_async);
 
-        // // JsValue behavior tests
-        // jsvalue::test_jsvalue_constants();
-        // jsvalue::test_jsvalue_bool();
-        // jsvalue::test_jsvalue_default();
-        // jsvalue::test_jsvalue_clone_reserved();
-        // jsvalue::test_jsvalue_equality();
-        // jsvalue::test_jsvalue_from_js();
-        // jsvalue::test_jsvalue_pass_to_js();
-        jsvalue::test_jsvalue_as_string();
+        // JsValue behavior tests
+        test_with_js_context(jsvalue::test_jsvalue_constants);
+        test_with_js_context(jsvalue::test_jsvalue_bool);
+        test_with_js_context(jsvalue::test_jsvalue_default);
+        test_with_js_context(jsvalue::test_jsvalue_clone_reserved);
+        test_with_js_context(jsvalue::test_jsvalue_equality);
+        test_with_js_context(jsvalue::test_jsvalue_from_js);
+        test_with_js_context(jsvalue::test_jsvalue_pass_to_js);
+        test_with_js_context(jsvalue::test_jsvalue_as_string);
 
-        // // String enum tests
-        // string_enum::test_string_enum_from_str();
-        // string_enum::test_string_enum_to_str();
-        // string_enum::test_string_enum_to_jsvalue();
-        // string_enum::test_string_enum_from_jsvalue();
+        // String enum tests
+        test_with_js_context(string_enum::test_string_enum_from_str);
+        test_with_js_context(string_enum::test_string_enum_to_str);
+        test_with_js_context(string_enum::test_string_enum_to_jsvalue);
+        test_with_js_context(string_enum::test_string_enum_from_jsvalue);
     })
     .unwrap();
 }
