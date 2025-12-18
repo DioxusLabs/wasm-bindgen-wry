@@ -3,7 +3,6 @@
 //! This module defines the intermediate representation for parsed wasm_bindgen items.
 
 use crate::parser::BindgenAttrs;
-use std::hash::{Hash, Hasher};
 use syn::{FnArg, Ident, Pat, Path, ReturnType, Type, Visibility};
 
 /// Extract a simple type name from a Type

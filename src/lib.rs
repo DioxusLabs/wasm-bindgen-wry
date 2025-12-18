@@ -72,7 +72,7 @@ where
 
     let event_loop = EventLoop::with_user_event().build().unwrap();
     let proxy = event_loop.create_proxy();
-    set_event_loop_proxy(proxy);
+    set_event_loop_proxy(proxy.clone());
     let registry = &*FUNCTION_REGISTRY;
 
     println!(
@@ -98,7 +98,7 @@ where
         shutdown(status);
     });
 
-    let mut state = State::new(registry);
+    let mut state = State::new(registry, proxy);
     event_loop.run_app(&mut state).unwrap();
 
     Ok(())

@@ -22,13 +22,13 @@ enum MessageType {
 }
 
 // Reserved function ID for dropping heap refs - must match Rust's DROP_HEAP_REF_FN_ID
-const DROP_HEAP_REF_FN_ID = 0xFFFFFFFF;
+const DROP_HEAP_REF_FN_ID = 0xffffffff;
 
 // Reserved function ID for cloning heap refs - must match Rust's CLONE_HEAP_REF_FN_ID
-const CLONE_HEAP_REF_FN_ID = 0xFFFFFFFE;
+const CLONE_HEAP_REF_FN_ID = 0xfffffffe;
 
 // Reserved function ID for dropping native Rust refs - must match Rust's DROP_NATIVE_REF_FN_ID
-const DROP_NATIVE_REF_FN_ID = 0xFFFFFFFF;
+const DROP_NATIVE_REF_FN_ID = 0xffffffff;
 
 /**
  * Sends binary data to Rust and receives binary response.
@@ -57,30 +57,29 @@ function sync_request_binary(
   return null;
 }
 
-
-
-
 /**
  * Entry point for Rust to call JS functions using binary protocol.
  * Handles batched operations - reads and executes operations until buffer is exhausted.
  *
  * @param dataBase64 - Base64 encoded binary data containing message with operations
  */
-async function evaluate_from_rust_binary(dataBase64: string): Promise<DataDecoder | null> {
+function evaluate_from_rust_binary(dataBase64: string): DataDecoder | null {
   // Decode base64 to ArrayBuffer
   const binary = atob(dataBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return await handleBinaryResponse(bytes.buffer);
+  return handleBinaryResponse(bytes.buffer);
 }
 
 /**
  * Handle binary response from Rust.
  * May contain nested Evaluate calls (for callbacks).
  */
-async function handleBinaryResponse(response: ArrayBuffer | null): Promise<DataDecoder | null> {
+function handleBinaryResponse(
+  response: ArrayBuffer | null
+): DataDecoder | null {
   if (!response || response.byteLength === 0) {
     return null;
   }
@@ -118,7 +117,7 @@ async function handleBinaryResponse(response: ArrayBuffer | null): Promise<DataD
         continue;
       }
 
-      const functionRegistry = await getFunctionRegistry();
+      const functionRegistry = getFunctionRegistry();
       const spec = functionRegistry[fnId];
       if (!spec) {
         throw new Error("Unknown function ID in response: " + fnId);
@@ -137,4 +136,10 @@ async function handleBinaryResponse(response: ArrayBuffer | null): Promise<DataD
   return null;
 }
 
-export { evaluate_from_rust_binary, handleBinaryResponse, sync_request_binary, MessageType, DROP_NATIVE_REF_FN_ID };
+export {
+  evaluate_from_rust_binary,
+  handleBinaryResponse,
+  sync_request_binary,
+  MessageType,
+  DROP_NATIVE_REF_FN_ID,
+};

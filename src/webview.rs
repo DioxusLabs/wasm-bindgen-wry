@@ -5,7 +5,7 @@ use std::rc::Rc;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::ActiveEventLoop,
+    event_loop::{ActiveEventLoop, EventLoopProxy},
     window::{Window, WindowId},
 };
 use wry::dpi::{LogicalPosition, LogicalSize};
@@ -23,20 +23,38 @@ fn decode_request_data(request: &wry::http::Request<Vec<u8>>) -> Option<IPCMessa
     }
     None
 }
+
+enum WebviewLoadingState {
+    Pending {
+        queued: Vec<IPCMessage>,
+    },
+    Loaded,
+}
+
+impl Default for WebviewLoadingState {
+    fn default() -> Self {
+        WebviewLoadingState::Pending { queued: Vec::new() }
+    }
+}
+
 pub(crate) struct State {
     function_registry: &'static FunctionRegistry,
     window: Option<Window>,
     webview: Option<wry::WebView>,
     shared: Rc<RefCell<SharedWebviewState>>,
+    state: WebviewLoadingState,
+    proxy: EventLoopProxy<AppEvent>,
 }
 
 impl State {
-    pub fn new(function_registry: &'static FunctionRegistry) -> Self {
+    pub fn new(function_registry: &'static FunctionRegistry, proxy: EventLoopProxy<AppEvent>) -> Self {
         Self {
             function_registry,
             window: None,
             webview: None,
             shared: Rc::new(RefCell::new(SharedWebviewState::default())),
+            state: WebviewLoadingState::default(),
+            proxy,
         }
     }
 }
@@ -47,6 +65,7 @@ impl ApplicationHandler<AppEvent> for State {
         attributes.inner_size = Some(LogicalSize::new(800, 800).into());
         let window = event_loop.create_window(attributes).unwrap();
         let shared = self.shared.clone();
+        let proxy = self.proxy.clone();
 
         let webview = WebViewBuilder::new()
             .with_devtools(true)
@@ -57,6 +76,12 @@ impl ApplicationHandler<AppEvent> for State {
 
                 if real_path == "index" {
                     responder.respond(root_response());
+                    return;
+                }
+
+                if real_path == "ready" {
+                    proxy.send_event(AppEvent::WebviewLoaded).unwrap();
+                    responder.respond(blank_response());
                     return;
                 }
 
@@ -137,6 +162,13 @@ impl ApplicationHandler<AppEvent> for State {
                 std::process::exit(status);
             }
             AppEvent::Ipc(ipc_msg) => {
+                if let WebviewLoadingState::Pending { .. } = &self.state {
+                    if let WebviewLoadingState::Pending { queued } = &mut self.state {
+                        queued.push(ipc_msg);
+                    }
+                    return;
+                }
+
                 let mut shared = self.shared.borrow_mut();
 
                 if let OngoingRequestState::Pending(_) = &shared.ongoing_request {
@@ -157,6 +189,15 @@ impl ApplicationHandler<AppEvent> for State {
                         .unwrap()
                         .evaluate_script(&code)
                         .unwrap();
+                }
+            }
+            AppEvent::WebviewLoaded => {
+                if let WebviewLoadingState::Pending { queued } =
+                    std::mem::replace(&mut self.state, WebviewLoadingState::Loaded)
+                {
+                    for msg in queued {
+                        get_runtime().js_response(msg);
+                    }
                 }
             }
         }

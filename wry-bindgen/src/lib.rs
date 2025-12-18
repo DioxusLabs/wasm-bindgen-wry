@@ -244,6 +244,9 @@ impl FunctionRegistry {
         }
         script.push_str("]);\n");
 
+        // Send a request to wry to notify that the function registry is ready
+        script.push_str("  fetch('wry://ready', { method: 'POST', body: [] });\n");
+
         // Close the async IIFE
         script.push_str("})();\n");
 

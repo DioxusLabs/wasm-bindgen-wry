@@ -325,7 +325,7 @@ impl JsValue {
 
     /// Get the typeof this value as a string.
     pub fn js_typeof(&self) -> JsValue {
-        panic!("JsValue::js_typeof is not supported in wry-bindgen");
+        crate::js_helpers::js_typeof(self)
     }
 
     /// Check if this value has a property with the given name.

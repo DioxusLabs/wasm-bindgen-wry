@@ -32,30 +32,26 @@ class JSHeap {
     let id: number;
     if (this.freeIds.length > 0) {
       id = this.freeIds.pop()!;
-      console.log("[JS Heap] insert (reused id):", id, "value:", value);
     } else {
       id = this.maxId;
       this.maxId++;
-      console.log("[JS Heap] insert (new id):", id, "value:", value);
     }
     this.slots[id] = value;
     return id;
   }
 
   get(id: number): unknown | undefined {
-    console.log("[JS Heap] get:", id, "value:", this.slots[id]);
     return this.slots[id];
   }
 
   remove(id: number): unknown | undefined {
     // Never remove reserved slots
     if (id < JSIDX_RESERVED) {
-      console.log("[JS Heap] remove (reserved, skipping):", id);
       return this.slots[id];
     }
 
     const value = this.slots[id];
-    console.log("[JS Heap] remove:", id, "value:", value);
+
     this.slots[id] = undefined;
     this.freeIds.push(id);
     return value;

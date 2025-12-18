@@ -21,6 +21,8 @@ use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 pub enum AppEvent {
     /// An IPC message from JavaScript
     Ipc(IPCMessage),
+    /// The webview has finished loading
+    WebviewLoaded,
     /// Request to shut down the application with a status code
     Shutdown(i32),
 }

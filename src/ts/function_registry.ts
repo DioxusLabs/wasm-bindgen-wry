@@ -9,29 +9,12 @@ import { DataDecoder, DataEncoder } from "./encoding";
  */
 export type FunctionSpec = (decoder: DataDecoder, encoder: DataEncoder) => void;
 
-let queuedForFunctionRegistryInitialization: (() => void)[] = [];
 let functionRegistry: FunctionSpec[] | null = null;
 
- function runWithFunctionRegistryInitialized(fn: () => void) {
-  if (functionRegistry) {
-    fn();
-  } else {
-    queuedForFunctionRegistryInitialization.push(fn);
-  }
-}
-
-export async function getFunctionRegistry(): Promise<FunctionSpec[]> {
-  return new Promise((resolve) => {
-    runWithFunctionRegistryInitialized(() => {
-      resolve(functionRegistry!);
-    });
-  });
+export function getFunctionRegistry(): FunctionSpec[] {
+  return functionRegistry!;
 }
 
 export function setFunctionRegistry(registry: FunctionSpec[]) {
   functionRegistry = registry;
-  for (const fn of queuedForFunctionRegistryInitialization) {
-    fn();
-  }
-  queuedForFunctionRegistryInitialization = [];
 }

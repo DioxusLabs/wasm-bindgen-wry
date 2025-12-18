@@ -1,4 +1,3 @@
-
 import { DataEncoder, DataDecoder } from "./encoding";
 import { RustFunction } from "./rust_function";
 
@@ -92,30 +91,30 @@ class NullType implements TypeClass {
  * Type class for numeric values (u8, u16, u32, u64) with encoding/decoding methods
  */
 class NumericType implements TypeClass {
-  private size: 'u8' | 'u16' | 'u32' | 'u64' | 'f32' | 'f64';
+  private size: "u8" | "u16" | "u32" | "u64" | "f32" | "f64";
 
-  constructor(size: 'u8' | 'u16' | 'u32' | 'u64' | 'f32' | 'f64') {
+  constructor(size: "u8" | "u16" | "u32" | "u64" | "f32" | "f64") {
     this.size = size;
   }
 
   encode(encoder: DataEncoder, value: number): void {
     switch (this.size) {
-      case 'u8':
+      case "u8":
         encoder.pushU8(value);
         break;
-      case 'u16':
+      case "u16":
         encoder.pushU16(value);
         break;
-      case 'u32':
+      case "u32":
         encoder.pushU32(value);
         break;
-      case 'u64':
+      case "u64":
         encoder.pushU64(value);
         break;
-      case 'f32':
+      case "f32":
         encoder.pushF32(value);
         break;
-      case 'f64':
+      case "f64":
         encoder.pushF64(value);
         break;
     }
@@ -123,17 +122,17 @@ class NumericType implements TypeClass {
 
   decode(decoder: DataDecoder): number {
     switch (this.size) {
-      case 'u8':
+      case "u8":
         return decoder.takeU8();
-      case 'u16':
+      case "u16":
         return decoder.takeU16();
-      case 'u32':
+      case "u32":
         return decoder.takeU32();
-      case 'u64':
+      case "u64":
         return decoder.takeU64();
-      case 'f32':
+      case "f32":
         return decoder.takeF32();
-      case 'f64':
+      case "f64":
         return decoder.takeF64();
     }
   }
@@ -175,25 +174,35 @@ function createWrapperFunction(
 ): (decoder: DataDecoder, encoder: DataEncoder) => void {
   return (decoder: DataDecoder, encoder: DataEncoder) => {
     // Decode parameters using their respective types
-    const params = paramTypes.map(paramType => paramType.decode(decoder));
-    
+    const params = paramTypes.map((paramType) => paramType.decode(decoder));
+
     // Call the original JS function with decoded parameters
     const result = jsFunction(...params);
-    
+
     // Encode the result using the return type
     returnType.encode(encoder, result);
   };
 }
 
 // Pre-instantiated numeric type classes
-export const U8Type = new NumericType('u8');
-export const U16Type = new NumericType('u16');
-export const U32Type = new NumericType('u32');
-export const U64Type = new NumericType('u64');
-export const F32Type = new NumericType('f32');
-export const F64Type = new NumericType('f64');
+export const U8Type = new NumericType("u8");
+export const U16Type = new NumericType("u16");
+export const U32Type = new NumericType("u32");
+export const U64Type = new NumericType("u64");
+export const F32Type = new NumericType("f32");
+export const F64Type = new NumericType("f64");
 
 // Pre-instantiated string type class
 export const strType = new StringType();
 
-export { TypeClass, BoolType, HeapRefType, CallbackType, NullType, NumericType, OptionType, StringType, createWrapperFunction };
+export {
+  TypeClass,
+  BoolType,
+  HeapRefType,
+  CallbackType,
+  NullType,
+  NumericType,
+  OptionType,
+  StringType,
+  createWrapperFunction,
+};
