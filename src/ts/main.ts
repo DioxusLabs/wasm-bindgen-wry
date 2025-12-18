@@ -1,8 +1,7 @@
 import { JSHeap } from "./heap.ts";
 import "./ipc.ts";
-import { DataDecoder, DataEncoder } from "./encoding.ts";
 import { evaluate_from_rust_binary } from "./ipc.ts";
-import { createWrapperFunction, BoolType, HeapRefType, NullType, U8Type, U16Type, U32Type, U64Type, OptionType, CallbackType, F32Type, F64Type } from "./types.ts";
+import { createWrapperFunction, BoolType, HeapRefType, NullType, U8Type, U16Type, U32Type, U64Type, OptionType, CallbackType, F32Type, F64Type, ResultType } from "./types.ts";
 import { FunctionSpec, setFunctionRegistry } from "./function_registry.ts";
 
 
@@ -15,6 +14,7 @@ window.HeapRefType = HeapRefType;
 window.NullType = NullType;
 window.OptionType = OptionType;
 window.CallbackType = CallbackType;
+window.ResultType = ResultType;
 window.U8Type = U8Type;
 window.U16Type = U16Type;
 window.U32Type = U32Type;
@@ -33,6 +33,7 @@ declare global {
     NullType: typeof NullType;
     OptionType: typeof OptionType;
     CallbackType: typeof CallbackType;
+    ResultType: typeof ResultType;
     U8Type: typeof U8Type;
     U16Type: typeof U16Type;
     U32Type: typeof U32Type;

@@ -164,6 +164,43 @@ class OptionType implements TypeClass {
   }
 }
 
+type Ok = { value: any };
+type Err = { error: any };
+
+class ResultType implements TypeClass {
+  private okType: TypeClass;
+  private errType: TypeClass;
+
+  constructor(okType: TypeClass, errType: TypeClass) {
+    this.okType = okType;
+    this.errType = errType;
+  }
+
+  encode(encoder: DataEncoder, value: any): void {
+    const result: Ok | Err = value;
+    if ("ok" in result) {
+      encoder.pushU8(1); // Indicate Ok
+      this.okType.encode(encoder, result.ok);
+    } else if ("err" in result) {
+      encoder.pushU8(0); // Indicate Err
+      this.errType.encode(encoder, result.err);
+    } else {
+      throw new Error("Invalid RustType value: must be Ok or Err");
+    }
+  }
+
+  decode(decoder: DataDecoder): any {
+    const isOk = decoder.takeU8();
+    if (isOk === 1) {
+      const okValue = this.okType.decode(decoder);
+      return { ok: okValue };
+    } else {
+      const errValue = this.errType.decode(decoder);
+      return { err: errValue };
+    }
+  }
+}
+
 /**
  * Creates a wrapper function that handles encoding/decoding for a JS function
  */
@@ -204,5 +241,6 @@ export {
   NumericType,
   OptionType,
   StringType,
+  ResultType,
   createWrapperFunction,
 };

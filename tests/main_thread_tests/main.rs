@@ -3,6 +3,7 @@ use wry_testing::set_on_log;
 
 mod add_number_js;
 mod callbacks;
+mod catch_attribute;
 mod jsvalue;
 mod string_enum;
 
@@ -49,6 +50,12 @@ fn main() {
         test_with_js_context(string_enum::test_string_enum_to_str);
         test_with_js_context(string_enum::test_string_enum_to_jsvalue);
         test_with_js_context(string_enum::test_string_enum_from_jsvalue);
+
+        // Catch attribute tests
+        test_with_js_context(catch_attribute::test_catch_throws_error);
+        test_with_js_context(catch_attribute::test_catch_successful_call);
+        test_with_js_context(catch_attribute::test_catch_with_arguments);
+        test_with_js_context(catch_attribute::test_catch_method);
     })
     .unwrap();
 }

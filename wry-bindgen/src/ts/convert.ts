@@ -37,6 +37,13 @@ export function is_bigint(x: any): boolean {
 export function as_string(x: any): string | null {
   return typeof x === "string" ? x : null;
 }
+export function debug_string(x: any): string {
+  try {
+    return x.toString();
+  } catch {
+    return "[unrepresentable]";
+  }
+}
 export function str_to_jsvalue(n: string): any {
   return n;
 }

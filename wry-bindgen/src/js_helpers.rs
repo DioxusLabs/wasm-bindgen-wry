@@ -45,6 +45,10 @@ extern "C" {
     #[wasm_bindgen(js_name = "as_string")]
     pub(crate) fn js_as_string(x: &JsValue) -> Option<String>;
 
+    /// Get a debug string representation of the JsValue.
+    #[wasm_bindgen(js_name = "debug_string")]
+    pub(crate) fn js_debug_string(x: &JsValue) -> String;
+
     /// Create a JsValue from a string.
     #[wasm_bindgen(js_name = "str_to_jsvalue")]
     pub(crate) fn js_string_to_jsvalue(s: &str) -> JsValue;

@@ -307,7 +307,8 @@ fn generate_function(
     };
 
     // For non-inline_js, generate a simple closure that returns a constant string
-    let js_code_str = generate_js_code(func, vendor_prefixes, prefix);
+    let js_code = generate_js_code(func, vendor_prefixes, prefix);
+    let js_code_str = js_code.to_arrow_function();
 
     // Generate the function body
     let func_body = quote_spanned! {span=>
@@ -429,71 +430,97 @@ fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix
 }
 
 /// Generate JavaScript code for the function
-fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::HashMap<String, Vec<String>>, prefix: &str) -> String {
+fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::HashMap<String, Vec<String>>, prefix: &str) -> JsCode {
     let js_name = &func.js_name;
 
-    match &func.kind {
+    let prefix = if let Some(ns) = &func.js_namespace {
+        if !ns.is_empty() {
+            format!("{prefix}{}.", ns.join("."))
+        } else {
+            prefix.to_string()
+        }
+    } else {
+        prefix.to_string()
+    };
+
+    let (params, body) = match &func.kind {
         ImportFunctionKind::Normal => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
-            if let Some(ref ns) = func.js_namespace {
-                format!(
-                    "({}) => {prefix}{}.{}({})",
-                    args_str,
-                    ns.join("."),
-                    js_name,
-                    args_str
-                )
-            } else {
-                format!("({}) => {prefix}{}({})", args_str, js_name, args_str)
-            }
+            (format!("({})", args_str), format!("{prefix}{}({})", js_name, args_str))
         }
         ImportFunctionKind::Method { .. } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
             if args.is_empty() {
-                format!("(obj) => obj.{}()", js_name)
+                ("(obj)".to_string(), format!("obj.{}()", js_name))
             } else {
-                format!("(obj, {}) => obj.{}({})", args_str, js_name, args_str)
+                (format!("(obj, {})", args_str), format!("obj.{}({})", js_name, args_str))
             }
         }
         ImportFunctionKind::Getter { property, .. } => {
-            format!("(obj) => obj.{}", property)
+            ("(obj)".to_string(), format!("obj.{}", property))
         }
         ImportFunctionKind::Setter { property, .. } => {
-            format!("(obj, value) => {{{{ obj.{} = value; }}}}", property)
+            ("(obj, value)".to_string(), format!("{{{{ obj.{} = value; }}}}", property))
         }
         ImportFunctionKind::Constructor { class } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
 
             // Check if this type has vendor prefixes
-            if let Some(prefixes) = vendor_prefixes.get(class) {
+            let body = if let Some(prefixes) = vendor_prefixes.get(class) {
                 if !prefixes.is_empty() {
                     // Generate vendor-prefixed fallback code
-                    let constructor_expr = generate_vendor_prefixed_constructor(class, prefixes, prefix);
-                    format!("({}) => new ({})({})", args_str, constructor_expr, args_str)
+                    let constructor_expr = generate_vendor_prefixed_constructor(class, prefixes, &prefix);
+                    format!("new ({})({})", constructor_expr, args_str)
                 } else {
-                    format!(
-                        "({}) => new {prefix}{}({})",
-                        args_str, class, args_str
-                    )
+                    format!("new {prefix}{}({})", class, args_str)
                 }
             } else {
-                format!(
-                    "({}) => new {prefix}{}({})",
-                    args_str, class, args_str
-                )
-            }
+                format!("new {prefix}{}({})", class, args_str)
+            };
+
+            (format!("({})", args_str), body)
         }
         ImportFunctionKind::StaticMethod { class } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
-            format!(
-                "({}) => {prefix}{}.{}({})",
-                args_str, class, js_name, args_str
-            )
+            (format!("({})", args_str), format!("{prefix}{}.{}({})", class, js_name, args_str))
         }
+    };
+
+    // Wrap in try-catch if catch attribute is present
+    let body = if func.catch {
+        wrap_body_with_try_catch(&body)
+    } else {
+        body
+    };
+
+    JsCode { params, body }
+}
+
+/// Wrap JavaScript body in try-catch block for error handling
+fn wrap_body_with_try_catch(body: &str) -> String {
+    // Wrap the body in try-catch and return Result-like object
+    format!(
+        "{{{{ try {{{{ return {{{{ ok: {} }}}}; }}}} catch(e) {{{{ return {{{{ err: e }}}}; }}}} }}}}",
+        body
+    )
+}
+
+/// JavaScript function code parts
+struct JsCode {
+    /// Function parameters (e.g., "(arg1, arg2)" or "(obj, arg1, arg2)")
+    params: String,
+    /// Function body (e.g., "obj.method(arg1, arg2)" or "new Class(arg1)")
+    body: String,
+}
+
+impl JsCode {
+    /// Convert to a complete JavaScript arrow function
+    fn to_arrow_function(&self) -> String {
+        format!("{} => {}", self.params, self.body)
     }
 }
 

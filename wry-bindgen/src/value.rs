@@ -146,7 +146,7 @@ impl Drop for JsValue {
 
 impl fmt::Debug for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("JsValue").field("idx", &self.idx).finish()
+        f.write_str(&self.as_debug_string())
     }
 }
 
@@ -360,6 +360,11 @@ impl JsValue {
     /// Get the value as a string.
     pub fn as_string(&self) -> Option<String> {
         crate::js_helpers::js_as_string(self)
+    }
+
+    /// Get a debug string representation of the value.
+    pub fn as_debug_string(&self) -> String {
+        crate::js_helpers::js_debug_string(self)
     }
 }
 

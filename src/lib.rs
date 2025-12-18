@@ -75,11 +75,6 @@ where
     set_event_loop_proxy(proxy.clone());
     let registry = &*FUNCTION_REGISTRY;
 
-    println!(
-        "=== Generated JS Script ===\n{}\n=== End Script ===",
-        registry.script()
-    );
-
     // Spawn the app thread with panic handling - if the app panics, shut down the webview
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(app));
