@@ -16,6 +16,7 @@ extern "C" {
 }
 
 fn test_with_js_context<F: FnOnce()>(f: F) {
+    println!("testing {}", std::any::type_name::<F>());
     let before = heap_objects_alive();
     f();
     let after = heap_objects_alive();
