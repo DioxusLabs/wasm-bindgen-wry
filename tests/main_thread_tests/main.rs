@@ -6,6 +6,7 @@ mod callbacks;
 mod catch_attribute;
 mod jsvalue;
 mod string_enum;
+mod roundtrip;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
         return window.jsHeap.heapObjectsAlive();
@@ -30,8 +31,14 @@ fn main() {
             println!("[JS] {}", msg);
         }));
 
+        // The simplest bindings
         test_with_js_context(add_number_js::test_add_number_js);
         test_with_js_context(add_number_js::test_add_number_js_batch);
+
+        // Roundtrip tests
+        test_with_js_context(roundtrip::test_roundtrip);
+
+        // Callbacks
         test_with_js_context(callbacks::test_call_callback);
         test_with_js_context(callbacks::test_call_callback_async);
 
