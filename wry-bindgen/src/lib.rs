@@ -101,9 +101,8 @@ pub use wry_bindgen_macro::wasm_bindgen;
 pub use inventory;
 
 /// Function specification for the registry
-
+#[derive(Clone, Copy)]
 pub struct JsFunctionSpec {
-    pub name: &'static str,
     /// Function that generates the JS code
     pub js_code: fn() -> String,
     pub type_info: fn() -> (Vec<String>, String),
@@ -147,30 +146,18 @@ impl InlineJsModule {
 inventory::collect!(InlineJsModule);
 
 impl JsFunctionSpec {
-    pub const fn new(
-        name: &'static str,
-        js_code: fn() -> String,
-        type_info: fn() -> (Vec<String>, String),
-    ) -> Self {
-        Self {
-            name,
-            js_code,
-            type_info,
-        }
+    pub const fn new(js_code: fn() -> String, type_info: fn() -> (Vec<String>, String)) -> Self {
+        Self { js_code, type_info }
     }
 }
 
 inventory::collect!(JsFunctionSpec);
 
-struct JsFunctionId {
-    name: &'static str,
-}
-
 /// Registry of JS functions collected via inventory
 
 pub struct FunctionRegistry {
     functions: String,
-    function_ids: Vec<JsFunctionId>,
+    function_specs: Vec<JsFunctionSpec>,
     /// Map of module path -> module content for inline_js modules
     modules: std::collections::HashMap<String, &'static str>,
 }
@@ -182,7 +169,6 @@ impl FunctionRegistry {
     fn collect_from_inventory() -> Self {
         use std::fmt::Write;
 
-        let mut function_ids = Vec::new();
         let mut modules = std::collections::HashMap::new();
 
         // Collect all inline JS modules and deduplicate by content hash
@@ -194,12 +180,7 @@ impl FunctionRegistry {
         }
 
         // Collect all function specs
-        let specs: Vec<_> = inventory::iter::<JsFunctionSpec>().collect();
-
-        for spec in &specs {
-            let id = JsFunctionId { name: spec.name };
-            function_ids.push(id);
-        }
+        let specs: Vec<_> = inventory::iter::<JsFunctionSpec>().copied().collect();
 
         // Build the script - load modules from wry:// handler before setting up function registry
         let mut script = String::new();
@@ -252,22 +233,21 @@ impl FunctionRegistry {
 
         Self {
             functions: script,
-            function_ids,
+            function_specs: specs,
             modules,
         }
     }
 
     /// Get a function by name from the registry
-    pub fn get_function<F>(&self, name: &str) -> Option<JSFunction<F>>
+    pub fn get_function<F>(&self, spec: JsFunctionSpec) -> Option<JSFunction<F>>
     where
         F: 'static,
     {
-        for (i, id) in self.function_ids.iter().enumerate() {
-            if id.name == name {
-                return Some(JSFunction::new(i as u32));
-            }
-        }
-        None
+        let index = self
+            .function_specs
+            .iter()
+            .position(|s| s.js_code as usize == spec.js_code as usize)?;
+        Some(JSFunction::new(index as _))
     }
 
     /// Get the initialization script

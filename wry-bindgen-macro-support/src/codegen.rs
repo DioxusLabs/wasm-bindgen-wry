@@ -3,7 +3,7 @@
 //! This module generates Rust code that uses the wry-bindgen runtime
 //! and inventory-based function registration.
 
-use std::hash::{Hash, Hasher, RandomState, BuildHasher};
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 
 use crate::ast::{
     ImportFunction, ImportFunctionKind, ImportStatic, ImportType, Program, StringEnum,
@@ -19,10 +19,13 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     // First generate the module for inline_js if needed
     let mut prefix = String::new();
     if let Some((span, inline_js_module)) = &program.attrs.inline_js {
-        let unique_hash =  {
+        let unique_hash = {
             let s = RandomState::new();
             let mut hasher = s.build_hasher();
-            inline_js_module.to_token_stream().to_string().hash(&mut hasher);
+            inline_js_module
+                .to_token_stream()
+                .to_string()
+                .hash(&mut hasher);
             hasher.finish()
         };
         let unique_ident = format_ident!("__WRY_BINDGEN_INLINE_JS_MODULE_HASH_{}", unique_hash);
@@ -52,7 +55,12 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     let vendor_prefixes: std::collections::HashMap<String, Vec<String>> = program
         .types
         .iter()
-        .map(|t| (t.rust_name.to_string(), t.vendor_prefixes.iter().map(|i| i.to_string()).collect()))
+        .map(|t| {
+            (
+                t.rust_name.to_string(),
+                t.vendor_prefixes.iter().map(|i| i.to_string()).collect(),
+            )
+        })
         .collect();
 
     // Generate type definitions
@@ -62,7 +70,13 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
 
     // Generate function definitions
     for func in &program.functions {
-        tokens.extend(generate_function(func, &type_names, &vendor_prefixes, krate, &prefix)?);
+        tokens.extend(generate_function(
+            func,
+            &type_names,
+            &vendor_prefixes,
+            krate,
+            &prefix,
+        )?);
     }
 
     // Generate static definitions
@@ -302,7 +316,9 @@ fn generate_function(
 
     // Generate return type constructor
     let ret_type_constructor = match &func.ret {
-        Some(_ty) => quote_spanned! {span=> <#ret_type as #krate::TypeConstructor<_>>::create_type_instance() },
+        Some(_ty) => {
+            quote_spanned! {span=> <#ret_type as #krate::TypeConstructor<_>>::create_type_instance() }
+        }
         None => quote_spanned! {span=> "new window.NullType()".to_string() },
     };
 
@@ -312,18 +328,19 @@ fn generate_function(
 
     // Generate the function body
     let func_body = quote_spanned! {span=>
+        static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
+            || format!(#js_code_str),
+            || (#type_constructors, #ret_type_constructor),
+        );
+
         #krate::inventory::submit! {
-            #krate::JsFunctionSpec::new(
-                #registry_name,
-                || format!(#js_code_str),
-                || (#type_constructors, #ret_type_constructor),
-            )
+            __SPEC
         }
 
         // Look up the function at runtime
         let func: #krate::JSFunction<fn(#fn_types) -> #ret_type> =
             #krate::FUNCTION_REGISTRY
-                .get_function(#registry_name)
+                .get_function(__SPEC)
                 .expect(concat!("Function not found: ", #registry_name));
 
         // Call the function
@@ -403,9 +420,7 @@ fn generate_function(
 /// (typeof MyApi !== 'undefined' ? MyApi : (typeof webkitMyApi !== 'undefined' ? webkitMyApi : (typeof mozMyApi !== 'undefined' ? mozMyApi : undefined)))
 fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix: &str) -> String {
     // Start with the base class name (no prefix)
-    let mut result = format!(
-        "(typeof {prefix}{class} !== 'undefined' ? {prefix}{class} : "
-    );
+    let mut result = format!("(typeof {prefix}{class} !== 'undefined' ? {prefix}{class} : ");
 
     // Add each vendor prefix
     for (i, vendor_prefix) in prefixes.iter().enumerate() {
@@ -430,7 +445,11 @@ fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix
 }
 
 /// Generate JavaScript code for the function
-fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::HashMap<String, Vec<String>>, prefix: &str) -> JsCode {
+fn generate_js_code(
+    func: &ImportFunction,
+    vendor_prefixes: &std::collections::HashMap<String, Vec<String>>,
+    prefix: &str,
+) -> JsCode {
     let js_name = &func.js_name;
 
     let prefix = if let Some(ns) = &func.js_namespace {
@@ -447,7 +466,10 @@ fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::H
         ImportFunctionKind::Normal => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
-            (format!("({})", args_str), format!("{prefix}{}({})", js_name, args_str))
+            (
+                format!("({})", args_str),
+                format!("{prefix}{}({})", js_name, args_str),
+            )
         }
         ImportFunctionKind::Method { .. } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
@@ -455,15 +477,19 @@ fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::H
             if args.is_empty() {
                 ("(obj)".to_string(), format!("obj.{}()", js_name))
             } else {
-                (format!("(obj, {})", args_str), format!("obj.{}({})", js_name, args_str))
+                (
+                    format!("(obj, {})", args_str),
+                    format!("obj.{}({})", js_name, args_str),
+                )
             }
         }
         ImportFunctionKind::Getter { property, .. } => {
             ("(obj)".to_string(), format!("obj.{}", property))
         }
-        ImportFunctionKind::Setter { property, .. } => {
-            ("(obj, value)".to_string(), format!("{{{{ obj.{} = value; }}}}", property))
-        }
+        ImportFunctionKind::Setter { property, .. } => (
+            "(obj, value)".to_string(),
+            format!("{{{{ obj.{} = value; }}}}", property),
+        ),
         ImportFunctionKind::Constructor { class } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
@@ -472,7 +498,8 @@ fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::H
             let body = if let Some(prefixes) = vendor_prefixes.get(class) {
                 if !prefixes.is_empty() {
                     // Generate vendor-prefixed fallback code
-                    let constructor_expr = generate_vendor_prefixed_constructor(class, prefixes, &prefix);
+                    let constructor_expr =
+                        generate_vendor_prefixed_constructor(class, prefixes, &prefix);
                     format!("new ({})({})", constructor_expr, args_str)
                 } else {
                     format!("new {prefix}{}({})", class, args_str)
@@ -486,7 +513,10 @@ fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::H
         ImportFunctionKind::StaticMethod { class } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
-            (format!("({})", args_str), format!("{prefix}{}.{}({})", class, js_name, args_str))
+            (
+                format!("({})", args_str),
+                format!("{prefix}{}.{}({})", class, js_name, args_str),
+            )
         }
     };
 
@@ -565,8 +595,9 @@ fn generate_args(func: &ImportFunction, krate: &TokenStream) -> syn::Result<Gene
         fn_params.push(quote_spanned! {span=> #name: #ty });
         fn_types.push(quote_spanned! {span=> #ty });
         call_values.push(quote_spanned! {span=> #name });
-        type_constructors
-            .push(quote_spanned! {span=> <#ty as #krate::TypeConstructor<_>>::create_type_instance() });
+        type_constructors.push(
+            quote_spanned! {span=> <#ty as #krate::TypeConstructor<_>>::create_type_instance() },
+        );
     }
 
     let fn_params_tokens = if fn_params.is_empty() {
@@ -631,12 +662,13 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
     if st.thread_local_v2 {
         // Generate a lazily-initialized thread-local static
         Ok(quote_spanned! {span=>
+            static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
+                || format!(#js_code),
+                || (std::vec![] as std::vec::Vec<String>, #ret_type_constructor),
+            );
+
             #krate::inventory::submit! {
-                #krate::JsFunctionSpec::new(
-                    #registry_name,
-                    || format!(#js_code),
-                    || (std::vec![] as std::vec::Vec<String>, #ret_type_constructor),
-                )
+                __SPEC
             }
 
             #vis static #rust_name: #krate::JsThreadLocal<#ty> = {
@@ -644,7 +676,7 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
                     // Look up the accessor function at runtime
                     let func: #krate::JSFunction<fn() -> #ty> =
                         #krate::FUNCTION_REGISTRY
-                            .get_function(#registry_name)
+                            .get_function(__SPEC)
                             .expect(concat!("Static accessor not found: ", #registry_name));
 
                     // Call the accessor to get the value
@@ -657,19 +689,19 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
         // For non-thread-local statics, generate a regular function accessor
         // This matches the behavior of wasm-bindgen without thread_local_v2 attribute
         Ok(quote_spanned! {span=>
+            static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
+                || format!(#js_code),
+                || (std::vec![] as std::vec::Vec<String>, #ret_type_constructor),
+            );
             #krate::inventory::submit! {
-                #krate::JsFunctionSpec::new(
-                    #registry_name,
-                    || format!(#js_code),
-                    || (std::vec![] as std::vec::Vec<String>, #ret_type_constructor),
-                )
+                __SPEC
             }
 
             #vis fn #rust_name() -> #ty {
                 // Look up the accessor function at runtime
                 let func: #krate::JSFunction<fn() -> #ty> =
                     #krate::FUNCTION_REGISTRY
-                        .get_function(#registry_name)
+                        .get_function(__SPEC)
                         .expect(concat!("Static accessor not found: ", #registry_name));
 
                 // Call the accessor to get the value
@@ -710,7 +742,10 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
     );
 
     // Generate variant paths for match arms (EnumName::VariantName)
-    let variant_paths: Vec<TokenStream> = variants.iter().map(|v| quote_spanned!(span=> #enum_name::#v)).collect();
+    let variant_paths: Vec<TokenStream> = variants
+        .iter()
+        .map(|v| quote_spanned!(span=> #enum_name::#v))
+        .collect();
 
     // Generate the enum definition with repr(u32)
     let enum_def = quote! {
