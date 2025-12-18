@@ -190,6 +190,32 @@ class DataDecoder {
     this.strOffset += len;
     return str;
   }
+
+  takeI8(): number {
+    const unsigned = this.takeU8();
+    // Convert unsigned to signed: if value > 127, it's negative
+    return unsigned > 0x7f ? unsigned - 0x100 : unsigned;
+  }
+
+  takeI16(): number {
+    const unsigned = this.takeU16();
+    // Convert unsigned to signed: if value > 32767, it's negative
+    return unsigned > 0x7fff ? unsigned - 0x10000 : unsigned;
+  }
+
+  takeI32(): number {
+    const unsigned = this.takeU32();
+    // Convert unsigned to signed using bitwise OR
+    return unsigned | 0;
+  }
+
+  takeI64(): number {
+    const low = this.takeU32();
+    const high = this.takeU32();
+    // Convert high part to signed 32-bit first
+    const signedHigh = high | 0;
+    return low + signedHigh * 0x100000000;
+  }
 }
 
 export { DataDecoder, DataEncoder };

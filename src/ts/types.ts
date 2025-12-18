@@ -111,12 +111,12 @@ class NullType implements TypeClass {
 }
 
 /**
- * Type class for numeric values (u8, u16, u32, u64) with encoding/decoding methods
+ * Type class for numeric values (u8, u16, u32, u64, i8, i16, i32, i64, usize, isize, f32, f64) with encoding/decoding methods
  */
 class NumericType implements TypeClass {
-  private size: "u8" | "u16" | "u32" | "u64" | "f32" | "f64";
+  private size: "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "usize" | "isize" | "f32" | "f64";
 
-  constructor(size: "u8" | "u16" | "u32" | "u64" | "f32" | "f64") {
+  constructor(size: "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" | "i64" | "usize" | "isize" | "f32" | "f64") {
     this.size = size;
   }
 
@@ -132,6 +132,30 @@ class NumericType implements TypeClass {
         encoder.pushU32(value);
         break;
       case "u64":
+        encoder.pushU64(value);
+        break;
+      case "i8":
+        // Signed integers encode as unsigned (Rust: self as u8)
+        encoder.pushU8(value & 0xff);
+        break;
+      case "i16":
+        // Signed integers encode as unsigned (Rust: self as u16)
+        encoder.pushU16(value & 0xffff);
+        break;
+      case "i32":
+        // Signed integers encode as unsigned (Rust: self as u32)
+        encoder.pushU32(value >>> 0);
+        break;
+      case "i64":
+        // Signed integers encode as unsigned (Rust: self as u64)
+        encoder.pushU64(value);
+        break;
+      case "usize":
+        // usize encodes as u64
+        encoder.pushU64(value);
+        break;
+      case "isize":
+        // isize encodes as u64 (Rust: self as u64)
         encoder.pushU64(value);
         break;
       case "f32":
@@ -153,6 +177,20 @@ class NumericType implements TypeClass {
         return decoder.takeU32();
       case "u64":
         return decoder.takeU64();
+      case "i8":
+        return decoder.takeI8();
+      case "i16":
+        return decoder.takeI16();
+      case "i32":
+        return decoder.takeI32();
+      case "i64":
+        return decoder.takeI64();
+      case "usize":
+        // usize decodes as u64
+        return decoder.takeU64();
+      case "isize":
+        // isize decodes as i64
+        return decoder.takeI64();
       case "f32":
         return decoder.takeF32();
       case "f64":
@@ -249,6 +287,12 @@ export const U8Type = new NumericType("u8");
 export const U16Type = new NumericType("u16");
 export const U32Type = new NumericType("u32");
 export const U64Type = new NumericType("u64");
+export const I8Type = new NumericType("i8");
+export const I16Type = new NumericType("i16");
+export const I32Type = new NumericType("i32");
+export const I64Type = new NumericType("i64");
+export const UsizeType = new NumericType("usize");
+export const IsizeType = new NumericType("isize");
 export const F32Type = new NumericType("f32");
 export const F64Type = new NumericType("f64");
 
