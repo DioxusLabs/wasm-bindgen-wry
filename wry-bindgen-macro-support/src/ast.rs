@@ -94,8 +94,8 @@ pub struct ImportFunction {
     pub js_class: Option<String>,
     /// JavaScript namespace
     pub js_namespace: Option<Vec<String>>,
-    /// Inline JavaScript code (from block-level inline_js attribute)
-    pub inline_js: Option<String>,
+    /// Inline JavaScript code (from block-level inline_js attribute, accepts any expression)
+    pub inline_js: Option<syn::Expr>,
     /// Function arguments (excluding self for methods)
     pub arguments: Vec<FunctionArg>,
     /// Return type
@@ -313,7 +313,7 @@ fn extract_wasm_bindgen_attrs(attrs: &[syn::Attribute]) -> syn::Result<BindgenAt
 fn parse_foreign_fn(
     f: syn::ForeignItemFn,
     attrs: BindgenAttrs,
-    block_inline_js: Option<String>,
+    block_inline_js: Option<syn::Expr>,
 ) -> syn::Result<ImportFunction> {
     let rust_name = f.sig.ident.clone();
     let js_name = attrs

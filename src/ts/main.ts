@@ -3,20 +3,10 @@ import "./ipc.ts";
 import { DataDecoder, DataEncoder } from "./encoding.ts";
 import { evaluate_from_rust_binary } from "./ipc.ts";
 import { createWrapperFunction, BoolType, HeapRefType, NullType, U8Type, U16Type, U32Type, U64Type, OptionType, CallbackType, F32Type, F64Type } from "./types.ts";
+import { FunctionSpec, setFunctionRegistry } from "./function_registry.ts";
 
-/**
- * Function registry - maps function IDs to their serialization/deserialization specs.
- *
- * Each function has:
- * - Argument deserialization: how to read args from decoder
- * - Return serialization: how to write return value to encoder
- */
-type FunctionSpec = (decoder: DataDecoder, encoder: DataEncoder) => void;
 
-let functionRegistry: FunctionSpec[] = [];
-window.setFunctionRegistry = (registry: FunctionSpec[]) => {
-  functionRegistry = registry;
-};
+window.setFunctionRegistry = setFunctionRegistry;
 window.evaluate_from_rust_binary = evaluate_from_rust_binary;
 window.jsHeap = new JSHeap();
 window.createWrapperFunction = createWrapperFunction;
@@ -34,7 +24,6 @@ window.F64Type = F64Type;
 
 declare global {
   interface Window {
-    functionRegistry: FunctionSpec[];
     setFunctionRegistry: (registry: FunctionSpec[]) => void;
     evaluate_from_rust_binary: (dataBase64: string) => unknown;
     jsHeap: JSHeap;

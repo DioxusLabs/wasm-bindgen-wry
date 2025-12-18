@@ -3579,6 +3579,7 @@ dependencies = [
  "base64",
  "bytemuck",
  "inventory",
+ "lazy-js-bundle",
  "once_cell",
  "slotmap",
  "winit",

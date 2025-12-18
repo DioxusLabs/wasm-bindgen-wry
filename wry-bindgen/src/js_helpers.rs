@@ -3,23 +3,7 @@
 use crate::JsValue;
 use crate::wasm_bindgen;
 
-#[wasm_bindgen(crate = crate, inline_js = r#"
-    export function __wry_is_undefined(x) { return x === undefined; }
-    export function __wry_is_null(x) { return x === null; }
-    export function __wry_is_true(x) { return x === true; }
-    export function __wry_is_false(x) { return x === false; }
-    export function __wry_typeof(x) { return typeof x; }
-    export function __wry_is_falsy(x) { return !x; }
-    export function __wry_is_truthy(x) { return !!x; }
-    export function __wry_is_object(x) { return typeof x === 'object' && x !== null; }
-    export function __wry_is_function(x) { return typeof x === 'function'; }
-    export function __wry_is_string(x) { return typeof x === 'string'; }
-    export function __wry_is_symbol(x) { return typeof x === 'symbol'; }
-    export function __wry_is_bigint(x) { return typeof x === 'bigint'; }
-    export function __wry_as_string(x) { return typeof x === 'string' ? x : null; }
-    export function __wry_str_to_jsvalue(n) { return n; }
-    export function __wry_float_to_jsvalue(n) { return n; }
-"#)]
+#[wasm_bindgen(crate = crate, inline_js = include_str!("./js/convert.js"))]
 extern "C" {
     #[wasm_bindgen(js_name = "__wry_is_undefined")]
     pub(crate) fn js_is_undefined(x: &JsValue) -> bool;

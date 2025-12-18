@@ -368,7 +368,7 @@ fn generate_function(
 
 /// Generate JavaScript code for the function
 fn generate_js_code(func: &ImportFunction) -> String {
-    // If inline_js is present, reference the pre-loaded module from window.__wryModules
+    // If inline_js is present, reference the pre-loaded module
     if func.inline_js.is_some() {
         let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
         let args_str = args.join(", ");
@@ -376,7 +376,7 @@ fn generate_js_code(func: &ImportFunction) -> String {
         let registry_name = &func.rust_name;
         // Reference the pre-loaded module export
         return format!(
-            "({}) => window.__wryModules[\"{}\"].{}({})",
+            "({}) => {}.{}({})",
             args_str, registry_name, js_name, args_str
         );
     }

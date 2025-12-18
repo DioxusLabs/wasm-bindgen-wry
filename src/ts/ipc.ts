@@ -14,6 +14,7 @@
  */
 
 import { DataDecoder, DataEncoder } from "./encoding";
+import { getFunctionRegistry } from "./function_registry";
 
 enum MessageType {
   Evaluate = 0,
@@ -65,21 +66,21 @@ function sync_request_binary(
  *
  * @param dataBase64 - Base64 encoded binary data containing message with operations
  */
-function evaluate_from_rust_binary(dataBase64: string): unknown {
+async function evaluate_from_rust_binary(dataBase64: string): Promise<DataDecoder | null> {
   // Decode base64 to ArrayBuffer
   const binary = atob(dataBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return handleBinaryResponse(bytes.buffer);
+  return await handleBinaryResponse(bytes.buffer);
 }
 
 /**
  * Handle binary response from Rust.
  * May contain nested Evaluate calls (for callbacks).
  */
-function handleBinaryResponse(response: ArrayBuffer | null): DataDecoder | null {
+async function handleBinaryResponse(response: ArrayBuffer | null): Promise<DataDecoder | null> {
   if (!response || response.byteLength === 0) {
     return null;
   }
@@ -117,7 +118,8 @@ function handleBinaryResponse(response: ArrayBuffer | null): DataDecoder | null 
         continue;
       }
 
-      const spec = window.functionRegistry[fnId];
+      const functionRegistry = await getFunctionRegistry();
+      const spec = functionRegistry[fnId];
       if (!spec) {
         throw new Error("Unknown function ID in response: " + fnId);
       }

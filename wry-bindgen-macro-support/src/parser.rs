@@ -50,8 +50,8 @@ pub struct BindgenAttrs {
     pub variadic: Option<Span>,
     /// The `typescript_type` attribute - TypeScript type override
     pub typescript_type: Option<(Span, String)>,
-    /// The `inline_js` attribute - inline JavaScript code
-    pub inline_js: Option<(Span, String)>,
+    /// The `inline_js` attribute - inline JavaScript code (accepts any expression)
+    pub inline_js: Option<(Span, Expr)>,
     /// The `thread_local_v2` attribute - marks a static as lazily initialized
     pub thread_local_v2: Option<Span>,
     /// The `is_type_of` attribute - custom type checking expression
@@ -138,7 +138,7 @@ enum BindgenAttr {
     StaticMethodOf(Span, Ident),
     Variadic(Span),
     TypescriptType(Span, String),
-    InlineJs(Span, String),
+    InlineJs(Span, Expr),
     ThreadLocalV2(Span),
     IsTypeOf(Span, Expr),
     IndexingGetter(Span),
@@ -255,8 +255,8 @@ impl Parse for BindgenAttr {
 
             "inline_js" => {
                 input.parse::<Token![=]>()?;
-                let js = input.parse::<LitStr>()?.value();
-                Ok(BindgenAttr::InlineJs(span, js))
+                let expr: Expr = input.parse()?;
+                Ok(BindgenAttr::InlineJs(span, expr))
             }
 
             "is_type_of" => {

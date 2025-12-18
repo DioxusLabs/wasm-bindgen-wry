@@ -183,26 +183,27 @@ impl FunctionRegistry {
             }
         }
 
-        // Build the script - inline module content directly to avoid async issues
+        // Build the script - load modules from wry:// handler before setting up function registry
         let mut script = String::new();
-        script.push_str("window.__wryModules = {};\n");
 
-        // Inline each module's content using IIFE to create module-like scope
+        // Wrap everything in an async IIFE to use await
+        script.push_str("(async () => {\n");
+
+        // Load all inline_js modules from the wry handler
         for spec in &specs {
-            if let Some(ref inline_js) = spec.inline_js {
-                // Convert "export function foo" to "function foo" and capture exports
-                let module_code = inline_js.content.replace("export ", "");
+            if spec.inline_js.is_some() {
+                // Dynamically import the module from wry://snippets/{name}.js
                 write!(
                     &mut script,
-                    "window.__wryModules[\"{}\"] = (() => {{ {}; return {{ {} }}; }})();\n",
-                    spec.name, module_code, inline_js.export_name
+                    "  const {} = await import('wry://snippets/{}.js');\n",
+                    spec.name, spec.name
                 )
                 .unwrap();
             }
         }
 
-        // Now set up the function registry
-        script.push_str("window.setFunctionRegistry([");
+        // Now set up the function registry after all modules are loaded
+        script.push_str("  window.setFunctionRegistry([");
         for (i, spec) in specs.iter().enumerate() {
             if i > 0 {
                 script.push_str(",\n");
@@ -217,7 +218,10 @@ impl FunctionRegistry {
             )
             .unwrap();
         }
-        script.push_str("]);");
+        script.push_str("]);\n");
+
+        // Close the async IIFE
+        script.push_str("})();\n");
 
         Self {
             functions: script,
