@@ -108,8 +108,15 @@ export function set_on_log(callback) {
     originalLog.call(console, "Setting onLogCallback");
     onLogCallback = callback;
 }
+
+export function set_on_error(callback) {
+    window.addEventListener('error', function(event) {
+        callback(event.message + ' at ' + event.filename + ':' + event.lineno + ':' + event.colno);
+    });
+}
 "#)]
 extern "C" {
     pub fn set_on_log(callback: Box<dyn FnMut(String)>);
+    pub fn set_on_error(callback: Box<dyn FnMut(String)>);
 }
 

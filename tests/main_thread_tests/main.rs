@@ -1,5 +1,5 @@
 use wasm_bindgen::wasm_bindgen;
-use wry_testing::set_on_log;
+use wry_testing::{bindings::set_on_error, set_on_log};
 
 mod add_number_js;
 mod callbacks;
@@ -27,6 +27,10 @@ fn test_with_js_context<F: FnOnce()>(f: F) {
 
 fn main() {
     wry_testing::run(|| {
+        set_on_error(Box::new(|err: String| {
+            println!("[JS ERROR] {}", err);
+        }));
+
         set_on_log(Box::new(|msg: String| {
             println!("[JS] {}", msg);
         }));
