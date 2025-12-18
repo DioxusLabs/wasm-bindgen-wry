@@ -43,6 +43,7 @@ class JSHeap {
   }
 
   get(id: number): unknown | undefined {
+    console.log("[JS Heap] get:", id, "value:", this.slots[id]);
     return this.slots[id];
   }
 

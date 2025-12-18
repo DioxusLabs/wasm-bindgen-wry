@@ -108,8 +108,8 @@ impl JsValue {
     /// Creates a JS number from an f64.
     ///
     /// Note: This is a stub implementation for API compatibility.
-    pub fn from_f64(_n: f64) -> JsValue {
-        panic!("JsValue::from_f64 is not supported in wry-bindgen - use JS bindings instead");
+    pub fn from_f64(n: f64) -> JsValue {
+        crate::js_helpers::js_float_to_jsvalue(n)
     }
 }
 

@@ -92,9 +92,9 @@ class NullType implements TypeClass {
  * Type class for numeric values (u8, u16, u32, u64) with encoding/decoding methods
  */
 class NumericType implements TypeClass {
-  private size: 'u8' | 'u16' | 'u32' | 'u64';
+  private size: 'u8' | 'u16' | 'u32' | 'u64' | 'f32' | 'f64';
 
-  constructor(size: 'u8' | 'u16' | 'u32' | 'u64') {
+  constructor(size: 'u8' | 'u16' | 'u32' | 'u64' | 'f32' | 'f64') {
     this.size = size;
   }
 
@@ -112,6 +112,12 @@ class NumericType implements TypeClass {
       case 'u64':
         encoder.pushU64(value);
         break;
+      case 'f32':
+        encoder.pushF32(value);
+        break;
+      case 'f64':
+        encoder.pushF64(value);
+        break;
     }
   }
 
@@ -125,6 +131,10 @@ class NumericType implements TypeClass {
         return decoder.takeU32();
       case 'u64':
         return decoder.takeU64();
+      case 'f32':
+        return decoder.takeF32();
+      case 'f64':
+        return decoder.takeF64();
     }
   }
 }
@@ -180,6 +190,8 @@ export const U8Type = new NumericType('u8');
 export const U16Type = new NumericType('u16');
 export const U32Type = new NumericType('u32');
 export const U64Type = new NumericType('u64');
+export const F32Type = new NumericType('f32');
+export const F64Type = new NumericType('f64');
 
 // Pre-instantiated string type class
 export const strType = new StringType();

@@ -17,7 +17,8 @@ use crate::wasm_bindgen;
     export function __wry_is_symbol(x) { return typeof x === 'symbol'; }
     export function __wry_is_bigint(x) { return typeof x === 'bigint'; }
     export function __wry_as_string(x) { return typeof x === 'string' ? x : null; }
-    export function __wry_str_to_jsvalue(s) { return s; }
+    export function __wry_str_to_jsvalue(n) { return n; }
+    export function __wry_float_to_jsvalue(n) { return n; }
 "#)]
 extern "C" {
     #[wasm_bindgen(js_name = "__wry_is_undefined")]
@@ -63,4 +64,8 @@ extern "C" {
     /// Create a JsValue from a string.
     #[wasm_bindgen(js_name = "__wry_str_to_jsvalue")]
     pub(crate) fn js_string_to_jsvalue(s: &str) -> JsValue;
+
+    /// Create a JsValue from a float.
+    #[wasm_bindgen(js_name = "__wry_float_to_jsvalue")]
+    pub(crate) fn js_float_to_jsvalue(n: f64) -> JsValue;
 }

@@ -104,6 +104,15 @@ pub(crate) fn test_jsvalue_from_js() {
     assert!(!obj.is_null(), "get_object() should NOT be null");
 }
 
+pub(crate) fn test_jsvalue_as_string() {
+    // Test from_str and as_string
+    let js_str = JsValue::from_str("hello");
+    assert_eq!(js_str.as_string(), Some("hello".to_string()));
+
+    let js_num = JsValue::from_f64(42.0);
+    assert_eq!(js_num.as_string(), None);
+}
+
 pub(crate) fn test_jsvalue_pass_to_js() {
     // Test passing Rust-created JsValue constants to JS
     #[wasm_bindgen(inline_js = r#"

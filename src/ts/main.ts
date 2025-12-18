@@ -2,7 +2,7 @@ import { JSHeap } from "./heap.ts";
 import "./ipc.ts";
 import { DataDecoder, DataEncoder } from "./encoding.ts";
 import { evaluate_from_rust_binary } from "./ipc.ts";
-import { createWrapperFunction, BoolType, HeapRefType, NullType, U8Type, U16Type, U32Type, U64Type, OptionType, CallbackType } from "./types.ts";
+import { createWrapperFunction, BoolType, HeapRefType, NullType, U8Type, U16Type, U32Type, U64Type, OptionType, CallbackType, F32Type, F64Type } from "./types.ts";
 
 /**
  * Function registry - maps function IDs to their serialization/deserialization specs.
@@ -29,6 +29,8 @@ window.U8Type = U8Type;
 window.U16Type = U16Type;
 window.U32Type = U32Type;
 window.U64Type = U64Type;
+window.F32Type = F32Type;
+window.F64Type = F64Type;
 
 declare global {
   interface Window {
@@ -46,5 +48,7 @@ declare global {
     U16Type: typeof U16Type;
     U32Type: typeof U32Type;
     U64Type: typeof U64Type;
+    F32Type: typeof F32Type;
+    F64Type: typeof F64Type;
   }
 }

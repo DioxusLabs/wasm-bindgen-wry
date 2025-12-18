@@ -35,6 +35,21 @@ class DataEncoder {
     this.pushU32(high);
   }
 
+  pushF32(value: number) {
+    const floatBuf = new Float32Array(1);
+    floatBuf[0] = value;
+    const intBuf = new Uint32Array(floatBuf.buffer);
+    this.pushU32(intBuf[0]);
+  }
+
+  pushF64(value: number) {
+    const floatBuf = new Float64Array(1);
+    floatBuf[0] = value;
+    const intBuf = new Uint32Array(floatBuf.buffer);
+    this.pushU32(intBuf[0]); // low
+    this.pushU32(intBuf[1]); // high
+  }
+
   pushStr(value: string) {
     const encoded = new TextEncoder().encode(value);
     this.pushU32(encoded.length);
@@ -149,6 +164,24 @@ class DataDecoder {
     const low = this.takeU32();
     const high = this.takeU32();
     return low + high * 0x100000000;
+  }
+
+  takeF32(): number {
+    const intVal = this.takeU32();
+    const intBuf = new Uint32Array(1);
+    intBuf[0] = intVal;
+    const floatBuf = new Float32Array(intBuf.buffer);
+    return floatBuf[0];
+  }
+
+  takeF64(): number {
+    const low = this.takeU32();
+    const high = this.takeU32();
+    const intBuf = new Uint32Array(2);
+    intBuf[0] = low;
+    intBuf[1] = high;
+    const floatBuf = new Float64Array(intBuf.buffer);
+    return floatBuf[0];
   }
 
   takeStr(): string {
