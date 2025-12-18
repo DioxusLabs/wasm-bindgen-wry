@@ -55,18 +55,14 @@ class JSHeap {
     }
 
     const value = this.slots[id];
-    if (value !== undefined) {
-      console.log("[JS Heap] remove:", id, "value:", value);
-      this.slots[id] = undefined;
-      this.freeIds.push(id);
-    } else {
-      console.log("[JS Heap] remove (already undefined):", id);
-    }
+    console.log("[JS Heap] remove:", id, "value:", value);
+    this.slots[id] = undefined;
+    this.freeIds.push(id);
     return value;
   }
 
   has(id: number): boolean {
-    return this.slots[id] !== undefined;
+    return this.freeIds.indexOf(id) === -1 && id < this.slots.length;
   }
 
   heapObjectsAlive(): number {
