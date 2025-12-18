@@ -658,9 +658,11 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
     let ret_type_constructor =
         quote_spanned! {span=> <#ty as #krate::TypeConstructor<_>>::create_type_instance() };
 
-    if st.thread_local_v2 {
-        // Generate a lazily-initialized thread-local static
-        Ok(quote_spanned! {span=>
+    assert!(st.thread_local_v2);
+
+    // Generate a lazily-initialized thread-local static
+    Ok(quote_spanned! {span=>
+        #vis static #rust_name: #krate::JsThreadLocal<#ty> = {
             static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
                 || format!(#js_code),
                 || (std::vec![] as std::vec::Vec<String>, #ret_type_constructor),
@@ -670,33 +672,7 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
                 __SPEC
             }
 
-            #vis static #rust_name: #krate::JsThreadLocal<#ty> = {
-                fn init() -> #ty {
-                    // Look up the accessor function at runtime
-                    let func: #krate::JSFunction<fn() -> #ty> =
-                        #krate::FUNCTION_REGISTRY
-                            .get_function(__SPEC)
-                            .expect(concat!("Static accessor not found: ", #registry_name));
-
-                    // Call the accessor to get the value
-                    func.call()
-                }
-                #krate::__wry_bindgen_thread_local!(#ty = init())
-            };
-        })
-    } else {
-        // For non-thread-local statics, generate a regular function accessor
-        // This matches the behavior of wasm-bindgen without thread_local_v2 attribute
-        Ok(quote_spanned! {span=>
-            static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
-                || format!(#js_code),
-                || (std::vec![] as std::vec::Vec<String>, #ret_type_constructor),
-            );
-            #krate::inventory::submit! {
-                __SPEC
-            }
-
-            #vis fn #rust_name() -> #ty {
+            fn init() -> #ty {
                 // Look up the accessor function at runtime
                 let func: #krate::JSFunction<fn() -> #ty> =
                     #krate::FUNCTION_REGISTRY
@@ -706,8 +682,9 @@ fn generate_static(st: &ImportStatic, krate: &TokenStream) -> syn::Result<TokenS
                 // Call the accessor to get the value
                 func.call()
             }
-        })
-    }
+            #krate::__wry_bindgen_thread_local!(#ty = init())
+        };
+    })
 }
 
 /// Generate JavaScript code to access a static value
