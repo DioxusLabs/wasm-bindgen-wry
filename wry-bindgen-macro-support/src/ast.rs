@@ -79,6 +79,8 @@ pub struct ImportType {
     pub typescript_type: Option<String>,
     /// User-provided derive attributes (e.g., Clone, Debug)
     pub derives: Vec<syn::Attribute>,
+    /// Vendor prefixes for fallback (e.g., webkit, moz)
+    pub vendor_prefixes: Vec<Ident>,
 }
 
 /// An imported JavaScript function
@@ -294,6 +296,7 @@ fn extract_wasm_bindgen_attrs(attrs: &[syn::Attribute]) -> syn::Result<BindgenAt
             if let Some(span) = parsed.thread_local_v2 {
                 combined.thread_local_v2 = Some(span);
             }
+            combined.vendor_prefixes.extend(parsed.vendor_prefixes);
         }
     }
 
@@ -432,6 +435,7 @@ fn parse_foreign_type(t: syn::ForeignItemType, attrs: BindgenAttrs) -> syn::Resu
 
     let extends: Vec<Path> = attrs.extends.into_iter().map(|(_, p)| p).collect();
     let typescript_type = attrs.typescript_type.map(|(_, t)| t);
+    let vendor_prefixes: Vec<Ident> = attrs.vendor_prefixes.into_iter().map(|(_, i)| i).collect();
 
     // Extract derive attributes (non-wasm_bindgen attributes that should be preserved)
     let derives: Vec<syn::Attribute> = t
@@ -448,6 +452,7 @@ fn parse_foreign_type(t: syn::ForeignItemType, attrs: BindgenAttrs) -> syn::Resu
         extends,
         typescript_type,
         derives,
+        vendor_prefixes,
     })
 }
 

@@ -48,6 +48,13 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
         .map(|t| t.rust_name.to_string())
         .collect();
 
+    // Collect vendor_prefixes for each type
+    let vendor_prefixes: std::collections::HashMap<String, Vec<String>> = program
+        .types
+        .iter()
+        .map(|t| (t.rust_name.to_string(), t.vendor_prefixes.iter().map(|i| i.to_string()).collect()))
+        .collect();
+
     // Generate type definitions
     for ty in &program.types {
         tokens.extend(generate_type(ty, krate)?);
@@ -55,7 +62,7 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
 
     // Generate function definitions
     for func in &program.functions {
-        tokens.extend(generate_function(func, &type_names, krate, &prefix)?);
+        tokens.extend(generate_function(func, &type_names, &vendor_prefixes, krate, &prefix)?);
     }
 
     // Generate static definitions
@@ -253,6 +260,7 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
 fn generate_function(
     func: &ImportFunction,
     type_names: &std::collections::HashSet<String>,
+    vendor_prefixes: &std::collections::HashMap<String, Vec<String>>,
     krate: &TokenStream,
     prefix: &str,
 ) -> syn::Result<TokenStream> {
@@ -299,7 +307,7 @@ fn generate_function(
     };
 
     // For non-inline_js, generate a simple closure that returns a constant string
-    let js_code_str = generate_js_code(func, prefix);
+    let js_code_str = generate_js_code(func, vendor_prefixes, prefix);
 
     // Generate the function body
     let func_body = quote_spanned! {span=>
@@ -389,8 +397,39 @@ fn generate_function(
     }
 }
 
+/// Generate vendor-prefixed constructor fallback code
+/// E.g., for class "MyApi" with prefixes ["webkit", "moz"], generates:
+/// (typeof MyApi !== 'undefined' ? MyApi : (typeof webkitMyApi !== 'undefined' ? webkitMyApi : (typeof mozMyApi !== 'undefined' ? mozMyApi : undefined)))
+fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix: &str) -> String {
+    // Start with the base class name (no prefix)
+    let mut result = format!(
+        "(typeof {prefix}{class} !== 'undefined' ? {prefix}{class} : "
+    );
+
+    // Add each vendor prefix
+    for (i, vendor_prefix) in prefixes.iter().enumerate() {
+        let prefixed_class = format!("{}{}", vendor_prefix, class);
+        if i == prefixes.len() - 1 {
+            // Last one - end with undefined if none found
+            result.push_str(&format!(
+                "(typeof {prefix}{} !== 'undefined' ? {prefix}{} : undefined)",
+                prefixed_class, prefixed_class
+            ));
+        } else {
+            result.push_str(&format!(
+                "(typeof {prefix}{} !== 'undefined' ? {prefix}{} : ",
+                prefixed_class, prefixed_class
+            ));
+        }
+    }
+
+    // Close all the parentheses
+    result.push(')');
+    result
+}
+
 /// Generate JavaScript code for the function
-fn generate_js_code(func: &ImportFunction, prefix: &str) -> String {
+fn generate_js_code(func: &ImportFunction, vendor_prefixes: &std::collections::HashMap<String, Vec<String>>, prefix: &str) -> String {
     let js_name = &func.js_name;
 
     match &func.kind {
@@ -427,10 +466,25 @@ fn generate_js_code(func: &ImportFunction, prefix: &str) -> String {
         ImportFunctionKind::Constructor { class } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();
             let args_str = args.join(", ");
-            format!(
-                "({}) => {prefix}{}.prototype.constructor({})",
-                args_str, class, args_str
-            )
+
+            // Check if this type has vendor prefixes
+            if let Some(prefixes) = vendor_prefixes.get(class) {
+                if !prefixes.is_empty() {
+                    // Generate vendor-prefixed fallback code
+                    let constructor_expr = generate_vendor_prefixed_constructor(class, prefixes, prefix);
+                    format!("({}) => new ({})({})", args_str, constructor_expr, args_str)
+                } else {
+                    format!(
+                        "({}) => new {prefix}{}({})",
+                        args_str, class, args_str
+                    )
+                }
+            } else {
+                format!(
+                    "({}) => new {prefix}{}({})",
+                    args_str, class, args_str
+                )
+            }
         }
         ImportFunctionKind::StaticMethod { class } => {
             let args: Vec<_> = func.arguments.iter().map(|a| a.name.to_string()).collect();

@@ -68,6 +68,8 @@ pub struct BindgenAttrs {
     pub readonly: Option<Span>,
     /// The `crate` attribute - custom crate path for imports (default: wasm_bindgen)
     pub crate_path: Option<(Span, Path)>,
+    /// The `vendor_prefix` attribute - vendor prefixes for types (can appear multiple times)
+    pub vendor_prefixes: Vec<(Span, Ident)>,
 }
 
 impl BindgenAttrs {
@@ -147,6 +149,7 @@ enum BindgenAttr {
     Final(Span),
     Readonly(Span),
     Crate(Span, Path),
+    VendorPrefix(Span, Ident),
 }
 
 impl Parse for BindgenAttr {
@@ -284,6 +287,12 @@ impl Parse for BindgenAttr {
                     input.parse()?
                 };
                 Ok(BindgenAttr::Crate(span, path))
+            }
+
+            "vendor_prefix" => {
+                input.parse::<Token![=]>()?;
+                let ident: Ident = input.parse()?;
+                Ok(BindgenAttr::VendorPrefix(span, ident))
             }
 
             _ => Err(syn::Error::new(
@@ -465,6 +474,9 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
                     return Err(syn::Error::new(span, "duplicate `crate` attribute"));
                 }
                 result.crate_path = Some((span, path));
+            }
+            BindgenAttr::VendorPrefix(span, ident) => {
+                result.vendor_prefixes.push((span, ident));
             }
         }
     }
