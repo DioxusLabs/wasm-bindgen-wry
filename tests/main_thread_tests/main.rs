@@ -44,6 +44,12 @@ fn main() {
         test_with_js_context(jsvalue::test_jsvalue_from_js);
         test_with_js_context(jsvalue::test_jsvalue_pass_to_js);
         test_with_js_context(jsvalue::test_jsvalue_as_string);
+        test_with_js_context(jsvalue::test_jsvalue_as_f64);
+        test_with_js_context(jsvalue::test_jsvalue_arithmetic);
+        test_with_js_context(jsvalue::test_jsvalue_bitwise);
+        test_with_js_context(jsvalue::test_jsvalue_comparisons);
+        test_with_js_context(jsvalue::test_jsvalue_loose_eq_coercion);
+        test_with_js_context(jsvalue::test_jsvalue_js_in);
 
         // String enum tests
         test_with_js_context(string_enum::test_string_enum_from_str);

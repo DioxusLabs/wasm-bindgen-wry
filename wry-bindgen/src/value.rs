@@ -172,104 +172,104 @@ impl Default for JsValue {
 
 // Additional methods needed by js-sys for BigInt operations
 impl JsValue {
-    /// Checked division - stub implementation for API compatibility.
-    pub fn checked_div(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::checked_div is not supported in wry-bindgen");
+    /// Checked division.
+    pub fn checked_div(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_checked_div(self, rhs)
     }
 
-    /// Power operation - stub implementation for API compatibility.
-    pub fn pow(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::pow is not supported in wry-bindgen");
+    /// Power operation.
+    pub fn pow(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_pow(self, rhs)
     }
 
-    /// Bitwise AND - stub implementation for API compatibility.
-    pub fn bit_and(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::bit_and is not supported in wry-bindgen");
+    /// Bitwise AND.
+    pub fn bit_and(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_bit_and(self, rhs)
     }
 
-    /// Bitwise OR - stub implementation for API compatibility.
-    pub fn bit_or(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::bit_or is not supported in wry-bindgen");
+    /// Bitwise OR.
+    pub fn bit_or(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_bit_or(self, rhs)
     }
 
-    /// Bitwise XOR - stub implementation for API compatibility.
-    pub fn bit_xor(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::bit_xor is not supported in wry-bindgen");
+    /// Bitwise XOR.
+    pub fn bit_xor(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_bit_xor(self, rhs)
     }
 
-    /// Bitwise NOT - stub implementation for API compatibility.
+    /// Bitwise NOT.
     pub fn bit_not(&self) -> JsValue {
-        panic!("JsValue::bit_not is not supported in wry-bindgen");
+        crate::js_helpers::js_bit_not(self)
     }
 
-    /// Left shift - stub implementation for API compatibility.
-    pub fn shl(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::shl is not supported in wry-bindgen");
+    /// Left shift.
+    pub fn shl(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_shl(self, rhs)
     }
 
-    /// Signed right shift - stub implementation for API compatibility.
-    pub fn shr(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::shr is not supported in wry-bindgen");
+    /// Signed right shift.
+    pub fn shr(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_shr(self, rhs)
     }
 
-    /// Unsigned right shift - stub implementation for API compatibility.
-    pub fn unsigned_shr(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::unsigned_shr is not supported in wry-bindgen");
+    /// Unsigned right shift.
+    pub fn unsigned_shr(&self, rhs: &JsValue) -> u32 {
+        crate::js_helpers::js_unsigned_shr(self, rhs)
     }
 
-    /// Add - stub implementation for API compatibility.
-    pub fn add(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::add is not supported in wry-bindgen");
+    /// Add.
+    pub fn add(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_add(self, rhs)
     }
 
-    /// Subtract - stub implementation for API compatibility.
-    pub fn sub(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::sub is not supported in wry-bindgen");
+    /// Subtract.
+    pub fn sub(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_sub(self, rhs)
     }
 
-    /// Multiply - stub implementation for API compatibility.
-    pub fn mul(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::mul is not supported in wry-bindgen");
+    /// Multiply.
+    pub fn mul(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_mul(self, rhs)
     }
 
-    /// Divide - stub implementation for API compatibility.
-    pub fn div(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::div is not supported in wry-bindgen");
+    /// Divide.
+    pub fn div(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_div(self, rhs)
     }
 
-    /// Remainder - stub implementation for API compatibility.
-    pub fn rem(&self, _rhs: &JsValue) -> JsValue {
-        panic!("JsValue::rem is not supported in wry-bindgen");
+    /// Remainder.
+    pub fn rem(&self, rhs: &JsValue) -> JsValue {
+        crate::js_helpers::js_rem(self, rhs)
     }
 
-    /// Negate - stub implementation for API compatibility.
+    /// Negate.
     pub fn neg(&self) -> JsValue {
-        panic!("JsValue::neg is not supported in wry-bindgen");
+        crate::js_helpers::js_neg(self)
     }
 
-    /// Less than comparison - stub implementation for API compatibility.
-    pub fn lt(&self, _rhs: &JsValue) -> bool {
-        panic!("JsValue::lt is not supported in wry-bindgen");
+    /// Less than comparison.
+    pub fn lt(&self, rhs: &JsValue) -> bool {
+        crate::js_helpers::js_lt(self, rhs)
     }
 
-    /// Less than or equal comparison - stub implementation for API compatibility.
-    pub fn le(&self, _rhs: &JsValue) -> bool {
-        panic!("JsValue::le is not supported in wry-bindgen");
+    /// Less than or equal comparison.
+    pub fn le(&self, rhs: &JsValue) -> bool {
+        crate::js_helpers::js_le(self, rhs)
     }
 
-    /// Greater than comparison - stub implementation for API compatibility.
-    pub fn gt(&self, _rhs: &JsValue) -> bool {
-        panic!("JsValue::gt is not supported in wry-bindgen");
+    /// Greater than comparison.
+    pub fn gt(&self, rhs: &JsValue) -> bool {
+        crate::js_helpers::js_gt(self, rhs)
     }
 
-    /// Greater than or equal comparison - stub implementation for API compatibility.
-    pub fn ge(&self, _rhs: &JsValue) -> bool {
-        panic!("JsValue::ge is not supported in wry-bindgen");
+    /// Greater than or equal comparison.
+    pub fn ge(&self, rhs: &JsValue) -> bool {
+        crate::js_helpers::js_ge(self, rhs)
     }
 
-    /// Loose equality (==) - stub implementation for API compatibility.
-    pub fn loose_eq(&self, _rhs: &JsValue) -> bool {
-        panic!("JsValue::loose_eq is not supported in wry-bindgen");
+    /// Loose equality (==).
+    pub fn loose_eq(&self, rhs: &JsValue) -> bool {
+        crate::js_helpers::js_loose_eq(self, rhs)
     }
 
     /// Check if this value is a falsy value in JavaScript.
@@ -329,8 +329,8 @@ impl JsValue {
     }
 
     /// Check if this value has a property with the given name.
-    pub fn js_in(&self, _prop: &JsValue) -> bool {
-        panic!("JsValue::js_in is not supported in wry-bindgen");
+    pub fn js_in(&self, obj: &JsValue) -> bool {
+        crate::js_helpers::js_in(self, obj)
     }
 
     /// Get the value as a bool.
@@ -354,7 +354,7 @@ impl JsValue {
 
     /// Get the value as an f64.
     pub fn as_f64(&self) -> Option<f64> {
-        panic!("JsValue::as_f64 is not supported in wry-bindgen");
+        crate::js_helpers::js_as_f64(self)
     }
 
     /// Get the value as a string.

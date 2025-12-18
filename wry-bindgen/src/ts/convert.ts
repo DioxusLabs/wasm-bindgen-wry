@@ -37,6 +37,9 @@ export function is_bigint(x: any): boolean {
 export function as_string(x: any): string | null {
   return typeof x === "string" ? x : null;
 }
+export function as_f64(x: any): number | null {
+  return typeof x === "number" ? x : null;
+}
 export function debug_string(x: any): string {
   try {
     return x.toString();
@@ -52,4 +55,79 @@ export function float_to_jsvalue(n: number): any {
 }
 export function int_to_jsvalue(n: number): any {
   return n;
+}
+
+// Arithmetic operators
+export function js_checked_div(a: any, b: any): any {
+  try {
+    return a / b;
+  } catch (e) {
+    return e;
+  }
+}
+export function js_pow(a: any, b: any): any {
+  return a ** b;
+}
+export function js_add(a: any, b: any): any {
+  return a + b;
+}
+export function js_sub(a: any, b: any): any {
+  return a - b;
+}
+export function js_mul(a: any, b: any): any {
+  return a * b;
+}
+export function js_div(a: any, b: any): any {
+  return a / b;
+}
+export function js_rem(a: any, b: any): any {
+  return a % b;
+}
+export function js_neg(a: any): any {
+  return -a;
+}
+
+// Bitwise operators
+export function js_bit_and(a: any, b: any): any {
+  return a & b;
+}
+export function js_bit_or(a: any, b: any): any {
+  return a | b;
+}
+export function js_bit_xor(a: any, b: any): any {
+  return a ^ b;
+}
+export function js_bit_not(a: any): any {
+  return ~a;
+}
+export function js_shl(a: any, b: any): any {
+  return a << b;
+}
+export function js_shr(a: any, b: any): any {
+  return a >> b;
+}
+export function js_unsigned_shr(a: any, b: any): number {
+  return a >>> b;
+}
+
+// Comparison operators
+export function js_lt(a: any, b: any): boolean {
+  return a < b;
+}
+export function js_le(a: any, b: any): boolean {
+  return a <= b;
+}
+export function js_gt(a: any, b: any): boolean {
+  return a > b;
+}
+export function js_ge(a: any, b: any): boolean {
+  return a >= b;
+}
+export function js_loose_eq(a: any, b: any): boolean {
+  return a == b;
+}
+
+// Other operators
+export function js_in(prop: any, obj: any): boolean {
+  return prop in obj;
 }
