@@ -181,6 +181,7 @@ function handleBinaryResponse(
       const result = jsFunction(...params);
 
       console.log("[IPC] JS function ID:", fnId, "returned:", result);
+      console.log("[IPC] Encoding result with return type:", typeInfo.returnType);
 
       // Encode the result using the return type
       typeInfo.returnType.encode(encoder, result);

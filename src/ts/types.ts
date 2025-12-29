@@ -26,6 +26,7 @@ enum TypeTag {
   HeapRef = 17,
   Callback = 18,
   Option = 19,
+  Result = 20,
 }
 
 /**
@@ -383,6 +384,11 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
     case TypeTag.Option: {
       const innerType = parseTypeDef(bytes, offset);
       return new OptionType(innerType);
+    }
+    case TypeTag.Result: {
+      const okType = parseTypeDef(bytes, offset);
+      const errType = parseTypeDef(bytes, offset);
+      return new ResultType(okType, errType);
     }
     default:
       throw new Error(`Unknown TypeTag: ${tag}`);

@@ -76,6 +76,8 @@ pub enum TypeTag {
     Callback = 18,
     /// Option type: followed by inner TypeDef. Encodes as u8 flag (0=None, 1=Some) + value if Some
     Option = 19,
+    /// Result type: followed by ok TypeDef and err TypeDef. Encodes as u8 flag (0=Err, 1=Ok) + value
+    Result = 20,
 }
 
 /// Trait for types that can encode their type definition into the binary protocol.
@@ -513,9 +515,10 @@ impl<T: BinaryDecode> BatchableResult for Option<T> {
 
 impl<T: EncodeTypeDef, E: EncodeTypeDef> EncodeTypeDef for Result<T, E> {
     fn encode_type_def(buf: &mut Vec<u8>) {
-        // Result encodes as: [1 byte flag] [Ok or Err type]
-        // For type purposes, we just encode the Ok type
+        // Result encodes as: [Result tag] [ok type] [err type]
+        buf.push(TypeTag::Result as u8);
         T::encode_type_def(buf);
+        E::encode_type_def(buf);
     }
 }
 
