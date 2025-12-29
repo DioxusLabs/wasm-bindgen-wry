@@ -17,7 +17,7 @@ serde_json = "1.0.145"
 slotmap = "1.1.1"
 winit = "0.30.12"
 wry = { version = "0.53.5", features = ["devtools"] }
-wasm-bindgen = { package = "wry-bindgen", path = "wry-bindgen" }
+wasm-bindgen = { path = "wry-bindgen" }
 wasm-bindgen-macro = { package = "wry-bindgen-macro", path = "wry-bindgen-macro" }
 
 [build-dependencies]
@@ -39,7 +39,7 @@ path = "benches/main.rs"
 harness = false
 
 [patch.crates-io]
-wasm-bindgen = { package = "wry-bindgen", path = "wry-bindgen" }
+wasm-bindgen = { path = "wry-bindgen" }
 wasm-bindgen-futures = { path = "wasm-bindgen/crates/futures" }
 js-sys = { path = "wasm-bindgen/crates/js-sys" }
 web-sys = { path = "wasm-bindgen/crates/web-sys" }
