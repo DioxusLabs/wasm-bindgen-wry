@@ -107,7 +107,12 @@ where
 
     let event_loop = EventLoop::with_user_event().build().unwrap();
     let proxy = event_loop.create_proxy();
-    set_event_loop_proxy(proxy.clone());
+    set_event_loop_proxy({
+        let proxy = proxy.clone();
+        Box::new(move |event| {
+            let _ = proxy.send_event(event);
+        })
+    });
     let registry = &*FUNCTION_REGISTRY;
 
     // Spawn the app thread with panic handling - if the app panics, shut down the webview

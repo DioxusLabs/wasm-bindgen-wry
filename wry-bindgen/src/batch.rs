@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use crate::encode::{BatchableResult, BinaryDecode};
 use crate::function::JSFunction;
 use crate::ipc::{EncodedData, IPCMessage, MessageType};
-#[cfg(feature = "runtime")]
 use crate::runtime::get_runtime;
 use crate::value::{DROP_HEAP_REF_FN_ID, JSIDX_RESERVED};
 
@@ -80,7 +79,6 @@ impl BatchState {
 
     /// Take the message data and reset the batch for reuse.
     /// Includes any pending drops at the start of the message.
-    #[cfg(feature = "runtime")]
     pub(crate) fn take_message(&mut self) -> IPCMessage {
         IPCMessage::new(self.take_encoder().to_bytes())
     }
@@ -214,7 +212,6 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
 }
 
 /// Flush the current batch and return the decoded result.
-#[cfg(feature = "runtime")]
 pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
     use crate::runtime::AppEvent;
 
@@ -222,16 +219,10 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 
     // Send and wait for result
     let runtime = get_runtime();
-    let _ = runtime.proxy.send_event(AppEvent::Ipc(batch_msg));
+    (runtime.proxy)(AppEvent::Ipc(batch_msg));
     let result: R = crate::runtime::wait_for_js_result();
 
     result
-}
-
-/// Flush the current batch and return the decoded result (stub when runtime is disabled).
-#[cfg(not(feature = "runtime"))]
-pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
-    panic!("wry-bindgen runtime feature is required to execute JavaScript calls")
 }
 
 /// Execute operations inside a batch. Operations that return opaque types (like JsValue)

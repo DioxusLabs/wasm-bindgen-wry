@@ -4,12 +4,11 @@
 //! to/from the binary IPC protocol.
 
 use crate::Closure;
+use crate::WasmClosureFnOnce;
 use crate::batch::{BATCH_STATE, BatchState};
-#[cfg(feature = "runtime")]
 use crate::function::{RustCallback, register_value};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::value::JsValue;
-#[cfg(feature = "runtime")]
 use slotmap::Key;
 use std::marker::PhantomData;
 
@@ -613,23 +612,17 @@ impl BinaryEncode for &JsValue {
     }
 }
 
-// Stub implementations for FnMut callbacks passed to JS
-// These are used in methods like Array.every(), Array.forEach(), etc.
-// Real wasm-bindgen handles these with wasm trampolines, but we provide stubs.
-// Note: We only implement for `FnMut(...) -> R` since `FnMut(...)` is `FnMut(...) -> ()`.
-
 /// Wrapper type that encodes a callback registration key with Callback type info.
 /// This tells JS to create a RustFunction wrapper when decoding the value.
 /// The type parameter F should be `dyn FnMut(...) -> R` to capture the callback signature.
-#[cfg(feature = "runtime")]
 pub struct CallbackKey<F: ?Sized>(pub u64, pub PhantomData<F>);
 
-#[cfg(feature = "runtime")]
 impl<F: ?Sized> BinaryEncode for CallbackKey<F> {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u64(self.0);
     }
 }
+
 macro_rules! count_args {
     ($first:ident, $($arg:ident,)*) => {
         1 + count_args!($($arg,)*)
@@ -641,7 +634,6 @@ macro_rules! count_args {
 macro_rules! impl_fnmut_stub {
     ($($arg:ident),*) => {
         // Implement EncodeTypeDef for CallbackKey so it encodes as Callback type
-        #[cfg(feature = "runtime")]
         impl<R, $($arg,)*> EncodeTypeDef for CallbackKey<dyn FnMut($($arg),*) -> R>
             where
             $($arg: EncodeTypeDef + 'static, )*
@@ -743,6 +735,38 @@ impl_fnmut_stub!(A1, A2, A3, A4);
 impl_fnmut_stub!(A1, A2, A3, A4, A5);
 impl_fnmut_stub!(A1, A2, A3, A4, A5, A6);
 impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7);
+
+/// Macro to implement WasmClosureFnOnce for FnOnce closures of various arities.
+/// This wraps an FnOnce in an FnMut that panics if called more than once.
+macro_rules! impl_fn_once {
+    ($($arg:ident),*) => {
+        impl<R, F, $($arg,)*> WasmClosureFnOnce<dyn FnMut($($arg),*) -> R, ($($arg,)*), R> for F
+        where
+            F: FnOnce($($arg),*) -> R + 'static,
+            $($arg: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            fn into_closure(self) -> Closure<dyn FnMut($($arg),*) -> R> {
+                let mut me = Some(self);
+                let wrapper = move |$($arg: $arg),*| {
+                    let f = me.take().expect("FnOnce closure called more than once");
+                    f($($arg),*)
+                };
+                Closure::new(wrapper)
+            }
+        }
+    };
+}
+
+impl_fn_once!();
+impl_fn_once!(A1);
+impl_fn_once!(A1, A2);
+impl_fn_once!(A1, A2, A3);
+impl_fn_once!(A1, A2, A3, A4);
+impl_fn_once!(A1, A2, A3, A4, A5);
+impl_fn_once!(A1, A2, A3, A4, A5, A6);
+impl_fn_once!(A1, A2, A3, A4, A5, A6, A7);
 
 impl<F: ?Sized> BinaryDecode for crate::Closure<F> {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {

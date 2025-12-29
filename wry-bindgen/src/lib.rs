@@ -23,7 +23,6 @@ pub mod function;
 pub mod ipc;
 mod js_helpers;
 mod lazy;
-#[cfg(feature = "runtime")]
 pub mod runtime;
 mod value;
 
@@ -117,10 +116,28 @@ impl<T: ?Sized> Closure<T> {
         f.into()
     }
 
+    /// Create a `Closure` from a function that can only be called once.
+    ///
+    /// Since we have no way of enforcing that JS cannot attempt to call this
+    /// `FnOnce` more than once, this produces a `Closure<dyn FnMut(A...) -> R>`
+    /// that will panic if called more than once.
+    pub fn once<F, A, R>(fn_once: F) -> Closure<T>
+    where
+        F: WasmClosureFnOnce<T, A, R>,
+    {
+        fn_once.into_closure()
+    }
+
     /// Forgets the closure, leaking it.
     pub fn forget(self) {
         std::mem::forget(self);
     }
+}
+
+/// A trait for converting an `FnOnce(A...) -> R` into a `Closure<dyn FnMut(A...) -> R>`.
+#[doc(hidden)]
+pub trait WasmClosureFnOnce<T: ?Sized, A, R>: Sized + 'static {
+    fn into_closure(self) -> Closure<T>;
 }
 
 impl<T: ?Sized> AsRef<JsValue> for Closure<T> {
@@ -143,7 +160,6 @@ pub use function::JSFunction;
 pub use ipc::{
     DecodeError, DecodedData, DecodedVariant, EncodedData, IPCMessage, MessageType, decode_data,
 };
-#[cfg(feature = "runtime")]
 pub use runtime::{WryRuntime, get_runtime, set_event_loop_proxy, wait_for_js_result};
 
 // Re-export the macro
@@ -359,7 +375,6 @@ pub mod prelude {
     pub use crate::encode::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
     pub use crate::function::JSFunction;
     pub use crate::lazy::JsThreadLocal;
-    #[cfg(feature = "runtime")]
     pub use crate::runtime::{AppEvent, set_event_loop_proxy, shutdown, wait_for_js_result};
     pub use crate::value::JsValue;
     pub use crate::wasm_bindgen;

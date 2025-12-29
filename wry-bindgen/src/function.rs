@@ -3,18 +3,15 @@
 //! This module provides types for calling JavaScript functions from Rust
 //! and for registering Rust callbacks that can be called from JavaScript.
 
-#[cfg(feature = "runtime")]
 use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-#[cfg(feature = "runtime")]
 use slotmap::{DefaultKey, SlotMap};
 
 use crate::batch::run_js_sync;
 use crate::encode::{BatchableResult, BinaryEncode, EncodeTypeDef, TYPE_CACHED, TYPE_FULL};
-#[cfg(feature = "runtime")]
 use crate::ipc::DecodedData;
 use crate::ipc::EncodedData;
 
@@ -668,12 +665,10 @@ impl<
 }
 
 /// Internal type for storing Rust callback functions.
-#[cfg(feature = "runtime")]
 pub(crate) struct RustCallback {
     pub(crate) f: Box<dyn FnMut(&mut DecodedData, &mut EncodedData)>,
 }
 
-#[cfg(feature = "runtime")]
 impl RustCallback {
     pub fn new<F>(f: F) -> Self
     where
@@ -684,12 +679,10 @@ impl RustCallback {
 }
 
 /// Encoder for storing Rust objects that can be called from JS.
-#[cfg(feature = "runtime")]
 pub(crate) struct ObjEncoder {
     pub(crate) functions: SlotMap<DefaultKey, Option<Box<dyn Any>>>,
 }
 
-#[cfg(feature = "runtime")]
 impl ObjEncoder {
     pub(crate) fn new() -> Self {
         Self {
@@ -702,13 +695,11 @@ impl ObjEncoder {
     }
 }
 
-#[cfg(feature = "runtime")]
 thread_local! {
     pub(crate) static THREAD_LOCAL_FUNCTION_ENCODER: RefCell<ObjEncoder> = RefCell::new(ObjEncoder::new());
 }
 
 /// Register a callback with the thread-local encoder using a short borrow
-#[cfg(feature = "runtime")]
 pub(crate) fn register_value(callback: RustCallback) -> DefaultKey {
     THREAD_LOCAL_FUNCTION_ENCODER
         .with(|fn_encoder| fn_encoder.borrow_mut().register_value(callback))

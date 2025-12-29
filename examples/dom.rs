@@ -1,6 +1,7 @@
 //! Example application using wry-testing library
 
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::spawn_local;
 use web_sys::{Document, HtmlElement};
 use wry_testing::run;
 
@@ -39,6 +40,10 @@ fn app() {
         </p>
         </div>",
     );
+
+    spawn_local(async move {
+        println!("hello from async task!");
+    });
 
     setup_clicker(&document);
 }

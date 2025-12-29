@@ -7,7 +7,6 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{OnceLock, RwLock};
 
 use slotmap::{DefaultKey, KeyData};
-use winit::event_loop::EventLoopProxy;
 
 use crate::encode::BinaryDecode;
 use crate::function::{DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_FUNCTION_ENCODER};
@@ -32,14 +31,14 @@ pub enum AppEvent {
 /// This struct holds the event loop proxy for sending messages to the
 /// WebView and manages queued Rust calls.
 pub struct WryRuntime {
-    pub proxy: EventLoopProxy<AppEvent>,
+    pub proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
     pub(crate) queued_rust_calls: RwLock<Vec<IPCMessage>>,
     pub(crate) sender: RwLock<Option<Sender<IPCMessage>>>,
 }
 
 impl WryRuntime {
     /// Create a new runtime with the given event loop proxy.
-    pub fn new(proxy: EventLoopProxy<AppEvent>) -> Self {
+    pub fn new(proxy: Box<dyn Fn(AppEvent) + Send + Sync>) -> Self {
         Self {
             proxy,
             queued_rust_calls: RwLock::new(Vec::new()),
@@ -49,12 +48,12 @@ impl WryRuntime {
 
     /// Send a response back to JavaScript.
     pub fn js_response(&self, responder: IPCMessage) {
-        let _ = self.proxy.send_event(AppEvent::Ipc(responder));
+        (self.proxy)(AppEvent::Ipc(responder));
     }
 
     /// Request the application to shut down with a status code.
     pub fn shutdown(&self, status: i32) {
-        let _ = self.proxy.send_event(AppEvent::Shutdown(status));
+        (self.proxy)(AppEvent::Shutdown(status));
     }
 
     /// Queue a Rust call from JavaScript.
@@ -83,7 +82,7 @@ static RUNTIME: OnceLock<WryRuntime> = OnceLock::new();
 /// Set the event loop proxy for the runtime.
 ///
 /// This must be called once before any JS operations are performed.
-pub fn set_event_loop_proxy(proxy: EventLoopProxy<AppEvent>) {
+pub fn set_event_loop_proxy(proxy: Box<dyn Fn(AppEvent) + Send + Sync>) {
     RUNTIME
         .set(WryRuntime::new(proxy))
         .unwrap_or_else(|_| panic!("Event loop proxy already set"));
