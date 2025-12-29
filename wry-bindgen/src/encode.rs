@@ -4,7 +4,7 @@
 //! to/from the binary IPC protocol.
 
 use crate::Closure;
-use crate::batch::BatchState;
+use crate::batch::{BATCH_STATE, BatchState};
 #[cfg(feature = "runtime")]
 use crate::function::{RustCallback, register_value};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
@@ -117,8 +117,6 @@ impl BinaryDecode for () {
     }
 }
 
-// Boolean implementations
-
 impl EncodeTypeDef for bool {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::Bool as u8);
@@ -136,8 +134,6 @@ impl BinaryDecode for bool {
         Ok(decoder.take_u8()? != 0)
     }
 }
-
-// u8 implementations
 
 impl EncodeTypeDef for u8 {
     fn encode_type_def(buf: &mut Vec<u8>) {
@@ -157,8 +153,6 @@ impl BinaryDecode for u8 {
     }
 }
 
-// u16 implementations
-
 impl EncodeTypeDef for u16 {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::U16 as u8);
@@ -176,8 +170,6 @@ impl BinaryDecode for u16 {
         decoder.take_u16()
     }
 }
-
-// u32 implementations
 
 impl EncodeTypeDef for u32 {
     fn encode_type_def(buf: &mut Vec<u8>) {
@@ -197,8 +189,6 @@ impl BinaryDecode for u32 {
     }
 }
 
-// u64 implementations
-
 impl EncodeTypeDef for u64 {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::U64 as u8);
@@ -216,8 +206,6 @@ impl BinaryDecode for u64 {
         decoder.take_u64()
     }
 }
-
-// u128 implementations
 
 impl EncodeTypeDef for u128 {
     fn encode_type_def(buf: &mut Vec<u8>) {
@@ -237,8 +225,6 @@ impl BinaryDecode for u128 {
     }
 }
 
-// i8 implementations
-
 impl EncodeTypeDef for i8 {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::I8 as u8);
@@ -256,8 +242,6 @@ impl BinaryDecode for i8 {
         Ok(decoder.take_u8()? as i8)
     }
 }
-
-// i16 implementations
 
 impl EncodeTypeDef for i16 {
     fn encode_type_def(buf: &mut Vec<u8>) {
@@ -277,8 +261,6 @@ impl BinaryDecode for i16 {
     }
 }
 
-// i32 implementations
-
 impl EncodeTypeDef for i32 {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::I32 as u8);
@@ -296,8 +278,6 @@ impl BinaryDecode for i32 {
         Ok(decoder.take_u32()? as i32)
     }
 }
-
-// i64 implementations
 
 impl EncodeTypeDef for i64 {
     fn encode_type_def(buf: &mut Vec<u8>) {
@@ -317,8 +297,6 @@ impl BinaryDecode for i64 {
     }
 }
 
-// i128 implementations
-
 impl EncodeTypeDef for i128 {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::I128 as u8);
@@ -337,8 +315,6 @@ impl BinaryDecode for i128 {
     }
 }
 
-// f32 implementations
-
 impl EncodeTypeDef for f32 {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::F32 as u8);
@@ -356,8 +332,6 @@ impl BinaryDecode for f32 {
         Ok(f32::from_bits(decoder.take_u32()?))
     }
 }
-
-// f64 implementations
 
 impl EncodeTypeDef for f64 {
     fn encode_type_def(buf: &mut Vec<u8>) {
@@ -463,8 +437,6 @@ impl BinaryDecode for String {
     }
 }
 
-// Option implementations
-
 impl<T: EncodeTypeDef> EncodeTypeDef for Option<T> {
     fn encode_type_def(buf: &mut Vec<u8>) {
         // Option encodes as: [Option tag] [inner type]
@@ -511,8 +483,6 @@ impl<T: BinaryDecode> BatchableResult for Option<T> {
     }
 }
 
-// Result implementations
-
 impl<T: EncodeTypeDef, E: EncodeTypeDef> EncodeTypeDef for Result<T, E> {
     fn encode_type_def(buf: &mut Vec<u8>) {
         // Result encodes as: [Result tag] [ok type] [err type]
@@ -544,8 +514,6 @@ impl<T: BinaryDecode, E: BinaryDecode> BatchableResult for Result<T, E> {
     }
 }
 
-// JsValue implementations
-
 impl EncodeTypeDef for JsValue {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::HeapRef as u8);
@@ -559,8 +527,12 @@ impl BinaryEncode for JsValue {
 }
 
 impl BinaryDecode for JsValue {
-    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
-        Ok(JsValue::from_id(decoder.take_u64()?))
+    fn decode(_: &mut DecodedData) -> Result<Self, DecodeError> {
+        // JS value is always in sync with the dom. We should never need to decode it.
+        BATCH_STATE.with(|state| {
+            let mut batch = state.borrow_mut();
+            Ok(Self::batched_placeholder(&mut batch))
+        })
     }
 }
 
@@ -574,13 +546,16 @@ impl BatchableResult for JsValue {
     }
 }
 
-impl<F:?Sized> BatchableResult for Closure<F> {
+impl<F: ?Sized> BatchableResult for Closure<F> {
     fn needs_flush() -> bool {
         false
     }
 
     fn batched_placeholder(batch: &mut BatchState) -> Self {
-        Closure { _phantom: PhantomData, value: JsValue::batched_placeholder(batch) }
+        Closure {
+            _phantom: PhantomData,
+            value: JsValue::batched_placeholder(batch),
+        }
     }
 }
 
@@ -847,4 +822,3 @@ where
         }
     }
 }
-
