@@ -85,586 +85,75 @@ impl<T> JSFunction<T> {
     }
 }
 
-impl<R: BatchableResult + EncodeTypeDef> JSFunction<fn() -> R> {
-    pub fn call(&self) -> R {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(0); // param_count = 0
-                R::encode_type_def(buf);
-            });
-        })
-    }
+macro_rules! impl_js_function_call {
+    // Base case: zero arguments
+    (0,) => {
+        impl<R: BatchableResult + EncodeTypeDef> JSFunction<fn() -> R> {
+            pub fn call(&self) -> R {
+                run_js_sync::<R>(self.id, |encoder| {
+                    encode_function_types(encoder, |buf| {
+                        buf.push(0);
+                        R::encode_type_def(buf);
+                    });
+                })
+            }
+        }
+    };
+    // Recursive case: N arguments
+    ($n:expr, $($T:ident $P:ident $arg:ident),+) => {
+        impl<$($T: EncodeTypeDef,)+ R: BatchableResult + EncodeTypeDef>
+            JSFunction<fn($($T),+) -> R>
+        {
+            pub fn call<$($P),+>(&self, $($arg: $T),+) -> R
+            where
+                $($T: BinaryEncode<$P>,)+
+            {
+                run_js_sync::<R>(self.id, |encoder| {
+                    encode_function_types(encoder, |buf| {
+                        buf.push($n);
+                        $($T::encode_type_def(buf);)+
+                        R::encode_type_def(buf);
+                    });
+                    $($arg.encode(encoder);)+
+                })
+            }
+        }
+    };
 }
 
-impl<T1: EncodeTypeDef, R: BatchableResult + EncodeTypeDef> JSFunction<fn(T1) -> R> {
-    pub fn call<P1>(&self, arg: T1) -> R
-    where
-        T1: BinaryEncode<P1>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(1); // param_count = 1
-                T1::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg.encode(encoder);
-        })
-    }
-}
-
-impl<T1: EncodeTypeDef, T2: EncodeTypeDef, R: BatchableResult + EncodeTypeDef>
-    JSFunction<fn(T1, T2) -> R>
-{
-    pub fn call<P1, P2>(&self, arg1: T1, arg2: T2) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(2); // param_count = 2
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-        })
-    }
-}
-
-impl<T1: EncodeTypeDef, T2: EncodeTypeDef, T3: EncodeTypeDef, R: BatchableResult + EncodeTypeDef>
-    JSFunction<fn(T1, T2, T3) -> R>
-{
-    pub fn call<P1, P2, P3>(&self, arg1: T1, arg2: T2, arg3: T3) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(3);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4) -> R>
-{
-    pub fn call<P1, P2, P3, P4>(&self, arg1: T1, arg2: T2, arg3: T3, arg4: T4) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(4);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5>(&self, arg1: T1, arg2: T2, arg3: T3, arg4: T4, arg5: T5) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(5);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(6);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    T7: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6, T7) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6, P7>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-        arg7: T7,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-        T7: BinaryEncode<P7>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(7);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                T7::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-            arg7.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    T7: EncodeTypeDef,
-    T8: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6, T7, T8) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6, P7, P8>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-        arg7: T7,
-        arg8: T8,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-        T7: BinaryEncode<P7>,
-        T8: BinaryEncode<P8>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(8);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                T7::encode_type_def(buf);
-                T8::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-            arg7.encode(encoder);
-            arg8.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    T7: EncodeTypeDef,
-    T8: EncodeTypeDef,
-    T9: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6, T7, T8, T9) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6, P7, P8, P9>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-        arg7: T7,
-        arg8: T8,
-        arg9: T9,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-        T7: BinaryEncode<P7>,
-        T8: BinaryEncode<P8>,
-        T9: BinaryEncode<P9>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(9);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                T7::encode_type_def(buf);
-                T8::encode_type_def(buf);
-                T9::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-            arg7.encode(encoder);
-            arg8.encode(encoder);
-            arg9.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    T7: EncodeTypeDef,
-    T8: EncodeTypeDef,
-    T9: EncodeTypeDef,
-    T10: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6, P7, P8, P9, P10>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-        arg7: T7,
-        arg8: T8,
-        arg9: T9,
-        arg10: T10,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-        T7: BinaryEncode<P7>,
-        T8: BinaryEncode<P8>,
-        T9: BinaryEncode<P9>,
-        T10: BinaryEncode<P10>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(10);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                T7::encode_type_def(buf);
-                T8::encode_type_def(buf);
-                T9::encode_type_def(buf);
-                T10::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-            arg7.encode(encoder);
-            arg8.encode(encoder);
-            arg9.encode(encoder);
-            arg10.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    T7: EncodeTypeDef,
-    T8: EncodeTypeDef,
-    T9: EncodeTypeDef,
-    T10: EncodeTypeDef,
-    T11: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-        arg7: T7,
-        arg8: T8,
-        arg9: T9,
-        arg10: T10,
-        arg11: T11,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-        T7: BinaryEncode<P7>,
-        T8: BinaryEncode<P8>,
-        T9: BinaryEncode<P9>,
-        T10: BinaryEncode<P10>,
-        T11: BinaryEncode<P11>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(11);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                T7::encode_type_def(buf);
-                T8::encode_type_def(buf);
-                T9::encode_type_def(buf);
-                T10::encode_type_def(buf);
-                T11::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-            arg7.encode(encoder);
-            arg8.encode(encoder);
-            arg9.encode(encoder);
-            arg10.encode(encoder);
-            arg11.encode(encoder);
-        })
-    }
-}
-
-impl<
-    T1: EncodeTypeDef,
-    T2: EncodeTypeDef,
-    T3: EncodeTypeDef,
-    T4: EncodeTypeDef,
-    T5: EncodeTypeDef,
-    T6: EncodeTypeDef,
-    T7: EncodeTypeDef,
-    T8: EncodeTypeDef,
-    T9: EncodeTypeDef,
-    T10: EncodeTypeDef,
-    T11: EncodeTypeDef,
-    T12: EncodeTypeDef,
-    R: BatchableResult + EncodeTypeDef,
-> JSFunction<fn(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12) -> R>
-{
-    pub fn call<P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11, P12>(
-        &self,
-        arg1: T1,
-        arg2: T2,
-        arg3: T3,
-        arg4: T4,
-        arg5: T5,
-        arg6: T6,
-        arg7: T7,
-        arg8: T8,
-        arg9: T9,
-        arg10: T10,
-        arg11: T11,
-        arg12: T12,
-    ) -> R
-    where
-        T1: BinaryEncode<P1>,
-        T2: BinaryEncode<P2>,
-        T3: BinaryEncode<P3>,
-        T4: BinaryEncode<P4>,
-        T5: BinaryEncode<P5>,
-        T6: BinaryEncode<P6>,
-        T7: BinaryEncode<P7>,
-        T8: BinaryEncode<P8>,
-        T9: BinaryEncode<P9>,
-        T10: BinaryEncode<P10>,
-        T11: BinaryEncode<P11>,
-        T12: BinaryEncode<P12>,
-    {
-        run_js_sync::<R>(self.id, |encoder| {
-            encode_function_types(encoder, |buf| {
-                buf.push(12);
-                T1::encode_type_def(buf);
-                T2::encode_type_def(buf);
-                T3::encode_type_def(buf);
-                T4::encode_type_def(buf);
-                T5::encode_type_def(buf);
-                T6::encode_type_def(buf);
-                T7::encode_type_def(buf);
-                T8::encode_type_def(buf);
-                T9::encode_type_def(buf);
-                T10::encode_type_def(buf);
-                T11::encode_type_def(buf);
-                T12::encode_type_def(buf);
-                R::encode_type_def(buf);
-            });
-            arg1.encode(encoder);
-            arg2.encode(encoder);
-            arg3.encode(encoder);
-            arg4.encode(encoder);
-            arg5.encode(encoder);
-            arg6.encode(encoder);
-            arg7.encode(encoder);
-            arg8.encode(encoder);
-            arg9.encode(encoder);
-            arg10.encode(encoder);
-            arg11.encode(encoder);
-            arg12.encode(encoder);
-        })
-    }
-}
+impl_js_function_call!(0,);
+impl_js_function_call!(1, T1 P1 arg1);
+impl_js_function_call!(2, T1 P1 arg1, T2 P2 arg2);
+impl_js_function_call!(3, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3);
+impl_js_function_call!(4, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4);
+impl_js_function_call!(5, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5);
+impl_js_function_call!(6, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6);
+impl_js_function_call!(7, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7);
+impl_js_function_call!(8, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8);
+impl_js_function_call!(9, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9);
+impl_js_function_call!(10, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10);
+impl_js_function_call!(11, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11);
+impl_js_function_call!(12, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12);
+impl_js_function_call!(13, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13);
+impl_js_function_call!(14, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14);
+impl_js_function_call!(15, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15);
+impl_js_function_call!(16, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16);
+impl_js_function_call!(17, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17);
+impl_js_function_call!(18, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18);
+impl_js_function_call!(19, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19);
+impl_js_function_call!(20, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20);
+impl_js_function_call!(21, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21);
+impl_js_function_call!(22, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22);
+impl_js_function_call!(23, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23);
+impl_js_function_call!(24, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24);
+impl_js_function_call!(25, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25);
+impl_js_function_call!(26, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26);
+impl_js_function_call!(27, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26, T27 P27 arg27);
+impl_js_function_call!(28, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26, T27 P27 arg27, T28 P28 arg28);
+impl_js_function_call!(29, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26, T27 P27 arg27, T28 P28 arg28, T29 P29 arg29);
+impl_js_function_call!(30, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26, T27 P27 arg27, T28 P28 arg28, T29 P29 arg29, T30 P30 arg30);
+impl_js_function_call!(31, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26, T27 P27 arg27, T28 P28 arg28, T29 P29 arg29, T30 P30 arg30, T31 P31 arg31);
+impl_js_function_call!(32, T1 P1 arg1, T2 P2 arg2, T3 P3 arg3, T4 P4 arg4, T5 P5 arg5, T6 P6 arg6, T7 P7 arg7, T8 P8 arg8, T9 P9 arg9, T10 P10 arg10, T11 P11 arg11, T12 P12 arg12, T13 P13 arg13, T14 P14 arg14, T15 P15 arg15, T16 P16 arg16, T17 P17 arg17, T18 P18 arg18, T19 P19 arg19, T20 P20 arg20, T21 P21 arg21, T22 P22 arg22, T23 P23 arg23, T24 P24 arg24, T25 P25 arg25, T26 P26 arg26, T27 P27 arg27, T28 P28 arg28, T29 P29 arg29, T30 P30 arg30, T31 P31 arg31, T32 P32 arg32);
 
 /// Internal type for storing Rust callback functions.
 pub(crate) struct RustCallback {
