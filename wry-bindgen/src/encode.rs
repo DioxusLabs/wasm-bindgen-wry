@@ -9,12 +9,12 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 use slotmap::Key;
 
-use crate::Closure;
 use crate::WasmClosureFnOnce;
 use crate::batch::{BATCH_STATE, BatchState};
 use crate::function::{RustCallback, register_value};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::value::JsValue;
+use crate::{Closure, JsCast};
 
 /// Trait for encoding Rust values into the binary protocol.
 /// Each type specifies how to serialize itself.
@@ -26,6 +26,75 @@ pub trait BinaryEncode<P = ()> {
 /// Each type specifies how to deserialize itself.
 pub trait BinaryDecode: Sized {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError>;
+}
+
+/// Marker types for distinguishing owned vs borrowed decoding
+pub struct Owned;
+pub struct Borrowed;
+
+/// Trait for converting a closure into a Closure wrapper.
+/// This trait is used instead of `From` to allow blanket implementations
+/// for all closure types without conflicting with other `From` impls.
+///
+/// The marker `M` is a tuple containing:
+/// - A function pointer type `fn(A1, A2, ...) -> R` that constrains the argument and return types
+/// - Marker types `M1, M2, ...` for each argument to disambiguate DecodeArg impls (Owned vs Borrowed)
+pub trait IntoClosure<M> {
+    type Output;
+    fn into_closure(self) -> Self::Output;
+}
+
+/// Trait for decoding callback arguments that can be either owned or borrowed.
+/// This enables closures to accept both `T` (owned) and `&T` (borrowed) arguments
+/// without needing separate implementations for each combination.
+///
+/// The marker type parameter `M` disambiguates between:
+/// - `DecodeArg<Owned>` for owned types that implement BinaryDecode
+/// - `DecodeArg<Borrowed>` for borrowed references to JsCast types
+pub trait DecodeArg<M = Owned> {
+    /// The storage type used to hold the decoded value.
+    type Storage: Sized;
+
+    /// The argument type passed to the callback, potentially borrowing from Storage.
+    type Arg<'s>
+    where
+        Self::Storage: 's;
+
+    /// Decode the storage from binary data.
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Storage, DecodeError>;
+
+    /// Convert storage to the argument type.
+    fn as_arg(storage: &Self::Storage) -> Self::Arg<'_>;
+}
+
+/// Implementation for owned types that implement BinaryDecode.
+/// The trait is implemented for `T` to decode owned values.
+impl<T: BinaryDecode + Clone> DecodeArg<Owned> for T {
+    type Storage = T;
+    type Arg<'s> = T where T: 's;
+
+    fn decode(decoder: &mut DecodedData) -> Result<T, DecodeError> {
+        T::decode(decoder)
+    }
+
+    fn as_arg(storage: &T) -> T {
+        storage.clone()
+    }
+}
+
+/// Implementation for borrowed references to JsCast types.
+/// Note: We implement for `T`, and use the GAT to express the reference type.
+impl<T: crate::JsCast + 'static> DecodeArg<Borrowed> for T {
+    type Storage = JsValue;
+    type Arg<'s> = &'s T where JsValue: 's;
+
+    fn decode(decoder: &mut DecodedData) -> Result<JsValue, DecodeError> {
+        <JsValue as BinaryDecode>::decode(decoder)
+    }
+
+    fn as_arg(storage: &JsValue) -> &T {
+        storage.unchecked_ref::<T>()
+    }
 }
 
 /// Trait for return types that can be used in batched JS calls.
@@ -83,6 +152,12 @@ pub enum TypeTag {
     Result = 20,
     /// Array type: followed by element TypeDef. Encodes as u32 length + elements
     Array = 21,
+    /// Borrowed reference: uses the borrow stack (indices 1-127) instead of the heap.
+    /// Automatically cleaned up after each operation completes.
+    BorrowedRef = 22,
+    /// Clamped u8 array type: represents Uint8ClampedArray in JS.
+    /// Element type is always u8. Encodes as u32 length + u8 elements.
+    U8Clamped = 23,
 }
 
 /// Trait for types that can encode their type definition into the binary protocol.
@@ -629,18 +704,384 @@ impl<F: ?Sized> BinaryEncode for CallbackKey<F> {
     }
 }
 
-macro_rules! count_args {
-    ($first:ident, $($arg:ident,)*) => {
-        1 + count_args!($($arg,)*)
-    };
-    () => {
-        0
+// Blanket impl: All Closures encode as HeapRef since they're JS heap references
+impl<T: ?Sized> EncodeTypeDef for crate::Closure<T> {
+    fn encode_type_def(buf: &mut Vec<u8>) {
+        JsValue::encode_type_def(buf);
+    }
+}
+
+// Blanket impl: CallbackKey encodes as Callback type
+// Note: This loses the specific arg type info, but the callback ID is what matters at runtime
+impl<T: ?Sized> EncodeTypeDef for CallbackKey<T> {
+    fn encode_type_def(buf: &mut Vec<u8>) {
+        buf.push(TypeTag::Callback as u8);
+        // Encode 0 args and void return - actual signature is tracked separately
+        buf.push(0);
+        buf.push(TypeTag::Null as u8);
+    }
+}
+
+/// Helper macro to decode callback arguments and execute a body.
+/// This decodes all arguments into storage first, then converts them to arg types.
+/// This avoids nested closures which cause lifetime issues with borrowed references.
+///
+/// Usage: decode_args!(decoder; [(type1, marker1), (type2, marker2), ...] => body)
+/// The body can use the type names as variables containing the decoded arguments.
+macro_rules! decode_args {
+    // Main entry: decode storage for all args, then convert and call body
+    ($decoder:expr; [$(($ty:ident, $marker:ident)),*] => $body:expr) => {{
+        // Decode all arguments into storage (using unique variable names)
+        $(
+            #[allow(non_snake_case)]
+            let $ty = <$ty as DecodeArg<$marker>>::decode($decoder).unwrap();
+        )*
+        // Convert storage to arg types and execute body
+        // The as_arg call creates references that live for this scope
+        #[allow(non_snake_case)]
+        {
+            $(
+                #[allow(non_snake_case)]
+                let $ty = <$ty as DecodeArg<$marker>>::as_arg(&$ty);
+            )*
+            $body
+        }
+    }};
+}
+
+macro_rules! impl_fnmut_stub {
+    // Match pairs of (arg, marker)
+    ($(($arg:ident, $marker:ident)),*) => {
+        // Implement WasmClosure trait for dyn FnMut variants
+        impl<R, $($arg,)* $($marker,)*> crate::WasmClosure<(fn($($arg),*) -> R, $($marker,)*)> for dyn for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R
+            where
+            $($arg: DecodeArg<$marker> + EncodeTypeDef + 'static, )*
+            $($marker: 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // Decode arguments and call the closure
+                        let _ = decode_args!(decoder; [$(($arg, $marker)),*] => {
+                            let result = boxed($($arg),*);
+                            result.encode(encoder);
+                        });
+                    },
+                ));
+                // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
+                // Return type is Closure which encodes as HeapRef (JS inserts into heap)
+                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        // Implement WasmClosure trait for dyn Fn variants (immutable closures)
+        impl<R, $($arg,)* $($marker,)*> crate::WasmClosure<(fn($($arg),*) -> R, $($marker,)*)> for dyn for<'a> Fn($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R
+            where
+            $($arg: DecodeArg<$marker> + EncodeTypeDef + 'static, )*
+            $($marker: 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // Decode arguments and call the closure
+                        let _ = decode_args!(decoder; [$(($arg, $marker)),*] => {
+                            let result = boxed($($arg),*);
+                            result.encode(encoder);
+                        });
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        impl<R, F, $($arg,)* $($marker,)*> IntoClosure<(fn($($arg),*) -> R, $($marker,)*)> for F
+            where F: for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R + 'static,
+            $($arg: DecodeArg<$marker> + EncodeTypeDef + 'static, )*
+            $($marker: 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            type Output = crate::Closure<dyn for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R>;
+
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_closure(mut self) -> Self::Output {
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // Decode arguments and call the closure
+                        let _ = decode_args!(decoder; [$(($arg, $marker)),*] => {
+                            let result = self($($arg),*);
+                            result.encode(encoder);
+                        });
+                    },
+                ));
+                // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
+                // Return type is Closure which encodes as HeapRef (JS inserts into heap)
+                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
     };
 }
-macro_rules! impl_fnmut_stub {
+
+/// Macro to implement EncodeTypeDef and BinaryEncode for closure reference types.
+/// These are used by js-sys bindings like `&mut dyn FnMut(JsValue, u32, Array) -> bool`.
+/// Unlike the WasmClosure impls above, these use simple BinaryDecode arguments without markers.
+macro_rules! impl_closure_ref_encode {
     ($($arg:ident),*) => {
-        // Implement WasmClosure trait for dyn FnMut variants
-        impl<R, $($arg,)*> crate::WasmClosure for dyn FnMut($($arg),*) -> R
+        // Implement EncodeTypeDef for &mut dyn FnMut(...) -> R
+        impl<R, $($arg,)*> EncodeTypeDef for &mut dyn FnMut($($arg),*) -> R
+            where
+            $($arg: EncodeTypeDef + 'static, )*
+            R: EncodeTypeDef + 'static,
+        {
+            #[allow(unused)]
+            fn encode_type_def(buf: &mut Vec<u8>) {
+                buf.push(TypeTag::Callback as u8);
+                // Encode arg count
+                let mut count: u8 = 0;
+                $(
+                    let _ = PhantomData::<$arg>;
+                    count += 1;
+                )*
+                buf.push(count);
+                // Encode each argument type
+                $(<$arg as EncodeTypeDef>::encode_type_def(buf);)*
+                // Encode return type
+                <R as EncodeTypeDef>::encode_type_def(buf);
+            }
+        }
+
+        // Implement BinaryEncode for &mut dyn FnMut(...) -> R
+        impl<R, $($arg,)*> BinaryEncode for &mut dyn FnMut($($arg),*) -> R
+            where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn encode(self, encoder: &mut EncodedData) {
+                // Decompose fat pointer to (data_ptr, vtable_ptr) to erase the lifetime.
+                // SAFETY: The closure reference must remain valid for the duration of the JS call.
+                // This is safe because JS callbacks are invoked synchronously during the call.
+                let ptr = self as *mut dyn FnMut($($arg),*) -> R;
+                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
+
+                // Register a temporary callback that calls through the pointer
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // SAFETY: The pointer is valid for the duration of the JS call.
+                        // Reconstruct the fat pointer from the stored components.
+                        let ptr: *mut dyn FnMut($($arg),*) -> R = unsafe {
+                            core::mem::transmute((data_ptr, vtable_ptr))
+                        };
+                        let f: &mut dyn FnMut($($arg),*) -> R = unsafe { &mut *ptr };
+                        // Decode arguments and call the closure
+                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = f($($arg),*);
+                        result.encode(encoder);
+                    },
+                ));
+                encoder.push_u64(key.data().as_ffi());
+            }
+        }
+
+        // Implement EncodeTypeDef for &dyn Fn(...) -> R
+        impl<R, $($arg,)*> EncodeTypeDef for &dyn Fn($($arg),*) -> R
+            where
+            $($arg: EncodeTypeDef + 'static, )*
+            R: EncodeTypeDef + 'static,
+        {
+            #[allow(unused)]
+            fn encode_type_def(buf: &mut Vec<u8>) {
+                buf.push(TypeTag::Callback as u8);
+                // Encode arg count
+                let mut count: u8 = 0;
+                $(
+                    let _ = PhantomData::<$arg>;
+                    count += 1;
+                )*
+                buf.push(count);
+                // Encode each argument type
+                $(<$arg as EncodeTypeDef>::encode_type_def(buf);)*
+                // Encode return type
+                <R as EncodeTypeDef>::encode_type_def(buf);
+            }
+        }
+
+        // Implement BinaryEncode for &dyn Fn(...) -> R
+        impl<R, $($arg,)*> BinaryEncode for &dyn Fn($($arg),*) -> R
+            where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn encode(self, encoder: &mut EncodedData) {
+                // Decompose fat pointer to (data_ptr, vtable_ptr) to erase the lifetime.
+                // SAFETY: The closure reference must remain valid for the duration of the JS call.
+                // This is safe because JS callbacks are invoked synchronously during the call.
+                let ptr = self as *const dyn Fn($($arg),*) -> R;
+                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
+
+                // Register a temporary callback that calls through the pointer
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // SAFETY: The pointer is valid for the duration of the JS call.
+                        // Reconstruct the fat pointer from the stored components.
+                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
+                            core::mem::transmute((data_ptr, vtable_ptr))
+                        };
+                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
+                        // Decode arguments and call the closure
+                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = f($($arg),*);
+                        result.encode(encoder);
+                    },
+                ));
+                encoder.push_u64(key.data().as_ffi());
+            }
+        }
+
+        // Implement EncodeTypeDef for &mut dyn Fn(...) -> R
+        impl<R, $($arg,)*> EncodeTypeDef for &mut dyn Fn($($arg),*) -> R
+            where
+            $($arg: EncodeTypeDef + 'static, )*
+            R: EncodeTypeDef + 'static,
+        {
+            #[allow(unused)]
+            fn encode_type_def(buf: &mut Vec<u8>) {
+                buf.push(TypeTag::Callback as u8);
+                // Encode arg count
+                let mut count: u8 = 0;
+                $(
+                    let _ = PhantomData::<$arg>;
+                    count += 1;
+                )*
+                buf.push(count);
+                // Encode each argument type
+                $(<$arg as EncodeTypeDef>::encode_type_def(buf);)*
+                // Encode return type
+                <R as EncodeTypeDef>::encode_type_def(buf);
+            }
+        }
+
+        // Implement BinaryEncode for &mut dyn Fn(...) -> R
+        impl<R, $($arg,)*> BinaryEncode for &mut dyn Fn($($arg),*) -> R
+            where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn encode(self, encoder: &mut EncodedData) {
+                // Decompose fat pointer to (data_ptr, vtable_ptr) to erase the lifetime.
+                // SAFETY: The closure reference must remain valid for the duration of the JS call.
+                // This is safe because JS callbacks are invoked synchronously during the call.
+                // We use *const because Fn only requires & to call
+                let ptr = self as *const dyn Fn($($arg),*) -> R;
+                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
+
+                // Register a temporary callback that calls through the pointer
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // SAFETY: The pointer is valid for the duration of the JS call.
+                        // Reconstruct the fat pointer from the stored components.
+                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
+                            core::mem::transmute((data_ptr, vtable_ptr))
+                        };
+                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
+                        // Decode arguments and call the closure
+                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = f($($arg),*);
+                        result.encode(encoder);
+                    },
+                ));
+                encoder.push_u64(key.data().as_ffi());
+            }
+        }
+    };
+}
+
+impl_closure_ref_encode!();
+impl_closure_ref_encode!(A1);
+impl_closure_ref_encode!(A1, A2);
+impl_closure_ref_encode!(A1, A2, A3);
+impl_closure_ref_encode!(A1, A2, A3, A4);
+impl_closure_ref_encode!(A1, A2, A3, A4, A5);
+impl_closure_ref_encode!(A1, A2, A3, A4, A5, A6);
+impl_closure_ref_encode!(A1, A2, A3, A4, A5, A6, A7);
+
+/// Marker type to distinguish concrete boxed closure impls from GAT-based impls.
+pub struct ConcreteClosureMarker;
+
+/// Macro to implement IntoClosure for Box<dyn FnMut(...)> with concrete types.
+/// This allows `Closure::new(Box::new(...) as Box<dyn FnMut(A) -> R>)` to work.
+macro_rules! impl_boxed_closure_into {
+    ($($arg:ident),*) => {
+        // IntoClosure for Box<dyn FnMut(...) -> R>
+        impl<R, $($arg,)*> IntoClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for Box<dyn FnMut($($arg),*) -> R>
+            where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            type Output = crate::Closure<dyn FnMut($($arg),*) -> R>;
+
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_closure(mut self) -> Self::Output {
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // Decode arguments and call the closure
+                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = self($($arg),*);
+                        result.encode(encoder);
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        // IntoClosure for Box<dyn Fn(...) -> R>
+        impl<R, $($arg,)*> IntoClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for Box<dyn Fn($($arg),*) -> R>
+            where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            type Output = crate::Closure<dyn Fn($($arg),*) -> R>;
+
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_closure(self) -> Self::Output {
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // Decode arguments and call the closure
+                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = self($($arg),*);
+                        result.encode(encoder);
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        // WasmClosure for dyn FnMut(...) -> R (concrete types)
+        impl<R, $($arg,)*> crate::WasmClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for dyn FnMut($($arg),*) -> R
             where
             $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -650,29 +1091,20 @@ macro_rules! impl_fnmut_stub {
             fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments using BinaryDecode directly
+                        // Decode arguments and call the closure
                         $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
                         let result = boxed($($arg),*);
                         result.encode(encoder);
                     },
                 ));
-                static __SPEC: $crate::JsFunctionSpec = $crate::JsFunctionSpec::new(
-                    || "(a0) => a0".to_string(),
-                );
-                inventory::submit! {
-                    __SPEC
-                }
-                // Use CallbackKey so param encodes as Callback type (JS creates RustFunction)
-                // Return type is Closure which encodes as HeapRef (JS inserts into heap)
-                let func: $crate::JSFunction<fn(CallbackKey<dyn FnMut($($arg),*) -> R>) -> crate::Closure<Self>> = $crate::FUNCTION_REGISTRY
-                    .get_function(__SPEC)
-                    .expect("Function not found: new_function");
-                func.call(CallbackKey(key.data().as_ffi(), PhantomData))
+                $crate::__rt::wbg_cast::<CallbackKey<crate::Closure<Self>>, crate::Closure<Self>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
             }
         }
 
-        // Implement WasmClosure trait for dyn Fn variants (immutable closures)
-        impl<R, $($arg,)*> crate::WasmClosure for dyn Fn($($arg),*) -> R
+        // WasmClosure for dyn Fn(...) -> R (concrete types)
+        impl<R, $($arg,)*> crate::WasmClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for dyn Fn($($arg),*) -> R
             where
             $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -682,271 +1114,101 @@ macro_rules! impl_fnmut_stub {
             fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments using BinaryDecode directly
+                        // Decode arguments and call the closure
                         $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
                         let result = boxed($($arg),*);
                         result.encode(encoder);
                     },
                 ));
-                static __SPEC: $crate::JsFunctionSpec = $crate::JsFunctionSpec::new(
-                    || "(a0) => a0".to_string(),
-                );
-                inventory::submit! {
-                    __SPEC
-                }
-                let func: $crate::JSFunction<fn(CallbackKey<dyn Fn($($arg),*) -> R>) -> crate::Closure<Self>> = $crate::FUNCTION_REGISTRY
-                    .get_function(__SPEC)
-                    .expect("Function not found: new_function");
-                func.call(CallbackKey(key.data().as_ffi(), PhantomData))
-            }
-        }
-
-        // Implement EncodeTypeDef for CallbackKey<dyn Fn>
-        impl<R, $($arg,)*> EncodeTypeDef for CallbackKey<dyn Fn($($arg),*) -> R>
-            where
-            $($arg: EncodeTypeDef + 'static, )*
-            R: EncodeTypeDef + 'static,
-        {
-            #[allow(unused)]
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                buf.push(TypeTag::Callback as u8);
-                buf.push(count_args!($($arg,)*));
-                $(<$arg as EncodeTypeDef>::encode_type_def(buf);)*
-                <R as EncodeTypeDef>::encode_type_def(buf);
-            }
-        }
-
-        // Implement EncodeTypeDef for Closure<dyn Fn>
-        impl<R, $($arg,)*> EncodeTypeDef for crate::Closure<dyn Fn($($arg),*) -> R>
-            where
-            $($arg: EncodeTypeDef + 'static, )*
-            R: EncodeTypeDef + 'static,
-        {
-            #[allow(unused)]
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                JsValue::encode_type_def(buf);
-            }
-        }
-
-        // Implement EncodeTypeDef for CallbackKey so it encodes as Callback type
-        impl<R, $($arg,)*> EncodeTypeDef for CallbackKey<dyn FnMut($($arg),*) -> R>
-            where
-            $($arg: EncodeTypeDef + 'static, )*
-            R: EncodeTypeDef + 'static,
-        {
-            #[allow(unused)]
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                buf.push(TypeTag::Callback as u8);
-                buf.push(count_args!($($arg,)*));
-                $(<$arg as EncodeTypeDef>::encode_type_def(buf);)*
-                <R as EncodeTypeDef>::encode_type_def(buf);
-            }
-        }
-
-        impl<R, $($arg,)*> BinaryEncode for &mut dyn FnMut($($arg),*) -> R where
-            $($arg: BinaryDecode + 'static, )*
-            R: BinaryEncode + 'static
-        {
-            fn encode(self, encoder: &mut EncodedData) {
-                let raw_pointer = self as *mut dyn FnMut($($arg),*) -> R;
-                let static_raw_pointer: *mut (dyn FnMut($($arg),*) -> R + 'static) = unsafe { core::mem::transmute(raw_pointer) };
-                #[allow(unused)]
-                #[allow(non_snake_case)]
-                let value = register_value(RustCallback::new(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments
-                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
-                        let f: &mut (dyn FnMut($($arg),*) -> R) = unsafe { &mut *static_raw_pointer };
-                        let result = f($($arg),*);
-                        result.encode(encoder);
-                    },
-                ));
-                encoder.push_u64(value.data().as_ffi());
-            }
-        }
-
-        impl<R, F, $($arg,)*> From<F> for crate::Closure<dyn FnMut($($arg),*) -> R>
-            where F: FnMut($($arg),*) -> R + 'static,
-            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
-            R: BinaryEncode + EncodeTypeDef + 'static,
-        {
-            #[allow(non_snake_case)]
-            #[allow(unused)]
-            fn from(mut f: F) -> Self {
-                let key = register_value(RustCallback::new(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments using BinaryDecode directly
-                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
-                        let result = f($($arg),*);
-                        result.encode(encoder);
-                    },
-                ));
-                static __SPEC: $crate::JsFunctionSpec = $crate::JsFunctionSpec::new(
-                    || "(a0) => a0".to_string(),
-                );
-                inventory::submit! {
-                    __SPEC
-                }
-                // Use CallbackKey so param encodes as Callback type (JS creates RustFunction)
-                // Return type is Closure which encodes as HeapRef (JS inserts into heap)
-                let func: $crate::JSFunction<fn(CallbackKey<dyn FnMut($($arg),*) -> R>) -> Self> = $crate::FUNCTION_REGISTRY
-                    .get_function(__SPEC)
-                    .expect("Function not found: new_function");
-                func.call(CallbackKey(key.data().as_ffi(), PhantomData))
-            }
-        }
-
-        // Implement EncodeTypeDef for Closure - encodes as HeapRef since it's a JS heap reference
-        impl<R, $($arg,)*> EncodeTypeDef for crate::Closure<dyn FnMut($($arg),*) -> R>
-            where
-            $($arg: EncodeTypeDef + 'static, )*
-            R: EncodeTypeDef + 'static,
-        {
-            #[allow(unused)]
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                JsValue::encode_type_def(buf);
-            }
-        }
-
-        // Implement EncodeTypeDef for &mut dyn FnMut so callback arguments work
-        impl<R, $($arg,)*> EncodeTypeDef for &mut dyn FnMut($($arg),*) -> R
-            where
-            $($arg: EncodeTypeDef + 'static, )*
-            R: EncodeTypeDef + 'static,
-        {
-            #[allow(unused)]
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                JsValue::encode_type_def(buf);
+                $crate::__rt::wbg_cast::<CallbackKey<crate::Closure<Self>>, crate::Closure<Self>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
             }
         }
     };
 }
+
+impl_boxed_closure_into!();
+impl_boxed_closure_into!(A1);
+impl_boxed_closure_into!(A1, A2);
+impl_boxed_closure_into!(A1, A2, A3);
+impl_boxed_closure_into!(A1, A2, A3, A4);
+impl_boxed_closure_into!(A1, A2, A3, A4, A5);
+impl_boxed_closure_into!(A1, A2, A3, A4, A5, A6);
+impl_boxed_closure_into!(A1, A2, A3, A4, A5, A6, A7);
 
 impl_fnmut_stub!();
-impl_fnmut_stub!(A1);
-impl_fnmut_stub!(A1, A2);
-impl_fnmut_stub!(A1, A2, A3);
-impl_fnmut_stub!(A1, A2, A3, A4);
-impl_fnmut_stub!(A1, A2, A3, A4, A5);
-impl_fnmut_stub!(A1, A2, A3, A4, A5, A6);
-impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7);
-
-/// Macro for closures that take a single reference argument (common for event handlers).
-/// This handles `dyn FnMut(&T) -> R` where T is a JsCast type.
-macro_rules! impl_fnmut_ref_stub {
-    () => {
-        // Implement WasmClosure for dyn FnMut(&T) -> R
-        impl<T, R> crate::WasmClosure for dyn FnMut(&T) -> R
-        where
-            T: crate::JsCast + 'static,
-            R: BinaryEncode + EncodeTypeDef + 'static,
-        {
-            fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
-                let key = register_value(RustCallback::new(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode the JsValue
-                        let js_value = JsValue::decode(decoder).unwrap();
-                        // Get a reference to T using JsCast
-                        let arg_ref: &T = crate::JsCast::unchecked_from_js_ref(&js_value);
-                        let result = boxed(arg_ref);
-                        result.encode(encoder);
-                    },
-                ));
-                static __SPEC: $crate::JsFunctionSpec = $crate::JsFunctionSpec::new(
-                    || "(a0) => a0".to_string(),
-                );
-                inventory::submit! {
-                    __SPEC
-                }
-                let func: $crate::JSFunction<fn(CallbackKey<dyn FnMut(&T) -> R>) -> crate::Closure<Self>> = $crate::FUNCTION_REGISTRY
-                    .get_function(__SPEC)
-                    .expect("Function not found: new_function");
-                func.call(CallbackKey(key.data().as_ffi(), PhantomData))
-            }
-        }
-
-        // Implement EncodeTypeDef for CallbackKey<dyn FnMut(&T) -> R>
-        impl<T, R> EncodeTypeDef for CallbackKey<dyn FnMut(&T) -> R>
-        where
-            T: 'static,
-            R: EncodeTypeDef + 'static,
-        {
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                buf.push(TypeTag::Callback as u8);
-                buf.push(1); // 1 argument
-                JsValue::encode_type_def(buf); // Reference arg encoded as HeapRef
-                <R as EncodeTypeDef>::encode_type_def(buf);
-            }
-        }
-
-        // Implement EncodeTypeDef for Closure<dyn FnMut(&T) -> R>
-        impl<T, R> EncodeTypeDef for crate::Closure<dyn FnMut(&T) -> R>
-        where
-            T: 'static,
-            R: EncodeTypeDef + 'static,
-        {
-            fn encode_type_def(buf: &mut Vec<u8>) {
-                JsValue::encode_type_def(buf);
-            }
-        }
-
-        // Implement WasmClosureFnOnce for FnOnce(&T) -> R
-        impl<T, R, F> WasmClosureFnOnce<dyn FnMut(&T) -> R, (&T,), R> for F
-        where
-            T: crate::JsCast + 'static,
-            R: BinaryEncode + EncodeTypeDef + 'static,
-            F: FnOnce(&T) -> R + 'static,
-        {
-            fn into_closure(self) -> Closure<dyn FnMut(&T) -> R> {
-                let mut me = Some(self);
-                let wrapper = move |arg: &T| {
-                    let f = me.take().expect("FnOnce closure called more than once");
-                    f(arg)
-                };
-                Closure::wrap(Box::new(wrapper) as Box<dyn FnMut(&T) -> R>)
-            }
-        }
-    };
-}
-
-impl_fnmut_ref_stub!();
+impl_fnmut_stub!((A1, M1));
+impl_fnmut_stub!((A1, M1), (A2, M2));
+impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3));
+impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3), (A4, M4));
+impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5));
+impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5), (A6, M6));
+impl_fnmut_stub!(
+    (A1, M1),
+    (A2, M2),
+    (A3, M3),
+    (A4, M4),
+    (A5, M5),
+    (A6, M6),
+    (A7, M7)
+);
 
 /// Macro to implement WasmClosureFnOnce for FnOnce closures of various arities.
 /// This wraps an FnOnce in an FnMut that panics if called more than once.
 macro_rules! impl_fn_once {
-    ($($arg:ident),*) => {
-        impl<R, F, $($arg,)*> WasmClosureFnOnce<dyn FnMut($($arg),*) -> R, ($($arg,)*), R> for F
+    ($(($arg:ident, $marker:ident)),*) => {
+        impl<R, F, $($arg,)* $($marker,)*> WasmClosureFnOnce<dyn for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R, (fn($($arg),*) -> R, $($marker,)*)> for F
         where
-            F: FnOnce($($arg),*) -> R + 'static,
-            $($arg: BinaryDecode + EncodeTypeDef + 'static,)*
+            F: for<'a> FnOnce($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R + 'static,
+            $($arg: DecodeArg<$marker> + EncodeTypeDef + 'static,)*
+            $($marker: 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
-            fn into_closure(self) -> Closure<dyn FnMut($($arg),*) -> R> {
+            #[allow(unused_variables)]
+            fn into_closure(self) -> Closure<dyn for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R> {
+                // Use Option to allow taking the FnOnce
                 let mut me = Some(self);
-                let wrapper = move |$($arg: $arg),*| {
-                    let f = me.take().expect("FnOnce closure called more than once");
-                    f($($arg),*)
-                };
-                Closure::new(wrapper)
+                // Register the callback using the same pattern as impl_fnmut_stub
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let f = me.take().expect("FnOnce closure called more than once");
+                        decode_args!(decoder; [$(($arg, $marker)),*] => {
+                            let result = f($($arg),*);
+                            result.encode(encoder);
+                        });
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<Closure<dyn for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R>>, Closure<dyn for<'a> FnMut($(<$arg as DecodeArg<$marker>>::Arg<'a>),*) -> R>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
             }
         }
     };
 }
 
 impl_fn_once!();
-impl_fn_once!(A1);
-impl_fn_once!(A1, A2);
-impl_fn_once!(A1, A2, A3);
-impl_fn_once!(A1, A2, A3, A4);
-impl_fn_once!(A1, A2, A3, A4, A5);
-impl_fn_once!(A1, A2, A3, A4, A5, A6);
-impl_fn_once!(A1, A2, A3, A4, A5, A6, A7);
+impl_fn_once!((A1, M1));
+impl_fn_once!((A1, M1), (A2, M2));
+impl_fn_once!((A1, M1), (A2, M2), (A3, M3));
+impl_fn_once!((A1, M1), (A2, M2), (A3, M3), (A4, M4));
+impl_fn_once!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5));
+impl_fn_once!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5), (A6, M6));
+impl_fn_once!(
+    (A1, M1),
+    (A2, M2),
+    (A3, M3),
+    (A4, M4),
+    (A5, M5),
+    (A6, M6),
+    (A7, M7)
+);
 
 impl<F: ?Sized> BinaryDecode for crate::Closure<F> {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         // Decode the JsValue wrapping the closure
-        let value = crate::JsValue::decode(decoder)?;
+        let value = <crate::JsValue as BinaryDecode>::decode(decoder)?;
         Ok(Self {
             _phantom: PhantomData,
             value,
@@ -1060,5 +1322,75 @@ where
         for val in self {
             val.encode(encoder);
         }
+    }
+}
+
+// ============ Clamped<T> implementations ============
+
+use crate::Clamped;
+
+impl EncodeTypeDef for Clamped<Vec<u8>> {
+    fn encode_type_def(buf: &mut Vec<u8>) {
+        buf.push(TypeTag::U8Clamped as u8);
+    }
+}
+
+impl<'a> EncodeTypeDef for Clamped<&'a [u8]> {
+    fn encode_type_def(buf: &mut Vec<u8>) {
+        buf.push(TypeTag::U8Clamped as u8);
+    }
+}
+
+impl<'a> EncodeTypeDef for Clamped<&'a mut [u8]> {
+    fn encode_type_def(buf: &mut Vec<u8>) {
+        buf.push(TypeTag::U8Clamped as u8);
+    }
+}
+
+impl BinaryEncode for Clamped<Vec<u8>> {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.0.len() as u32);
+        for val in self.0 {
+            encoder.push_u8(val);
+        }
+    }
+}
+
+impl<'a> BinaryEncode for Clamped<&'a [u8]> {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.0.len() as u32);
+        for &val in self.0 {
+            encoder.push_u8(val);
+        }
+    }
+}
+
+impl<'a> BinaryEncode for Clamped<&'a mut [u8]> {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.0.len() as u32);
+        for &mut val in self.0 {
+            encoder.push_u8(val);
+        }
+    }
+}
+
+impl BinaryDecode for Clamped<Vec<u8>> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
+        let len = decoder.take_u32()? as usize;
+        let mut vec = Vec::with_capacity(len);
+        for _ in 0..len {
+            vec.push(decoder.take_u8()?);
+        }
+        Ok(Clamped(vec))
+    }
+}
+
+impl BatchableResult for Clamped<Vec<u8>> {
+    fn needs_flush() -> bool {
+        true
+    }
+
+    fn batched_placeholder(_batch: &mut BatchState) -> Self {
+        unreachable!("needs_flush types should never call batched_placeholder")
     }
 }

@@ -30,6 +30,7 @@ pub mod function;
 pub mod ipc;
 mod js_helpers;
 mod lazy;
+pub mod object_store;
 pub mod runtime;
 mod value;
 
@@ -40,28 +41,42 @@ pub mod closure {
     pub use crate::WasmClosure;
 }
 
+/// The identity cast function spec - registered once and reused by wbg_cast.
+/// This is the JS function `(a0) => a0` that passes values through unchanged.
+/// Type conversion is handled by Rust's encode/decode based on the type parameters.
+pub static IDENTITY_CAST_SPEC: JsFunctionSpec =
+    JsFunctionSpec::new(|| alloc::string::String::from("(a0) => a0"));
+
+inventory::submit! {
+    IDENTITY_CAST_SPEC
+}
+
 /// Runtime module for wasm-bindgen compatibility.
-/// This module provides stubs for wasm-specific functions that js-sys uses directly.
+/// This module provides the wbg_cast function used for type casting.
 pub mod __rt {
-    /// Stub for wasm memory casting - not supported in wry-bindgen.
-    /// This function is only called for TypedArray::view() which requires wasm memory.
+    use crate::encode::{BatchableResult, BinaryEncode, EncodeTypeDef};
+
+    /// Cast between types via the binary protocol.
+    ///
+    /// This is the wry-bindgen equivalent of wasm-bindgen's wbg_cast.
+    /// It encodes `value` using From's BinaryEncode, sends to JS as identity,
+    /// and decodes the result using To's BinaryDecode.
     #[inline]
-    pub unsafe fn wbg_cast<From: ?Sized, To>(_val: &From) -> To {
-        todo!()
+    pub fn wbg_cast<From, To>(value: From) -> To
+    where
+        From: BinaryEncode + EncodeTypeDef,
+        To: BatchableResult + EncodeTypeDef,
+    {
+        let func: crate::JSFunction<fn(From) -> To> = crate::FUNCTION_REGISTRY
+            .get_function(crate::IDENTITY_CAST_SPEC)
+            .expect("Identity cast function not found");
+        func.call(value)
     }
 }
 
 macro_rules! cast {
     (($from:ty => $to:ty) $val:expr) => {{
-        static __SPEC: $crate::JsFunctionSpec =
-            $crate::JsFunctionSpec::new(|| "(a0) => a0".to_string());
-        inventory::submit! {
-            __SPEC
-        }
-        let func: $crate::JSFunction<fn($from) -> $to> = $crate::FUNCTION_REGISTRY
-            .get_function(__SPEC)
-            .expect("Function not found: new_function");
-        func.call($val)
+        $crate::__rt::wbg_cast::<$from, $to>($val)
     }};
 }
 
@@ -151,7 +166,12 @@ to_js_value!(usize);
 from_js_value!(usize);
 to_js_value!(isize);
 from_js_value!(isize);
-to_js_value!(&str);
+// Manual impl for &str since it has a lifetime and wbg_cast requires 'static
+impl From<&str> for JsValue {
+    fn from(val: &str) -> Self {
+        cast! {(String => JsValue) val.to_string()}
+    }
+}
 to_js_value!(String);
 from_js_value!(String);
 to_js_value!(());
@@ -166,8 +186,8 @@ pub struct Closure<T: ?Sized> {
 }
 
 impl<T: ?Sized> Closure<T> {
-    pub fn new<F: Into<Closure<T>>>(f: F) -> Self {
-        f.into()
+    pub fn new<M, F: IntoClosure<M, Output = Self>>(f: F) -> Self {
+        f.into_closure()
     }
 
     /// Create a `Closure` from a function that can only be called once.
@@ -175,9 +195,9 @@ impl<T: ?Sized> Closure<T> {
     /// Since we have no way of enforcing that JS cannot attempt to call this
     /// `FnOnce` more than once, this produces a `Closure<dyn FnMut(A...) -> R>`
     /// that will panic if called more than once.
-    pub fn once<F, A, R>(fn_once: F) -> Closure<T>
+    pub fn once<F, M>(fn_once: F) -> Closure<T>
     where
-        F: WasmClosureFnOnce<T, A, R>,
+        F: WasmClosureFnOnce<T, M>,
     {
         fn_once.into_closure()
     }
@@ -189,8 +209,11 @@ impl<T: ?Sized> Closure<T> {
 }
 
 /// A trait for converting an `FnOnce(A...) -> R` into a `Closure<dyn FnMut(A...) -> R>`.
+///
+/// The marker `M` is a tuple containing the function pointer type and per-argument markers
+/// to constrain types and disambiguate DecodeArg impls (Owned vs Borrowed).
 #[doc(hidden)]
-pub trait WasmClosureFnOnce<T: ?Sized, A, R>: Sized + 'static {
+pub trait WasmClosureFnOnce<T: ?Sized, M>: Sized + 'static {
     fn into_closure(self) -> Closure<T>;
 }
 
@@ -202,22 +225,30 @@ impl<T: ?Sized> AsRef<JsValue> for Closure<T> {
 
 impl<T: ?Sized> core::fmt::Debug for Closure<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Closure").field("value", &self.value).finish()
+        f.debug_struct("Closure")
+            .field("value", &self.value)
+            .finish()
     }
 }
 
 /// Trait for closure types that can be wrapped and passed to JavaScript.
 /// This trait is implemented for all `dyn FnMut(...)` variants.
-pub trait WasmClosure {
+///
+/// The marker `M` is a tuple containing the function pointer type and per-argument markers
+/// to constrain types and disambiguate DecodeArg impls (Owned vs Borrowed).
+pub trait WasmClosure<M> {
     /// Create a Closure from a boxed closure.
     fn into_js_closure(boxed: Box<Self>) -> Closure<Self>;
 }
 
-impl<T: WasmClosure + ?Sized> Closure<T> {
+impl<T: ?Sized> Closure<T> {
     /// Wrap a boxed closure to create a `Closure`.
     ///
     /// This is the classic wasm-bindgen API for creating closures from boxed trait objects.
-    pub fn wrap(data: Box<T>) -> Closure<T> {
+    pub fn wrap<M>(data: Box<T>) -> Closure<T>
+    where
+        T: WasmClosure<M>,
+    {
         T::into_js_closure(data)
     }
 
@@ -232,12 +263,35 @@ impl<T: WasmClosure + ?Sized> Closure<T> {
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::ops::{Deref, DerefMut};
 // Re-export core types
 pub use cast::JsCast;
 pub use convert::{FromWasmAbi, IntoWasmAbi, JsValueRef, RefFromWasmAbi};
 pub use lazy::JsThreadLocal;
 use once_cell::sync::Lazy;
 pub use value::JsValue;
+
+/// A wrapper type around slices and vectors for binding the `Uint8ClampedArray` in JS.
+///
+/// Supported inner types:
+/// * `Clamped<&[u8]>`
+/// * `Clamped<&mut [u8]>`
+/// * `Clamped<Vec<u8>>`
+#[derive(Copy, Clone, PartialEq, Debug, Eq)]
+pub struct Clamped<T>(pub T);
+
+impl<T> Deref for Clamped<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Clamped<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
 
 /// A JavaScript Error object.
 ///
@@ -251,12 +305,14 @@ impl JsError {
     /// Create a new JavaScript Error with the given message.
     pub fn new(message: &str) -> Self {
         // Create JS Error via helper function
-        static __SPEC: JsFunctionSpec = JsFunctionSpec::new(|| "(msg) => new Error(msg)".to_string());
+        static __SPEC: JsFunctionSpec =
+            JsFunctionSpec::new(|| "(msg) => new Error(msg)".to_string());
         inventory::submit! {
             __SPEC
         }
-        let func: JSFunction<fn(&str) -> JsValue> =
-            FUNCTION_REGISTRY.get_function(__SPEC).expect("Function not found: Error constructor");
+        let func: JSFunction<fn(&str) -> JsValue> = FUNCTION_REGISTRY
+            .get_function(__SPEC)
+            .expect("Function not found: Error constructor");
         JsError {
             value: func.call(message),
         }
@@ -315,6 +371,8 @@ pub use wry_bindgen_macro::wasm_bindgen;
 // Re-export inventory for macro use
 pub use inventory;
 
+use crate::encode::IntoClosure;
+
 /// Function specification for the registry
 #[derive(Clone, Copy)]
 pub struct JsFunctionSpec {
@@ -366,6 +424,28 @@ impl JsFunctionSpec {
 }
 
 inventory::collect!(JsFunctionSpec);
+
+/// Specification for an exported Rust function/method callable from JavaScript.
+///
+/// This is used by the `#[wasm_bindgen]` macro when exporting structs and impl blocks.
+/// Each export is registered via inventory and collected at runtime.
+pub struct JsExportSpec {
+    /// The export name (e.g., "MyStruct::new", "MyStruct::method")
+    pub name: &'static str,
+    /// Handler function that decodes arguments, calls the Rust function, and encodes the result
+    pub handler: fn(&mut DecodedData) -> Result<EncodedData, alloc::string::String>,
+}
+
+impl JsExportSpec {
+    pub const fn new(
+        name: &'static str,
+        handler: fn(&mut DecodedData) -> Result<EncodedData, alloc::string::String>,
+    ) -> Self {
+        Self { name, handler }
+    }
+}
+
+inventory::collect!(JsExportSpec);
 
 /// Registry of JS functions collected via inventory
 
@@ -447,8 +527,6 @@ impl FunctionRegistry {
 
     /// Get a function by name from the registry
     pub fn get_function<F>(&self, spec: JsFunctionSpec) -> Option<JSFunction<F>>
-    where
-        F: 'static,
     {
         let index = self
             .function_specs
@@ -519,6 +597,7 @@ pub fn throw_str(message: &str) -> ! {
 
 /// Prelude module for common imports
 pub mod prelude {
+    pub use crate::Clamped;
     pub use crate::Closure;
     pub use crate::JsError;
     pub use crate::UnwrapThrowExt;

@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use crate::encode::{BatchableResult, BinaryDecode};
 use crate::ipc::{EncodedData, IPCMessage, MessageType};
 use crate::runtime::get_runtime;
-use crate::value::JSIDX_RESERVED;
+use crate::value::{JSIDX_OFFSET, JSIDX_RESERVED};
 
 /// State for batching operations.
 /// Every evaluation is a batch - it may just have one operation.
@@ -27,6 +27,9 @@ pub struct BatchState {
     ids_to_free: Vec<Vec<u64>>,
     /// Whether we're inside a batch() call
     is_batching: bool,
+    /// Borrow stack pointer - uses indices 1-127, growing downward from JSIDX_OFFSET (128) to 1
+    /// Reset after each operation completes
+    borrow_stack_pointer: u64,
 }
 
 impl BatchState {
@@ -38,6 +41,8 @@ impl BatchState {
             max_id: JSIDX_RESERVED,
             ids_to_free: Vec::new(),
             is_batching: false,
+            // Borrow stack starts at JSIDX_OFFSET (128) and grows downward to 1
+            borrow_stack_pointer: JSIDX_OFFSET,
         }
     }
 
@@ -57,6 +62,23 @@ impl BatchState {
             self.max_id += 1;
             id
         }
+    }
+
+    /// Get the next borrow ID from the borrow stack (indices 1-127).
+    /// The borrow stack grows downward from JSIDX_OFFSET (128) toward 1.
+    /// Panics if the borrow stack overflows (more than 127 borrowed refs in one operation).
+    pub fn get_next_borrow_id(&mut self) -> u64 {
+        if self.borrow_stack_pointer <= 1 {
+            panic!("Borrow stack overflow: too many borrowed references in a single operation");
+        }
+        self.borrow_stack_pointer -= 1;
+        self.borrow_stack_pointer
+    }
+
+    /// Reset the borrow stack after an operation completes.
+    /// This should be called after each operation finishes to clean up borrowed refs.
+    pub fn reset_borrow_stack(&mut self) {
+        self.borrow_stack_pointer = JSIDX_OFFSET;
     }
 
     /// Release a heap ID back to the free-list and queue it for JS drop.

@@ -11,9 +11,11 @@ class JSHeap {
   private slots: (unknown | undefined)[];
   private freeIds: number[];
   private maxId: number;
+  // Borrow stack uses indices 1-127, growing downward from 127 to 1
+  private borrowStackPointer: number;
 
   constructor() {
-    // Pre-allocate slots array - slots 0-127 are unused gaps,
+    // Pre-allocate slots array - slots 0-127 are for borrow stack (1-127 usable),
     // slots 128-131 are reserved for special values (undefined, null, true, false),
     // heap allocation starts at 132 (JSIDX_RESERVED)
     this.slots = [];
@@ -26,6 +28,8 @@ class JSHeap {
     this.freeIds = [];
     // Start allocating from JSIDX_RESERVED (132)
     this.maxId = JSIDX_RESERVED;
+    // Borrow stack pointer starts at 128 (just below reserved values)
+    this.borrowStackPointer = JSIDX_OFFSET;
   }
 
   insert(value: unknown): number {
@@ -63,6 +67,32 @@ class JSHeap {
 
   heapObjectsAlive(): number {
     return this.slots.length - this.freeIds.length - JSIDX_RESERVED;
+  }
+
+  // Add a borrowed reference to the borrow stack (indices 1-127)
+  // Returns the stack slot index
+  addBorrowedRef(obj: unknown): number {
+    if (this.borrowStackPointer <= 1) {
+      throw new Error("Borrow stack overflow: too many borrowed references in a single operation");
+    }
+    this.borrowStackPointer--;
+    this.slots[this.borrowStackPointer] = obj;
+    return this.borrowStackPointer;
+  }
+
+  // Reset the borrow stack after an operation completes
+  // Clears all borrowed references
+  resetBorrowStack(): void {
+    // Clear slots in the borrow range
+    for (let i = this.borrowStackPointer; i < JSIDX_OFFSET; i++) {
+      this.slots[i] = undefined;
+    }
+    this.borrowStackPointer = JSIDX_OFFSET;
+  }
+
+  // Get the current borrow stack pointer (for testing)
+  getBorrowStackPointer(): number {
+    return this.borrowStackPointer;
   }
 }
 

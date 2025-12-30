@@ -159,6 +159,9 @@ function handleBinaryResponse(
 
       // Encode the result using the return type
       typeInfo.returnType.encode(encoder, result);
+
+      // Reset borrow stack after each operation - borrowed refs are only valid during the operation
+      window.jsHeap.resetBorrowStack();
     }
 
     const nextResponse = sync_request_binary(

@@ -338,8 +338,6 @@ pub(crate) fn test_jsvalue_js_in() {
 }
 
 pub(crate) fn test_instanceof_basic() {
-    use wasm_bindgen::JsCast;
-
     // Test instanceof with built-in JS types
     #[wasm_bindgen(inline_js = r#"
         export function create_array() { return [1, 2, 3]; }

@@ -70,6 +70,12 @@ pub struct BindgenAttrs {
     pub crate_path: Option<(Span, Path)>,
     /// The `vendor_prefix` attribute - vendor prefixes for types (can appear multiple times)
     pub vendor_prefixes: Vec<(Span, Ident)>,
+    /// The `inspectable` attribute - generate toJSON/toString for structs
+    pub inspectable: Option<Span>,
+    /// The `skip` attribute - skip field from export
+    pub skip: Option<Span>,
+    /// The `getter_with_clone` attribute - clone value in getter (for non-Copy types)
+    pub getter_with_clone: Option<Span>,
 }
 
 impl BindgenAttrs {
@@ -150,6 +156,9 @@ enum BindgenAttr {
     Readonly(Span),
     Crate(Span, Path),
     VendorPrefix(Span, Ident),
+    Inspectable(Span),
+    Skip(Span),
+    GetterWithClone(Span),
 }
 
 impl Parse for BindgenAttr {
@@ -273,6 +282,9 @@ impl Parse for BindgenAttr {
             "indexing_deleter" => Ok(BindgenAttr::IndexingDeleter(span)),
             "final" => Ok(BindgenAttr::Final(span)),
             "readonly" => Ok(BindgenAttr::Readonly(span)),
+            "inspectable" => Ok(BindgenAttr::Inspectable(span)),
+            "skip" => Ok(BindgenAttr::Skip(span)),
+            "getter_with_clone" => Ok(BindgenAttr::GetterWithClone(span)),
 
             "crate" => {
                 input.parse::<Token![=]>()?;
@@ -477,6 +489,27 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
             }
             BindgenAttr::VendorPrefix(span, ident) => {
                 result.vendor_prefixes.push((span, ident));
+            }
+            BindgenAttr::Inspectable(span) => {
+                if result.inspectable.is_some() {
+                    return Err(syn::Error::new(span, "duplicate `inspectable` attribute"));
+                }
+                result.inspectable = Some(span);
+            }
+            BindgenAttr::Skip(span) => {
+                if result.skip.is_some() {
+                    return Err(syn::Error::new(span, "duplicate `skip` attribute"));
+                }
+                result.skip = Some(span);
+            }
+            BindgenAttr::GetterWithClone(span) => {
+                if result.getter_with_clone.is_some() {
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `getter_with_clone` attribute",
+                    ));
+                }
+                result.getter_with_clone = Some(span);
             }
         }
     }

@@ -28,6 +28,8 @@ enum TypeTag {
   Option = 19,
   Result = 20,
   Array = 21,
+  BorrowedRef = 22,
+  U8Clamped = 23,
 }
 
 /**
@@ -63,6 +65,24 @@ class HeapRefType implements TypeClass {
 
   decode(decoder: DataDecoder): unknown {
     const id = decoder.takeU64();
+    return window.jsHeap.get(id);
+  }
+}
+
+/**
+ * Type class for borrowed references with encoding/decoding methods.
+ * Borrowed references use the borrow stack (indices 1-127) instead of the heap.
+ * They are automatically cleaned up after each operation completes.
+ */
+class BorrowedRefType implements TypeClass {
+  encode(encoder: DataEncoder, obj: unknown): void {
+    // Put on borrow stack instead of heap - ID is not encoded, Rust side syncs via batch state
+    window.jsHeap.addBorrowedRef(obj);
+  }
+
+  decode(decoder: DataDecoder): unknown {
+    const id = decoder.takeU64();
+    // Works for both heap refs (128+) and borrow stack refs (1-127)
     return window.jsHeap.get(id);
   }
 }
@@ -331,6 +351,30 @@ class ArrayType implements TypeClass {
   }
 }
 
+/**
+ * Type class for clamped u8 array values (Uint8ClampedArray).
+ * Used for canvas ImageData and similar APIs.
+ */
+class U8ClampedType implements TypeClass {
+  encode(encoder: DataEncoder, value: Uint8ClampedArray | number[]): void {
+    encoder.pushU32(value.length);
+    for (let i = 0; i < value.length; i++) {
+      encoder.pushU8(value[i]);
+    }
+  }
+
+  decode(decoder: DataDecoder): Uint8ClampedArray {
+    const length = decoder.takeU32();
+    const result = new Uint8ClampedArray(length);
+    for (let i = 0; i < length; i++) {
+      result[i] = decoder.takeU8();
+    }
+    return result;
+  }
+}
+
+const u8ClampedTypeInstance = new U8ClampedType();
+
 // Pre-instantiated numeric type classes
 export const U8Type = new NumericType("u8");
 export const U16Type = new NumericType("u16");
@@ -354,6 +398,7 @@ export const strType = new StringType();
 const boolTypeInstance = new BoolType();
 const nullTypeInstance = new NullType();
 const heapRefTypeInstance = new HeapRefType();
+const borrowedRefTypeInstance = new BorrowedRefType();
 const stringTypeInstance = new StringType();
 
 /**
@@ -400,6 +445,8 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       return stringTypeInstance;
     case TypeTag.HeapRef:
       return heapRefTypeInstance;
+    case TypeTag.BorrowedRef:
+      return borrowedRefTypeInstance;
     case TypeTag.Callback: {
       const paramCount = bytes[offset.value++];
       const paramTypes: TypeClass[] = [];
@@ -422,6 +469,8 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       const elementType = parseTypeDef(bytes, offset);
       return new ArrayType(elementType);
     }
+    case TypeTag.U8Clamped:
+      return u8ClampedTypeInstance;
     default:
       throw new Error(`Unknown TypeTag: ${tag}`);
   }
@@ -432,6 +481,7 @@ export {
   TypeTag,
   ArrayType,
   BoolType,
+  BorrowedRefType,
   HeapRefType,
   CallbackType,
   NullType,
@@ -440,5 +490,6 @@ export {
   StringType,
   StringEnumType,
   ResultType,
+  U8ClampedType,
   parseTypeDef,
 };

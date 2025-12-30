@@ -47,6 +47,10 @@ pub struct Program {
     pub statics: Vec<ImportStatic>,
     /// String enums
     pub string_enums: Vec<StringEnum>,
+    /// Exported structs
+    pub structs: Vec<ExportStruct>,
+    /// Exported methods from impl blocks
+    pub exports: Vec<ExportMethod>,
 }
 
 /// A string enum - an enum where each variant has a string discriminant
@@ -174,6 +178,102 @@ pub struct ImportStatic {
     pub thread_local_v2: bool,
 }
 
+// ============================================================================
+// Export Types (for Rust structs/impl blocks exposed to JavaScript)
+// ============================================================================
+
+/// An exported Rust struct
+#[derive(Debug)]
+pub struct ExportStruct {
+    /// Visibility of the struct
+    pub vis: Visibility,
+    /// Rust struct name
+    pub rust_name: Ident,
+    /// JavaScript class name (may differ from rust_name)
+    pub js_name: String,
+    /// Struct fields that should be exposed
+    pub fields: Vec<StructField>,
+    /// Whether to generate toJSON/toString methods
+    pub is_inspectable: bool,
+    /// User-provided attributes (like #[derive(...)])
+    pub rust_attrs: Vec<syn::Attribute>,
+}
+
+/// A field in an exported struct
+#[derive(Debug)]
+pub struct StructField {
+    /// Visibility of the field
+    pub vis: Visibility,
+    /// Rust field name
+    pub rust_name: Ident,
+    /// JavaScript property name (may differ from rust_name)
+    pub js_name: String,
+    /// Field type
+    pub ty: Type,
+    /// Whether this field is read-only (no setter)
+    pub readonly: bool,
+    /// Whether to clone the value in the getter (for non-Copy types)
+    pub getter_with_clone: bool,
+    /// Whether to skip this field entirely
+    pub skip: bool,
+}
+
+/// An exported method from an impl block
+#[derive(Debug)]
+pub struct ExportMethod {
+    /// The struct this method belongs to
+    pub class: Ident,
+    /// Rust method name
+    pub rust_name: Ident,
+    /// JavaScript method name (may differ from rust_name)
+    pub js_name: String,
+    /// Kind of method
+    pub kind: ExportMethodKind,
+    /// Method arguments (excluding self)
+    pub arguments: Vec<FunctionArg>,
+    /// Return type
+    pub ret: Option<Type>,
+    /// Whether to wrap in try-catch
+    pub catch: bool,
+    /// User-provided attributes (like #[cfg(...)] and #[doc = "..."])
+    pub rust_attrs: Vec<syn::Attribute>,
+}
+
+/// Kind of exported method
+#[derive(Debug, Clone)]
+pub enum ExportMethodKind {
+    /// Constructor (creates new instance)
+    Constructor,
+    /// Instance method with a receiver
+    Method {
+        /// How self is passed
+        self_ty: SelfType,
+    },
+    /// Static method (no self)
+    StaticMethod,
+    /// Property getter
+    Getter {
+        /// Property name
+        property: String,
+    },
+    /// Property setter
+    Setter {
+        /// Property name
+        property: String,
+    },
+}
+
+/// How self is passed to a method
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelfType {
+    /// &self - shared reference
+    RefShared,
+    /// &mut self - mutable reference
+    RefMutable,
+    /// self - by value (consumes)
+    ByValue,
+}
+
 /// Parse a syn::Item into our AST
 pub fn parse_item(program: &mut Program, item: syn::Item) -> syn::Result<()> {
     match item {
@@ -185,21 +285,253 @@ pub fn parse_item(program: &mut Program, item: syn::Item) -> syn::Result<()> {
             program.string_enums.push(string_enum);
         }
         syn::Item::Struct(s) => {
-            // Structs with wasm_bindgen become exported types
-            // For now, we only support imported types via extern "C"
-            return Err(syn::Error::new_spanned(
-                s,
-                "wasm_bindgen on structs is not yet supported; use extern \"C\" blocks",
-            ));
+            let export_struct = parse_struct(s, &program.attrs)?;
+            program.structs.push(export_struct);
+        }
+        syn::Item::Impl(i) => {
+            let exports = parse_impl_block(i, &program.attrs)?;
+            program.exports.extend(exports);
         }
         _ => {
             return Err(syn::Error::new_spanned(
                 item,
-                "wasm_bindgen attribute must be on extern \"C\" block or enum",
+                "wasm_bindgen attribute must be on extern \"C\" block, enum, struct, or impl block",
             ));
         }
     }
     Ok(())
+}
+
+/// Parse a struct definition for export
+fn parse_struct(s: syn::ItemStruct, attrs: &BindgenAttrs) -> syn::Result<ExportStruct> {
+    let rust_name = s.ident.clone();
+    let js_name = attrs
+        .js_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| rust_name.to_string());
+
+    let is_inspectable = attrs.inspectable.is_some();
+
+    // Parse fields
+    let mut fields = Vec::new();
+    match &s.fields {
+        syn::Fields::Named(named) => {
+            for field in &named.named {
+                let field_attrs = extract_wasm_bindgen_attrs(&field.attrs)?;
+
+                // Skip fields marked with #[wasm_bindgen(skip)]
+                if field_attrs.skip.is_some() {
+                    continue;
+                }
+
+                let field_name = field.ident.clone().ok_or_else(|| {
+                    syn::Error::new_spanned(field, "struct fields must be named")
+                })?;
+
+                let js_field_name = field_attrs
+                    .js_name()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| field_name.to_string());
+
+                fields.push(StructField {
+                    vis: field.vis.clone(),
+                    rust_name: field_name,
+                    js_name: js_field_name,
+                    ty: field.ty.clone(),
+                    readonly: field_attrs.readonly.is_some(),
+                    getter_with_clone: field_attrs.getter_with_clone.is_some(),
+                    skip: false,
+                });
+            }
+        }
+        syn::Fields::Unnamed(_) => {
+            return Err(syn::Error::new_spanned(
+                &s.fields,
+                "tuple structs are not supported; use named fields",
+            ));
+        }
+        syn::Fields::Unit => {
+            // Unit struct - no fields, that's fine
+        }
+    }
+
+    // Extract non-wasm_bindgen attributes
+    let rust_attrs: Vec<syn::Attribute> = s
+        .attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("wasm_bindgen"))
+        .cloned()
+        .collect();
+
+    Ok(ExportStruct {
+        vis: s.vis,
+        rust_name,
+        js_name,
+        fields,
+        is_inspectable,
+        rust_attrs,
+    })
+}
+
+/// Parse an impl block for export
+fn parse_impl_block(i: syn::ItemImpl, attrs: &BindgenAttrs) -> syn::Result<Vec<ExportMethod>> {
+    // Validate: no generics, no trait impls
+    if !i.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            &i.generics,
+            "generic impl blocks are not supported",
+        ));
+    }
+    if i.trait_.is_some() {
+        return Err(syn::Error::new_spanned(
+            &i,
+            "trait impls are not supported; only inherent impls",
+        ));
+    }
+    if i.unsafety.is_some() {
+        return Err(syn::Error::new_spanned(
+            i.unsafety,
+            "unsafe impl blocks are not supported",
+        ));
+    }
+
+    // Extract the class name from Self type
+    let class = match &*i.self_ty {
+        syn::Type::Path(p) => p.path.get_ident().cloned().ok_or_else(|| {
+            syn::Error::new_spanned(&i.self_ty, "expected simple type name for impl block")
+        })?,
+        _ => {
+            return Err(syn::Error::new_spanned(
+                &i.self_ty,
+                "expected simple type name for impl block",
+            ));
+        }
+    };
+
+    let mut exports = Vec::new();
+
+    for item in &i.items {
+        match item {
+            syn::ImplItem::Fn(method) => {
+                // Skip non-public methods
+                if !matches!(method.vis, syn::Visibility::Public(_)) {
+                    continue;
+                }
+
+                let method_attrs = extract_wasm_bindgen_attrs(&method.attrs)?;
+                let export = parse_impl_method(&class, method, method_attrs, attrs)?;
+                exports.push(export);
+            }
+            syn::ImplItem::Const(_) => {
+                // Skip constants
+            }
+            syn::ImplItem::Type(_) => {
+                // Skip type aliases
+            }
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    item,
+                    "only methods are supported in impl blocks",
+                ));
+            }
+        }
+    }
+
+    Ok(exports)
+}
+
+/// Parse a method in an impl block
+fn parse_impl_method(
+    class: &Ident,
+    method: &syn::ImplItemFn,
+    method_attrs: BindgenAttrs,
+    _block_attrs: &BindgenAttrs,
+) -> syn::Result<ExportMethod> {
+    let rust_name = method.sig.ident.clone();
+    let js_name = method_attrs
+        .js_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| rust_name.to_string());
+
+    // Determine the kind based on receiver and attributes
+    let mut arguments = Vec::new();
+    let mut self_ty = None;
+
+    for (i, arg) in method.sig.inputs.iter().enumerate() {
+        match arg {
+            FnArg::Receiver(r) => {
+                if i != 0 {
+                    return Err(syn::Error::new_spanned(r, "self must be first argument"));
+                }
+                self_ty = Some(if r.reference.is_some() {
+                    if r.mutability.is_some() {
+                        SelfType::RefMutable
+                    } else {
+                        SelfType::RefShared
+                    }
+                } else {
+                    SelfType::ByValue
+                });
+            }
+            FnArg::Typed(pat_type) => {
+                let name = match &*pat_type.pat {
+                    Pat::Ident(ident) => ident.ident.clone(),
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            pat_type,
+                            "complex patterns not supported",
+                        ));
+                    }
+                };
+                arguments.push(FunctionArg {
+                    name,
+                    ty: (*pat_type.ty).clone(),
+                });
+            }
+        }
+    }
+
+    // Determine method kind
+    let kind = if method_attrs.is_constructor() {
+        ExportMethodKind::Constructor
+    } else if let Some((_, name)) = &method_attrs.getter {
+        let property = name.clone().unwrap_or_else(|| js_name.clone());
+        ExportMethodKind::Getter { property }
+    } else if let Some((_, name)) = &method_attrs.setter {
+        let property = name
+            .clone()
+            .unwrap_or_else(|| js_name.strip_prefix("set_").unwrap_or(&js_name).to_string());
+        ExportMethodKind::Setter { property }
+    } else if let Some(st) = self_ty {
+        ExportMethodKind::Method { self_ty: st }
+    } else {
+        ExportMethodKind::StaticMethod
+    };
+
+    // Parse return type
+    let ret = match &method.sig.output {
+        syn::ReturnType::Default => None,
+        syn::ReturnType::Type(_, ty) => Some((**ty).clone()),
+    };
+
+    // Extract non-wasm_bindgen attributes
+    let rust_attrs: Vec<syn::Attribute> = method
+        .attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("wasm_bindgen"))
+        .cloned()
+        .collect();
+
+    Ok(ExportMethod {
+        class: class.clone(),
+        rust_name,
+        js_name,
+        kind,
+        arguments,
+        ret,
+        catch: method_attrs.catch.is_some(),
+        rust_attrs,
+    })
 }
 
 /// Parse an extern "C" block

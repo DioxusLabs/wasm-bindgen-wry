@@ -2,8 +2,10 @@ use wasm_bindgen::{Closure, wasm_bindgen};
 use wry_testing::{bindings::set_on_error, set_on_log};
 
 mod add_number_js;
+// mod borrow_stack;
 mod callbacks;
 mod catch_attribute;
+mod clamped;
 mod jsvalue;
 mod roundtrip;
 mod string_enum;
@@ -79,6 +81,26 @@ fn main() {
         test_with_js_context(catch_attribute::test_catch_successful_call);
         test_with_js_context(catch_attribute::test_catch_with_arguments);
         test_with_js_context(catch_attribute::test_catch_method);
+
+        // Clamped type tests
+        test_with_js_context(clamped::test_clamped_is_uint8clampedarray);
+        test_with_js_context(clamped::test_clamped_vec_is_uint8clampedarray);
+        test_with_js_context(clamped::test_clamped_js_clamping_behavior);
+        test_with_js_context(clamped::test_clamped_preserves_data);
+        test_with_js_context(clamped::test_clamped_empty);
+        test_with_js_context(clamped::test_clamped_mut_slice);
+
+        // // Borrow stack tests
+        // test_with_js_context(borrow_stack::test_borrowed_ref_basic);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_multiple);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_cleanup_between_ops);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_reserved_values);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_mixed_with_owned);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_same_value_multiple_times);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_in_callback);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_clone);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_nested_frames);
+        // test_with_js_context(borrow_stack::test_borrowed_ref_deep_nesting);
     })
     .unwrap();
 }
