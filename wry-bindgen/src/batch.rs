@@ -7,10 +7,9 @@ use core::cell::RefCell;
 use alloc::vec::Vec;
 
 use crate::encode::{BatchableResult, BinaryDecode};
-use crate::function::JSFunction;
 use crate::ipc::{EncodedData, IPCMessage, MessageType};
 use crate::runtime::get_runtime;
-use crate::value::{DROP_HEAP_REF_FN_ID, JSIDX_RESERVED};
+use crate::value::JSIDX_RESERVED;
 
 /// State for batching operations.
 /// Every evaluation is a batch - it may just have one operation.
@@ -140,8 +139,7 @@ pub(crate) fn queue_js_drop(id: u64) {
         "Attempted to drop reserved JS heap ID {}",
         id
     );
-    let drop_fn: JSFunction<fn(u64) -> ()> = JSFunction::new(DROP_HEAP_REF_FN_ID);
-    drop_fn.call(id);
+    crate::js_helpers::js_drop_heap_ref(id);
     BATCH_STATE.with(|state| {
         state.borrow_mut().release_heap_id(id);
     });

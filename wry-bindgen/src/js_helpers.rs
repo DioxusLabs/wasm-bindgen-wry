@@ -125,4 +125,12 @@ extern "C" {
     // instanceof check for Error
     #[wasm_bindgen(js_name = "is_error")]
     pub(crate) fn js_is_error(x: &JsValue) -> bool;
+
+    // Heap management - clone a value in the JS heap
+    #[wasm_bindgen(js_name = "clone_heap_ref")]
+    pub(crate) fn js_clone_heap_ref(heap_id: u64) -> JsValue;
+
+    // Heap management - drop a value from the JS heap
+    #[wasm_bindgen(js_name = "drop_heap_ref")]
+    pub(crate) fn js_drop_heap_ref(heap_id: u64);
 }

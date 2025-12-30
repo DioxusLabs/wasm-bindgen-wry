@@ -26,12 +26,6 @@ enum MessageType {
 const TYPE_CACHED = 0xff;
 const TYPE_FULL = 0xfe;
 
-// Reserved function ID for dropping heap refs - must match Rust's DROP_HEAP_REF_FN_ID
-const DROP_HEAP_REF_FN_ID = 0xffffffff;
-
-// Reserved function ID for cloning heap refs - must match Rust's CLONE_HEAP_REF_FN_ID
-const CLONE_HEAP_REF_FN_ID = 0xfffffffe;
-
 // Reserved function ID for dropping native Rust refs - must match Rust's DROP_NATIVE_REF_FN_ID
 const DROP_NATIVE_REF_FN_ID = 0xffffffff;
 
@@ -149,22 +143,6 @@ function handleBinaryResponse(
       const fnId = decoder.takeU32();
       // Parse type information (cached or full)
       const typeInfo = parseTypeInfo(decoder);
-
-      // Handle special drop function
-      if (fnId === DROP_HEAP_REF_FN_ID) {
-        const heapId = decoder.takeU64();
-        window.jsHeap.remove(heapId);
-        continue;
-      }
-
-      // Handle special clone function
-      if (fnId === CLONE_HEAP_REF_FN_ID) {
-        const heapId = decoder.takeU64();
-        const value = window.jsHeap.get(heapId);
-        const newId = window.jsHeap.insert(value);
-        encoder.pushU64(newId);
-        continue;
-      }
 
       // Get the raw JS function
       const functionRegistry = getFunctionRegistry();

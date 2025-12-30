@@ -27,6 +27,7 @@ enum TypeTag {
   Callback = 18,
   Option = 19,
   Result = 20,
+  Array = 21,
 }
 
 /**
@@ -303,6 +304,33 @@ class ResultType implements TypeClass {
   }
 }
 
+/**
+ * Type class for array/Vec values with encoding/decoding methods
+ */
+class ArrayType implements TypeClass {
+  private elementType: TypeClass;
+
+  constructor(elementType: TypeClass) {
+    this.elementType = elementType;
+  }
+
+  encode(encoder: DataEncoder, value: any[]): void {
+    encoder.pushU32(value.length);
+    for (const element of value) {
+      this.elementType.encode(encoder, element);
+    }
+  }
+
+  decode(decoder: DataDecoder): any[] {
+    const length = decoder.takeU32();
+    const result: any[] = [];
+    for (let i = 0; i < length; i++) {
+      result.push(this.elementType.decode(decoder));
+    }
+    return result;
+  }
+}
+
 // Pre-instantiated numeric type classes
 export const U8Type = new NumericType("u8");
 export const U16Type = new NumericType("u16");
@@ -390,6 +418,10 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       const errType = parseTypeDef(bytes, offset);
       return new ResultType(okType, errType);
     }
+    case TypeTag.Array: {
+      const elementType = parseTypeDef(bytes, offset);
+      return new ArrayType(elementType);
+    }
     default:
       throw new Error(`Unknown TypeTag: ${tag}`);
   }
@@ -398,6 +430,7 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
 export {
   TypeClass,
   TypeTag,
+  ArrayType,
   BoolType,
   HeapRefType,
   CallbackType,

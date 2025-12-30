@@ -127,3 +127,14 @@ export function js_in(prop: any, obj: any): boolean {
 export function is_error(x: any): boolean {
   return x instanceof Error;
 }
+
+// Heap management - clone a value in the JS heap
+export function clone_heap_ref(heapId: number): number {
+  const value = window.jsHeap.get(heapId);
+  return window.jsHeap.insert(value);
+}
+
+// Heap management - drop a value from the JS heap
+export function drop_heap_ref(heapId: number): void {
+  window.jsHeap.remove(heapId);
+}

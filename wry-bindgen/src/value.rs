@@ -6,16 +6,6 @@
 use alloc::string::String;
 use core::fmt;
 
-use crate::function::JSFunction;
-
-/// Reserved function ID for dropping heap refs on JS side.
-/// This should be handled specially in the JS runtime.
-pub const DROP_HEAP_REF_FN_ID: u32 = 0xFFFFFFFF;
-
-/// Reserved function ID for cloning heap refs on JS side.
-/// Returns a new heap ID for the cloned value.
-pub const CLONE_HEAP_REF_FN_ID: u32 = 0xFFFFFFFE;
-
 /// Offset for reserved JS value indices.
 /// Values below JSIDX_RESERVED are special constants that don't need drop/clone.
 pub(crate) const JSIDX_OFFSET: u64 = 128;
@@ -146,8 +136,7 @@ impl Clone for JsValue {
         }
 
         // Clone the value on the JS heap
-        let clone_fn: JSFunction<fn(u64) -> JsValue> = JSFunction::new(CLONE_HEAP_REF_FN_ID);
-        clone_fn.call(self.idx)
+        crate::js_helpers::js_clone_heap_ref(self.idx)
     }
 }
 
