@@ -104,7 +104,6 @@ impl IntoWasmAbi for Option<JsValue> {
 }
 
 use crate::JsCast;
-use crate::encode::BinaryDecode;
 use crate::ipc::{DecodeError, DecodedData};
 use core::marker::PhantomData;
 

@@ -289,6 +289,7 @@ impl<T> DerefMut for Clamped<T> {
 ///
 /// This type is used to create JavaScript Error objects that can be thrown or returned.
 #[derive(Debug)]
+#[repr(transparent)]
 pub struct JsError {
     value: JsValue,
 }
@@ -341,7 +342,7 @@ impl JsCast for JsError {
     }
 
     fn unchecked_from_js_ref(val: &JsValue) -> &Self {
-        // This is unsafe but matches wasm-bindgen behavior
+        // SAFETY: #[repr(transparent)] guarantees same layout
         unsafe { &*(val as *const JsValue as *const JsError) }
     }
 }

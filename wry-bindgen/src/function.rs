@@ -21,6 +21,10 @@ use crate::ipc::EncodedData;
 /// JS sends this when a FinalizationRegistry callback fires for a RustFunction.
 pub const DROP_NATIVE_REF_FN_ID: u32 = 0xFFFFFFFF;
 
+/// Reserved function ID for calling exported Rust struct methods from JS.
+/// JS sends this with the export name to call the appropriate handler.
+pub const CALL_EXPORT_FN_ID: u32 = 0xFFFFFFFE;
+
 thread_local! {
     /// Cache mapping type definition bytes to the assigned type_id for the JS side
     static TYPE_CACHE: RefCell<BTreeMap<Vec<u8>, u32>> = RefCell::new(BTreeMap::new());

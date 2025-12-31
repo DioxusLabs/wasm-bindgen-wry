@@ -29,6 +29,9 @@ const TYPE_FULL = 0xfe;
 // Reserved function ID for dropping native Rust refs - must match Rust's DROP_NATIVE_REF_FN_ID
 const DROP_NATIVE_REF_FN_ID = 0xffffffff;
 
+// Reserved function ID for calling exported Rust struct methods - must match Rust's CALL_EXPORT_FN_ID
+const CALL_EXPORT_FN_ID = 0xfffffffe;
+
 /**
  * Sends binary data to Rust and receives binary response.
  */
@@ -184,4 +187,5 @@ export {
   sync_request_binary,
   MessageType,
   DROP_NATIVE_REF_FN_ID,
+  CALL_EXPORT_FN_ID,
 };

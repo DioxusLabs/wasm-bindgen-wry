@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use slotmap::{DefaultKey, KeyData};
 
 use crate::encode::BinaryDecode;
-use crate::function::{DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_FUNCTION_ENCODER};
+use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_FUNCTION_ENCODER};
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 
 /// Application-level events that can be sent through the event loop.
@@ -201,6 +201,32 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
 
             // Send empty response
             let response = IPCMessage::new_respond(|_| {});
+            runtime.js_response(response);
+        }
+        // Call an exported Rust struct method
+        CALL_EXPORT_FN_ID => {
+            // Read the export name
+            let export_name = crate::encode::BinaryDecode::decode(data)
+                .expect("Failed to decode export name");
+            let export_name: alloc::string::String = export_name;
+
+            // Find the export handler
+            let export = crate::inventory::iter::<crate::JsExportSpec>()
+                .find(|e| e.name == export_name)
+                .unwrap_or_else(|| panic!("Unknown export: {}", export_name));
+
+            // Call the handler
+            let result = (export.handler)(data);
+
+            // Send response
+            let response = match result {
+                Ok(encoded) => IPCMessage::new_respond(|encoder| {
+                    encoder.extend(&encoded);
+                }),
+                Err(err) => {
+                    panic!("Export call failed: {}", err);
+                }
+            };
             runtime.js_response(response);
         }
         _ => todo!(),
