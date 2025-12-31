@@ -7,6 +7,7 @@ mod callbacks;
 mod catch_attribute;
 mod clamped;
 mod jsvalue;
+mod module_import;
 mod roundtrip;
 mod string_enum;
 mod thread_local;
@@ -110,6 +111,9 @@ fn main() {
         // Thread local tests
         test_with_js_context(thread_local::test_thread_local);
         test_with_js_context_allow_new_js_values(thread_local::test_thread_local_window);
+
+        // Module import test
+        test_with_js_context(module_import::test_module_import);
     })
     .unwrap();
 }

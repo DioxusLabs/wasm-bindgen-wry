@@ -17,24 +17,32 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     let mut tokens = TokenStream::new();
     let krate = &program.attrs.crate_path_tokens();
 
-    // First generate the module for inline_js if needed
+    // First generate the module for inline_js or module attribute if needed
     let mut prefix = String::new();
-    if let Some((span, inline_js_module)) = &program.attrs.inline_js {
+
+    // Determine the module content expression: either inline_js or include_str!(module_path)
+    let module_content: Option<(proc_macro2::Span, TokenStream)> =
+        if let Some((span, inline_js_module)) = &program.attrs.inline_js {
+            Some((*span, inline_js_module.to_token_stream()))
+        } else if let Some((span, module_path)) = &program.attrs.module {
+            Some((*span, quote_spanned! {*span=> include_str!(#module_path) }))
+        } else {
+            None
+        };
+
+    if let Some((span, content_expr)) = module_content {
         let unique_hash = {
             let s = RandomState::new();
             let mut hasher = s.build_hasher();
-            inline_js_module
-                .to_token_stream()
-                .to_string()
-                .hash(&mut hasher);
+            content_expr.to_string().hash(&mut hasher);
             hasher.finish()
         };
         let unique_ident = format_ident!("__WRY_BINDGEN_INLINE_JS_MODULE_HASH_{}", unique_hash);
         // Create a static and submit it to the inventory
-        tokens.extend(quote_spanned! {*span=>
+        tokens.extend(quote_spanned! {span=>
             static #unique_ident: u64 = {
                 static __WRY_BINDGEN_INLINE_JS_MODULE: #krate::InlineJsModule = #krate::InlineJsModule::new(
-                    #inline_js_module
+                    #content_expr
                 );
                 #krate::inventory::submit! {
                     __WRY_BINDGEN_INLINE_JS_MODULE

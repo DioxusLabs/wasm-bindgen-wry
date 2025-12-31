@@ -76,6 +76,8 @@ pub struct BindgenAttrs {
     pub skip: Option<Span>,
     /// The `getter_with_clone` attribute - clone value in getter (for non-Copy types)
     pub getter_with_clone: Option<Span>,
+    /// The `module` attribute - path to external JS module file (read at compile time)
+    pub module: Option<(Span, String)>,
 }
 
 impl BindgenAttrs {
@@ -159,6 +161,7 @@ enum BindgenAttr {
     Inspectable(Span),
     Skip(Span),
     GetterWithClone(Span),
+    Module(Span, String),
 }
 
 impl Parse for BindgenAttr {
@@ -285,6 +288,12 @@ impl Parse for BindgenAttr {
             "inspectable" => Ok(BindgenAttr::Inspectable(span)),
             "skip" => Ok(BindgenAttr::Skip(span)),
             "getter_with_clone" => Ok(BindgenAttr::GetterWithClone(span)),
+
+            "module" => {
+                input.parse::<Token![=]>()?;
+                let path = input.parse::<LitStr>()?.value();
+                Ok(BindgenAttr::Module(span, path))
+            }
 
             "crate" => {
                 input.parse::<Token![=]>()?;
@@ -425,6 +434,12 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
                 if result.inline_js.is_some() {
                     return Err(syn::Error::new(span, "duplicate `inline_js` attribute"));
                 }
+                if result.module.is_some() {
+                    return Err(syn::Error::new(
+                        span,
+                        "cannot specify both `inline_js` and `module`",
+                    ));
+                }
                 result.inline_js = Some((span, js));
             }
             BindgenAttr::ThreadLocalV2(span) => {
@@ -510,6 +525,18 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
                     ));
                 }
                 result.getter_with_clone = Some(span);
+            }
+            BindgenAttr::Module(span, path) => {
+                if result.module.is_some() {
+                    return Err(syn::Error::new(span, "duplicate `module` attribute"));
+                }
+                if result.inline_js.is_some() {
+                    return Err(syn::Error::new(
+                        span,
+                        "cannot specify both `module` and `inline_js`",
+                    ));
+                }
+                result.module = Some((span, path));
             }
         }
     }
