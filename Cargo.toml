@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "wry-bindgen", "wry-bindgen-macro", "wry-bindgen-macro-support", "gloo-testing", "dioxus-web-testing", "yew-testing"]
+members = [".", "wry-bindgen", "wry-bindgen-macro", "wry-bindgen-macro-support", "gloo-testing", "dioxus-web-testing", "yew-testing", "leptos-testing"]
 exclude = ["wasm-bindgen"]
 resolver = "2"
 

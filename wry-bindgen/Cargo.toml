@@ -1,6 +1,6 @@
 [package]
 name = "wasm-bindgen"
-version = "0.2.107"
+version = "0.2.105"
 edition = "2024"
 
 [features]
