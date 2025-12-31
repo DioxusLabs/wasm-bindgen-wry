@@ -977,6 +977,32 @@ pub struct BorrowedFirstArg;
 /// This uses RefFromBinaryDecode for the first arg and BinaryDecode for the rest.
 macro_rules! impl_fnmut_stub_ref {
     ($first:ident $(, $rest:ident)*) => {
+        // Implement EncodeTypeDef for fn(borrowed, owned*) -> R
+        #[allow(coherence_leak_check)]
+        impl<R, $first, $($rest,)*> EncodeTypeDef for CallbackKey<fn(&$first, $($rest),*) -> R>
+            where
+            $first: EncodeTypeDef + 'static,
+            $($rest: EncodeTypeDef + 'static, )*
+            R: EncodeTypeDef + 'static,
+        {
+            #[allow(unused)]
+            fn encode_type_def(buf: &mut Vec<u8>) {
+                buf.push(TypeTag::Callback as u8);
+                // Encode arg count
+                let mut count: u8 = 1;
+                $(
+                    let _ = PhantomData::<$rest>;
+                    count += 1;
+                )*
+                buf.push(count);
+                // Encode each argument type
+                buf.push(TypeTag::BorrowedRef as u8);
+                $(<$rest as EncodeTypeDef>::encode_type_def(buf);)*
+                // Encode return type
+                <R as EncodeTypeDef>::encode_type_def(buf);
+            }
+        }
+
         // WasmClosure for dyn FnMut(&First, ...) -> R
         impl<R, $first, $($rest,)*> crate::WasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn FnMut(&$first, $($rest),*) -> R
             where
