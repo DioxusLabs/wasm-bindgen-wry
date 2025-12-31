@@ -3,6 +3,8 @@
 //! The borrow stack uses indices 1-127 for temporary borrowed references
 //! that are automatically cleaned up after each operation completes.
 
+use std::rc::Rc;
+
 use wasm_bindgen::{JsValue, wasm_bindgen};
 
 /// Test that borrowed references (&JsValue) can be passed to JS functions
@@ -228,13 +230,16 @@ pub(crate) fn test_borrowed_ref_nested_frames() {
     let innermost_obj = make_innermost();
 
     // Track that the callback was actually called
-    let callback_was_called = Cell::new(false);
-    let innermost_check_passed = Cell::new(false);
+    let callback_was_called = Rc::new(Cell::new(false));
+    let innermost_check_passed = Rc::new(Cell::new(false));
 
     // Clone innermost_obj so we can use it inside the closure
     let innermost_for_closure = innermost_obj.clone();
 
-    let callback = Closure::new(Box::new(move |inner_ref: &JsValue| {
+    let callback = Closure::new({
+        let callback_was_called = callback_was_called.clone();
+        let innermost_check_passed = innermost_check_passed.clone();
+        move |inner_ref: &JsValue| {
         callback_was_called.set(true);
 
         // Verify the inner_ref is valid
@@ -246,8 +251,8 @@ pub(crate) fn test_borrowed_ref_nested_frames() {
         let check_result = check_ref(&innermost_for_closure);
         innermost_check_passed.set(check_result);
 
-        check_result
-    }) as Box<dyn FnMut(&JsValue) -> bool>);
+        check_result}
+    });
 
     // Call JS with outer_obj as borrowed ref
     // JS will call our callback with inner_obj as borrowed ref
