@@ -4,6 +4,8 @@
 //! low-level ABI conversion types.
 
 use crate::JsValue;
+use core::mem::ManuallyDrop;
+use core::ops::Deref;
 
 /// Trait for converting a Rust type to its WebAssembly ABI representation.
 ///
@@ -49,6 +51,34 @@ impl FromWasmAbi for JsValue {
 
     unsafe fn from_abi(js: Self::Abi) -> Self {
         JsValue::from_id(js as u64)
+    }
+}
+
+/// Trait for recovering a shared reference from the WebAssembly ABI boundary.
+///
+/// This is the shared reference variant of `FromWasmAbi`.
+pub trait RefFromWasmAbi {
+    /// The ABI type that references to `Self` are recovered from.
+    type Abi;
+
+    /// The type that holds the reference to `Self` for the duration of the
+    /// invocation. This ensures lifetimes don't persist beyond one function call.
+    type Anchor: Deref<Target = Self>;
+
+    /// Recover a `Self::Anchor` from `Self::Abi`.
+    ///
+    /// # Safety
+    /// The caller must ensure the ABI value is valid.
+    unsafe fn ref_from_abi(js: Self::Abi) -> Self::Anchor;
+}
+
+impl RefFromWasmAbi for JsValue {
+    type Abi = u32;
+    type Anchor = ManuallyDrop<JsValue>;
+
+    #[inline]
+    unsafe fn ref_from_abi(js: u32) -> Self::Anchor {
+        ManuallyDrop::new(JsValue::from_id(js as u64))
     }
 }
 

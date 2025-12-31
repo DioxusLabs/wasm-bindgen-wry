@@ -258,7 +258,7 @@ use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 // Re-export core types
 pub use cast::JsCast;
-pub use convert::{FromWasmAbi, IntoWasmAbi};
+pub use convert::{FromWasmAbi, IntoWasmAbi, RefFromWasmAbi};
 pub use lazy::JsThreadLocal;
 use once_cell::sync::Lazy;
 pub use value::JsValue;
