@@ -651,17 +651,6 @@ impl<T: ?Sized> EncodeTypeDef for crate::Closure<T> {
     }
 }
 
-// Blanket impl: CallbackKey encodes as Callback type
-// Note: This loses the specific arg type info, but the callback ID is what matters at runtime
-impl<T: ?Sized> EncodeTypeDef for CallbackKey<T> {
-    fn encode_type_def(buf: &mut Vec<u8>) {
-        buf.push(TypeTag::Callback as u8);
-        // Encode 0 args and void return - actual signature is tracked separately
-        buf.push(0);
-        buf.push(TypeTag::Null as u8);
-    }
-}
-
 /// Helper macro to decode callback arguments and execute a body.
 ///
 /// Usage: decode_args!(decoder; [type1, type2, ...] => body)
@@ -681,6 +670,29 @@ macro_rules! decode_args {
 
 macro_rules! impl_fnmut_stub {
     ($($arg:ident),*) => {
+        // Implement EncodeTypeDef for dyn FnMut(...) -> R
+        impl<R, $($arg,)*> EncodeTypeDef for CallbackKey<fn($($arg),*) -> R>
+            where
+            $($arg: EncodeTypeDef + 'static, )*
+            R: EncodeTypeDef + 'static,
+        {
+            #[allow(unused)]
+            fn encode_type_def(buf: &mut Vec<u8>) {
+                buf.push(TypeTag::Callback as u8);
+                // Encode arg count
+                let mut count: u8 = 0;
+                $(
+                    let _ = PhantomData::<$arg>;
+                    count += 1;
+                )*
+                buf.push(count);
+                // Encode each argument type
+                $(<$arg as EncodeTypeDef>::encode_type_def(buf);)*
+                // Encode return type
+                <R as EncodeTypeDef>::encode_type_def(buf);
+            }
+        }
+
         // Implement WasmClosure trait for dyn FnMut variants
         impl<R, $($arg,)*> crate::WasmClosure<fn($($arg),*) -> R> for dyn FnMut($($arg),*) -> R
             where
@@ -701,7 +713,7 @@ macro_rules! impl_fnmut_stub {
                 ));
                 // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
                 // Return type is Closure which encodes as HeapRef (JS inserts into heap)
-                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::Closure<Self>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -725,7 +737,7 @@ macro_rules! impl_fnmut_stub {
                         });
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::Closure<Self>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -752,7 +764,7 @@ macro_rules! impl_fnmut_stub {
                 ));
                 // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
                 // Return type is Closure which encodes as HeapRef (JS inserts into heap)
-                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, Self::Output>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -983,7 +995,7 @@ macro_rules! impl_fnmut_stub_ref {
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($first, $($rest),*) -> R>, crate::Closure<Self>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1007,7 +1019,7 @@ macro_rules! impl_fnmut_stub_ref {
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($first, $($rest),*) -> R>, crate::Closure<Self>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1033,7 +1045,7 @@ macro_rules! impl_fnmut_stub_ref {
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($first, $($rest),*) -> R>, Self::Output>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1074,7 +1086,7 @@ macro_rules! impl_fn_once {
                         });
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Closure<dyn FnMut($($arg),*) -> R>>, Closure<dyn FnMut($($arg),*) -> R>>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, Closure<dyn FnMut($($arg),*) -> R>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1115,7 +1127,7 @@ macro_rules! impl_fn_once_ref {
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Closure<dyn FnMut(&$first, $($rest),*) -> R>>, Closure<dyn FnMut(&$first, $($rest),*) -> R>>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($first, $($rest),*) -> R>, Closure<dyn FnMut(&$first, $($rest),*) -> R>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
