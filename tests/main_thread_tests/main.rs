@@ -99,6 +99,7 @@ fn main() {
 
         // Thread local tests
         test_with_js_context(thread_local::test_thread_local);
+        test_with_js_context(thread_local::test_thread_local_window);
     })
     .unwrap();
 }
