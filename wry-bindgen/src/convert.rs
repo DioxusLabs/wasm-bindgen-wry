@@ -32,38 +32,6 @@ pub trait FromWasmAbi {
     unsafe fn from_abi(js: Self::Abi) -> Self;
 }
 
-/// Trait for creating a reference from a WebAssembly ABI representation.
-///
-/// This is used when you need to pass a reference to JS without transferring ownership.
-pub trait RefFromWasmAbi {
-    /// The ABI type that this converts from.
-    type Abi;
-
-    /// The anchor type that keeps the reference valid.
-    type Anchor: core::ops::Deref<Target = Self>;
-
-    /// Create a reference from the ABI representation.
-    ///
-    /// # Safety
-    /// The caller must ensure the ABI value is valid.
-    unsafe fn ref_from_abi(js: Self::Abi) -> Self::Anchor;
-}
-
-/// Trait for types that can provide a mutable reference from a WebAssembly ABI representation.
-pub trait RefMutFromWasmAbi {
-    /// The ABI type that this converts from.
-    type Abi;
-
-    /// The mutable anchor type.
-    type Anchor: core::ops::DerefMut<Target = Self>;
-
-    /// Create a mutable reference from the ABI representation.
-    ///
-    /// # Safety
-    /// The caller must ensure the ABI value is valid.
-    unsafe fn ref_mut_from_abi(js: Self::Abi) -> Self::Anchor;
-}
-
 // JsValue uses u32 as its ABI type for wasm-bindgen compatibility
 // (internally we use u64, but the ABI layer uses u32 for compatibility)
 impl IntoWasmAbi for JsValue {
@@ -81,28 +49,6 @@ impl FromWasmAbi for JsValue {
 
     unsafe fn from_abi(js: Self::Abi) -> Self {
         JsValue::from_id(js as u64)
-    }
-}
-
-impl RefFromWasmAbi for JsValue {
-    type Abi = u32;
-    type Anchor = JsValueRef;
-
-    unsafe fn ref_from_abi(js: Self::Abi) -> Self::Anchor {
-        JsValueRef(JsValue::from_id(js as u64))
-    }
-}
-
-/// A reference wrapper for JsValue that implements Deref.
-///
-/// This is used as the anchor type for `RefFromWasmAbi`.
-pub struct JsValueRef(pub(crate) JsValue);
-
-impl core::ops::Deref for JsValueRef {
-    type Target = JsValue;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 
