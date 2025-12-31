@@ -9,10 +9,11 @@ mod clamped;
 mod jsvalue;
 mod roundtrip;
 mod string_enum;
+mod thread_local;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
-        return window.jsHeap.heapObjectsAlive();
-    }")]
+    return window.jsHeap.heapObjectsAlive();
+}")]
 extern "C" {
     /// Get the number of alive JS heap objects
     #[wasm_bindgen(js_name = heap_objects_alive)]
@@ -37,7 +38,7 @@ fn main() {
             println!("[JS] {}", msg);
         }));
 
-        // The simplest bindings
+        // Adding numbers with and without batching
         test_with_js_context(add_number_js::test_add_number_js);
         test_with_js_context(add_number_js::test_add_number_js_batch);
 
@@ -94,6 +95,9 @@ fn main() {
         test_with_js_context(borrow_stack::test_borrowed_ref_in_callback);
         test_with_js_context(borrow_stack::test_borrowed_ref_nested_frames);
         test_with_js_context(borrow_stack::test_borrowed_ref_deep_nesting);
+
+        // Thread local tests
+        test_with_js_context(thread_local::test_thread_local);
     })
     .unwrap();
 }
