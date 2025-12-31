@@ -209,9 +209,6 @@ impl<T: ?Sized> Closure<T> {
 }
 
 /// A trait for converting an `FnOnce(A...) -> R` into a `Closure<dyn FnMut(A...) -> R>`.
-///
-/// The marker `M` is a tuple containing the function pointer type and per-argument markers
-/// to constrain types and disambiguate DecodeArg impls (Owned vs Borrowed).
 #[doc(hidden)]
 pub trait WasmClosureFnOnce<T: ?Sized, M>: Sized + 'static {
     fn into_closure(self) -> Closure<T>;
@@ -233,9 +230,6 @@ impl<T: ?Sized> core::fmt::Debug for Closure<T> {
 
 /// Trait for closure types that can be wrapped and passed to JavaScript.
 /// This trait is implemented for all `dyn FnMut(...)` variants.
-///
-/// The marker `M` is a tuple containing the function pointer type and per-argument markers
-/// to constrain types and disambiguate DecodeArg impls (Owned vs Borrowed).
 pub trait WasmClosure<M> {
     /// Create a Closure from a boxed closure.
     fn into_js_closure(boxed: Box<Self>) -> Closure<Self>;

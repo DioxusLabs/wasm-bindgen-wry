@@ -14,7 +14,8 @@ use crate::batch::{BATCH_STATE, BatchState};
 use crate::function::{RustCallback, register_value};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::value::JsValue;
-use crate::{Closure, JsCast};
+use crate::convert::RefFromBinaryDecode;
+use crate::Closure;
 
 /// Trait for encoding Rust values into the binary protocol.
 /// Each type specifies how to serialize itself.
@@ -28,66 +29,12 @@ pub trait BinaryDecode: Sized {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError>;
 }
 
-/// Marker types for distinguishing owned vs borrowed decoding
-pub struct Owned;
-pub struct Borrowed;
-
 /// Trait for converting a closure into a Closure wrapper.
 /// This trait is used instead of `From` to allow blanket implementations
 /// for all closure types without conflicting with other `From` impls.
-///
-/// The marker `M` is a tuple containing:
-/// - A function pointer type `fn(A1, A2, ...) -> R` that constrains the argument and return types
-/// - Marker types `M1, M2, ...` for each argument to disambiguate DecodeArg impls (Owned vs Borrowed)
 pub trait IntoClosure<M> {
     type Output;
     fn into_closure(self) -> Self::Output;
-}
-
-/// Trait for decoding callback arguments that can be either owned or borrowed.
-/// This enables closures to accept both `T` (owned) and `&T` (borrowed) arguments
-/// without needing separate implementations for each combination.
-///
-/// The marker type parameter `M` disambiguates between:
-/// - `DecodeArg<Owned>` for owned types that implement BinaryDecode
-/// - `DecodeArg<Borrowed>` for borrowed references to JsCast types
-pub trait DecodeArg<'a, M = Owned> {
-    /// The storage type used to hold the decoded value.
-    type Storage: Sized;
-
-    /// Decode the storage from binary data.
-    fn decode(decoder: &mut DecodedData) -> Result<Self::Storage, DecodeError>;
-
-    /// Convert storage to the argument type.
-    fn as_arg(storage: &'a Self::Storage) -> Self;
-}
-
-/// Implementation for owned types that implement BinaryDecode.
-/// The trait is implemented for `T` to decode owned values.
-impl<'a, T: BinaryDecode + Clone> DecodeArg<'a, Owned> for T {
-    type Storage = T;
-
-    fn decode(decoder: &mut DecodedData) -> Result<T, DecodeError> {
-        T::decode(decoder)
-    }
-
-    fn as_arg(storage: &T) -> T {
-        storage.clone()
-    }
-}
-
-/// Implementation for borrowed references to JsCast types.
-/// Note: We implement for `T`, and use the GAT to express the reference type.
-impl<'a, T: crate::JsCast + 'static> DecodeArg<'a, Borrowed> for &'a T {
-    type Storage = JsValue;
-
-    fn decode(decoder: &mut DecodedData) -> Result<JsValue, DecodeError> {
-        <JsValue as BinaryDecode>::decode(decoder)
-    }
-
-    fn as_arg(storage: &'a JsValue) -> &'a T {
-        storage.unchecked_ref::<T>()
-    }
 }
 
 /// Trait for return types that can be used in batched JS calls.
@@ -716,22 +663,15 @@ impl<T: ?Sized> EncodeTypeDef for CallbackKey<T> {
 }
 
 /// Helper macro to decode callback arguments and execute a body.
-/// This decodes all arguments into storage first, then converts them to arg types.
-/// This avoids nested closures which cause lifetime issues with borrowed references.
 ///
-/// Usage: decode_args!(decoder; [(type1, marker1), (type2, marker2), ...] => body)
+/// Usage: decode_args!(decoder; [type1, type2, ...] => body)
 /// The body can use the type names as variables containing the decoded arguments.
 macro_rules! decode_args {
-    // Main entry: decode storage for all args, then convert and call body
-    ($decoder:expr; [($first:ident, $first_marker:ident), $(($ty:ident, $marker:ident),)*] => $body:expr) => {{
-        // Decode this argument into storage (using unique variable names)
+    // Main entry: decode each arg and call body
+    ($decoder:expr; [$first:ident, $($ty:ident,)*] => $body:expr) => {{
         #[allow(non_snake_case)]
-        let $first = <$first as DecodeArg<$first_marker>>::decode($decoder).unwrap();
-        {
-            let $first = <$first as DecodeArg<$first_marker>>::as_arg(&$first);
-            // Recurse to decode remaining arguments
-            decode_args!($decoder; [$(($ty, $marker),)*] => $body);
-        }
+        let $first = <$first as BinaryDecode>::decode($decoder).unwrap();
+        decode_args!($decoder; [$($ty,)*] => $body);
     }};
     // Nothing to decode, just execute body
     ($decoder:expr; [] => $body:expr) => {{
@@ -740,13 +680,11 @@ macro_rules! decode_args {
 }
 
 macro_rules! impl_fnmut_stub {
-    // Match pairs of (arg, marker)
-    ($(($arg:ident, $marker:ident)),*) => {
+    ($($arg:ident),*) => {
         // Implement WasmClosure trait for dyn FnMut variants
-        impl<R, $($arg,)* $($marker,)*> crate::WasmClosure<(fn($($arg),*) -> R, $($marker,)*)> for dyn for<'a> FnMut($($arg),*) -> R
+        impl<R, $($arg,)*> crate::WasmClosure<fn($($arg),*) -> R> for dyn FnMut($($arg),*) -> R
             where
-            $($arg: for<'a> DecodeArg<'a, $marker> + EncodeTypeDef + 'static, )*
-            $($marker: 'static, )*
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
@@ -755,7 +693,7 @@ macro_rules! impl_fnmut_stub {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
-                        let _ = decode_args!(decoder; [$(($arg, $marker),)*] => {
+                        decode_args!(decoder; [$($arg,)*] => {
                             let result = boxed($($arg),*);
                             result.encode(encoder);
                         });
@@ -770,10 +708,9 @@ macro_rules! impl_fnmut_stub {
         }
 
         // Implement WasmClosure trait for dyn Fn variants (immutable closures)
-        impl<R, $($arg,)* $($marker,)*> crate::WasmClosure<(fn($($arg),*) -> R, $($marker,)*)> for dyn for<'a> Fn($($arg),*) -> R
+        impl<R, $($arg,)*> crate::WasmClosure<fn($($arg),*) -> R> for dyn Fn($($arg),*) -> R
             where
-            $($arg: for<'a> DecodeArg<'a, $marker> + EncodeTypeDef + 'static, )*
-            $($marker: 'static, )*
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
@@ -782,7 +719,7 @@ macro_rules! impl_fnmut_stub {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
-                        let _ = decode_args!(decoder; [$(($arg, $marker),)*] => {
+                        decode_args!(decoder; [$($arg,)*] => {
                             let result = boxed($($arg),*);
                             result.encode(encoder);
                         });
@@ -794,13 +731,12 @@ macro_rules! impl_fnmut_stub {
             }
         }
 
-        impl<R, F, $($arg,)* $($marker,)*> IntoClosure<(fn($($arg),*) -> R, $($marker,)*)> for F
-            where F: for<'a> FnMut($($arg),*) -> R + 'static,
-            $($arg: for<'a> DecodeArg<'a, $marker> + EncodeTypeDef + 'static, )*
-            $($marker: 'static, )*
+        impl<R, F, $($arg,)*> IntoClosure<fn($($arg),*) -> R> for F
+            where F: FnMut($($arg),*) -> R + 'static,
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
-            type Output = crate::Closure<dyn for<'a> FnMut($($arg),*) -> R>;
+            type Output = crate::Closure<dyn FnMut($($arg),*) -> R>;
 
             #[allow(non_snake_case)]
             #[allow(unused)]
@@ -808,7 +744,7 @@ macro_rules! impl_fnmut_stub {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
-                        let _ = decode_args!(decoder; [$(($arg, $marker),)*] => {
+                        decode_args!(decoder; [$($arg,)*] => {
                             let result = self($($arg),*);
                             result.encode(encoder);
                         });
@@ -1013,67 +949,27 @@ impl_closure_ref_encode!(A1, A2, A3, A4, A5);
 impl_closure_ref_encode!(A1, A2, A3, A4, A5, A6);
 impl_closure_ref_encode!(A1, A2, A3, A4, A5, A6, A7);
 
-/// Marker type to distinguish concrete boxed closure impls from GAT-based impls.
-pub struct ConcreteClosureMarker;
+impl_fnmut_stub!();
+impl_fnmut_stub!(A1);
+impl_fnmut_stub!(A1, A2);
+impl_fnmut_stub!(A1, A2, A3);
+impl_fnmut_stub!(A1, A2, A3, A4);
+impl_fnmut_stub!(A1, A2, A3, A4, A5);
+impl_fnmut_stub!(A1, A2, A3, A4, A5, A6);
+impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7);
 
-/// Macro to implement IntoClosure for Box<dyn FnMut(...)> with concrete types.
-/// This allows `Closure::new(Box::new(...) as Box<dyn FnMut(A) -> R>)` to work.
-macro_rules! impl_boxed_closure_into {
-    ($($arg:ident),*) => {
-        // IntoClosure for Box<dyn FnMut(...) -> R>
-        impl<R, $($arg,)*> IntoClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for Box<dyn FnMut($($arg),*) -> R>
+/// Marker type for closures that borrow the first argument.
+pub struct BorrowedFirstArg;
+
+/// Macro to implement WasmClosure and IntoClosure for closures that borrow the first argument.
+/// This uses RefFromBinaryDecode for the first arg and BinaryDecode for the rest.
+macro_rules! impl_fnmut_stub_ref {
+    ($first:ident $(, $rest:ident)*) => {
+        // WasmClosure for dyn FnMut(&First, ...) -> R
+        impl<R, $first, $($rest,)*> crate::WasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn FnMut(&$first, $($rest),*) -> R
             where
-            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
-            R: BinaryEncode + EncodeTypeDef + 'static,
-        {
-            type Output = crate::Closure<dyn FnMut($($arg),*) -> R>;
-
-            #[allow(non_snake_case)]
-            #[allow(unused)]
-            fn into_closure(mut self) -> Self::Output {
-                let key = register_value(RustCallback::new(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments and call the closure
-                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
-                        let result = self($($arg),*);
-                        result.encode(encoder);
-                    },
-                ));
-                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
-                    CallbackKey(key.data().as_ffi(), PhantomData)
-                )
-            }
-        }
-
-        // IntoClosure for Box<dyn Fn(...) -> R>
-        impl<R, $($arg,)*> IntoClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for Box<dyn Fn($($arg),*) -> R>
-            where
-            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
-            R: BinaryEncode + EncodeTypeDef + 'static,
-        {
-            type Output = crate::Closure<dyn Fn($($arg),*) -> R>;
-
-            #[allow(non_snake_case)]
-            #[allow(unused)]
-            fn into_closure(self) -> Self::Output {
-                let key = register_value(RustCallback::new(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments and call the closure
-                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
-                        let result = self($($arg),*);
-                        result.encode(encoder);
-                    },
-                ));
-                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
-                    CallbackKey(key.data().as_ffi(), PhantomData)
-                )
-            }
-        }
-
-        // WasmClosure for dyn FnMut(...) -> R (concrete types)
-        impl<R, $($arg,)*> crate::WasmClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for dyn FnMut($($arg),*) -> R
-            where
-            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
@@ -1081,22 +977,23 @@ macro_rules! impl_boxed_closure_into {
             fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments and call the closure
-                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
-                        let result = boxed($($arg),*);
+                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
+                        $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = boxed(&*anchor, $($rest),*);
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<crate::Closure<Self>>, crate::Closure<Self>>(
+                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
         }
 
-        // WasmClosure for dyn Fn(...) -> R (concrete types)
-        impl<R, $($arg,)*> crate::WasmClosure<(ConcreteClosureMarker, fn($($arg),*) -> R)> for dyn Fn($($arg),*) -> R
+        // WasmClosure for dyn Fn(&First, ...) -> R
+        impl<R, $first, $($rest,)*> crate::WasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn Fn(&$first, $($rest),*) -> R
             where
-            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
@@ -1104,13 +1001,39 @@ macro_rules! impl_boxed_closure_into {
             fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        // Decode arguments and call the closure
-                        $(let $arg = <$arg as BinaryDecode>::decode(decoder).unwrap();)*
-                        let result = boxed($($arg),*);
+                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
+                        $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = boxed(&*anchor, $($rest),*);
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<crate::Closure<Self>>, crate::Closure<Self>>(
+                $crate::__rt::wbg_cast::<CallbackKey<Self>, crate::Closure<Self>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        // IntoClosure for F: FnMut(&First, ...) -> R
+        impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for F
+            where F: FnMut(&$first, $($rest),*) -> R + 'static,
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            type Output = crate::Closure<dyn FnMut(&$first, $($rest),*) -> R>;
+
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_closure(mut self) -> Self::Output {
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
+                        $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = self(&*anchor, $($rest),*);
+                        result.encode(encoder);
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<Self::Output>, Self::Output>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1118,59 +1041,40 @@ macro_rules! impl_boxed_closure_into {
     };
 }
 
-impl_boxed_closure_into!();
-impl_boxed_closure_into!(A1);
-impl_boxed_closure_into!(A1, A2);
-impl_boxed_closure_into!(A1, A2, A3);
-impl_boxed_closure_into!(A1, A2, A3, A4);
-impl_boxed_closure_into!(A1, A2, A3, A4, A5);
-impl_boxed_closure_into!(A1, A2, A3, A4, A5, A6);
-impl_boxed_closure_into!(A1, A2, A3, A4, A5, A6, A7);
-
-impl_fnmut_stub!();
-impl_fnmut_stub!((A1, M1));
-impl_fnmut_stub!((A1, M1), (A2, M2));
-impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3));
-impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3), (A4, M4));
-impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5));
-impl_fnmut_stub!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5), (A6, M6));
-impl_fnmut_stub!(
-    (A1, M1),
-    (A2, M2),
-    (A3, M3),
-    (A4, M4),
-    (A5, M5),
-    (A6, M6),
-    (A7, M7)
-);
+impl_fnmut_stub_ref!(A1);
+impl_fnmut_stub_ref!(A1, A2);
+impl_fnmut_stub_ref!(A1, A2, A3);
+impl_fnmut_stub_ref!(A1, A2, A3, A4);
+impl_fnmut_stub_ref!(A1, A2, A3, A4, A5);
+impl_fnmut_stub_ref!(A1, A2, A3, A4, A5, A6);
+impl_fnmut_stub_ref!(A1, A2, A3, A4, A5, A6, A7);
 
 /// Macro to implement WasmClosureFnOnce for FnOnce closures of various arities.
 /// This wraps an FnOnce in an FnMut that panics if called more than once.
 macro_rules! impl_fn_once {
-    ($(($arg:ident, $marker:ident)),*) => {
-        impl<R, F, $($arg,)* $($marker,)*> WasmClosureFnOnce<dyn for<'a> FnMut($($arg),*) -> R, (fn($($arg),*) -> R, $($marker,)*)> for F
+    ($($arg:ident),*) => {
+        impl<R, F, $($arg,)*> WasmClosureFnOnce<dyn FnMut($($arg),*) -> R, fn($($arg),*) -> R> for F
         where
-            F: for<'a> FnOnce($($arg),*) -> R + 'static,
-            $($arg: for<'a> DecodeArg<'a, $marker> + EncodeTypeDef + 'static,)*
-            $($marker: 'static,)*
+            F: FnOnce($($arg),*) -> R + 'static,
+            $($arg: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
             #[allow(unused_variables)]
-            fn into_closure(self) -> Closure<dyn for<'a> FnMut($($arg),*) -> R> {
+            fn into_closure(self) -> Closure<dyn FnMut($($arg),*) -> R> {
                 // Use Option to allow taking the FnOnce
                 let mut me = Some(self);
                 // Register the callback using the same pattern as impl_fnmut_stub
                 let key = register_value(RustCallback::new(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let f = me.take().expect("FnOnce closure called more than once");
-                        decode_args!(decoder; [$(($arg, $marker),)*] => {
+                        decode_args!(decoder; [$($arg,)*] => {
                             let result = f($($arg),*);
                             result.encode(encoder);
                         });
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<Closure<dyn for<'a> FnMut($($arg),*) -> R>>, Closure<dyn for<'a> FnMut($($arg),*) -> R>>(
+                $crate::__rt::wbg_cast::<CallbackKey<Closure<dyn FnMut($($arg),*) -> R>>, Closure<dyn FnMut($($arg),*) -> R>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1179,21 +1083,53 @@ macro_rules! impl_fn_once {
 }
 
 impl_fn_once!();
-impl_fn_once!((A1, M1));
-impl_fn_once!((A1, M1), (A2, M2));
-impl_fn_once!((A1, M1), (A2, M2), (A3, M3));
-impl_fn_once!((A1, M1), (A2, M2), (A3, M3), (A4, M4));
-impl_fn_once!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5));
-impl_fn_once!((A1, M1), (A2, M2), (A3, M3), (A4, M4), (A5, M5), (A6, M6));
-impl_fn_once!(
-    (A1, M1),
-    (A2, M2),
-    (A3, M3),
-    (A4, M4),
-    (A5, M5),
-    (A6, M6),
-    (A7, M7)
-);
+impl_fn_once!(A1);
+impl_fn_once!(A1, A2);
+impl_fn_once!(A1, A2, A3);
+impl_fn_once!(A1, A2, A3, A4);
+impl_fn_once!(A1, A2, A3, A4, A5);
+impl_fn_once!(A1, A2, A3, A4, A5, A6);
+impl_fn_once!(A1, A2, A3, A4, A5, A6, A7);
+
+/// Macro to implement WasmClosureFnOnce for FnOnce closures that borrow the first argument.
+/// This uses RefFromBinaryDecode for the first arg and BinaryDecode for the rest.
+macro_rules! impl_fn_once_ref {
+    ($first:ident $(, $rest:ident)*) => {
+        impl<R, F, $first, $($rest,)*> WasmClosureFnOnce<dyn FnMut(&$first, $($rest),*) -> R, (BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for F
+        where
+            F: FnOnce(&$first, $($rest),*) -> R + 'static,
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused_variables)]
+            fn into_closure(self) -> Closure<dyn FnMut(&$first, $($rest),*) -> R> {
+                let mut me = Some(self);
+                let key = register_value(RustCallback::new(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let f = me.take().expect("FnOnce closure called more than once");
+                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
+                        $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = f(&*anchor, $($rest),*);
+                        result.encode(encoder);
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<Closure<dyn FnMut(&$first, $($rest),*) -> R>>, Closure<dyn FnMut(&$first, $($rest),*) -> R>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+    };
+}
+
+impl_fn_once_ref!(A1);
+impl_fn_once_ref!(A1, A2);
+impl_fn_once_ref!(A1, A2, A3);
+impl_fn_once_ref!(A1, A2, A3, A4);
+impl_fn_once_ref!(A1, A2, A3, A4, A5);
+impl_fn_once_ref!(A1, A2, A3, A4, A5, A6);
+impl_fn_once_ref!(A1, A2, A3, A4, A5, A6, A7);
 
 impl<F: ?Sized> BinaryDecode for crate::Closure<F> {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
