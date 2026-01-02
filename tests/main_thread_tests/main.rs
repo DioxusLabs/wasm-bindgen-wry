@@ -12,6 +12,7 @@ mod roundtrip;
 mod string_enum;
 mod thread_local;
 mod structs;
+mod async_bindings;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
     return window.jsHeap.heapObjectsAlive();
@@ -114,6 +115,9 @@ fn main() {
 
         // Module import test
         test_with_js_context(module_import::test_module_import);
+
+        // async bindings test
+        test_with_js_context(async_bindings::test_call_async);
     })
     .unwrap();
 }
