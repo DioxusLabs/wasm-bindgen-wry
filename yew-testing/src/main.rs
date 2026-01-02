@@ -1,9 +1,9 @@
-use wry_testing::wait_for_js_result;
 use yew::prelude::*;
 
 pub fn main() {
     wry_testing::run(|| async {
         app();
+        std::future::pending::<()>().await;
     })
     .unwrap();
 }

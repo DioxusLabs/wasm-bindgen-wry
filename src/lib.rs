@@ -7,7 +7,7 @@ use futures_util::FutureExt;
 use wasm_bindgen::runtime::progress_js_with;
 use winit::event_loop::EventLoop;
 
-use wasm_bindgen::{FUNCTION_REGISTRY, FunctionRegistry};
+use wasm_bindgen::{Closure, FUNCTION_REGISTRY, FunctionRegistry};
 
 pub mod bindings;
 mod home;
@@ -25,6 +25,8 @@ pub use wasm_bindgen::JsValue;
 pub use wasm_bindgen::prelude::{
     AppEvent, batch, set_event_loop_proxy, shutdown, wait_for_js_result,
 };
+
+use crate::bindings::set_on_error;
 
 /// Run a webview application with the given app function.
 ///
@@ -111,6 +113,17 @@ where
             (unsafe { (*error).error_code }) == 170
         }));
     }
+
+    let app = || async move {
+        set_on_error(Closure::new(|err: String, stack: String| {
+            panic!("[ERROR IN JS CONSOLE] {}\nStack trace:\n{}", err, stack);
+        }));
+
+        set_on_log(Closure::new(|msg: String| {
+            println!("[JS] {}", msg);
+        }));
+        app().await
+    };
 
     let event_loop = EventLoop::with_user_event().build().unwrap();
     let proxy = event_loop.create_proxy();
