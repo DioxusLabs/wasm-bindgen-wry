@@ -193,7 +193,7 @@ pub struct Closure<T: ?Sized> {
 }
 
 impl<T: ?Sized> Closure<T> {
-    pub fn new<M, F: IntoClosure<M, Output = Self>>(f: F) -> Self {
+    pub fn new<M, F: IntoClosure<M, Self>>(f: F) -> Self {
         f.into_closure()
     }
 

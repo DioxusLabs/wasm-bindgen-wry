@@ -32,9 +32,10 @@ pub trait BinaryDecode: Sized {
 /// Trait for converting a closure into a Closure wrapper.
 /// This trait is used instead of `From` to allow blanket implementations
 /// for all closure types without conflicting with other `From` impls.
-pub trait IntoClosure<M> {
-    type Output;
-    fn into_closure(self) -> Self::Output;
+/// Output is a generic parameter (not associated type) to allow implementing
+/// the trait multiple times for the same type with different outputs.
+pub trait IntoClosure<M, Output> {
+    fn into_closure(self) -> Output;
 }
 
 /// Trait for return types that can be used in batched JS calls.
@@ -744,16 +745,15 @@ macro_rules! impl_fnmut_stub {
             }
         }
 
-        impl<R, F, $($arg,)*> IntoClosure<fn($($arg),*) -> R> for F
+        // IntoClosure for F: FnMut -> Closure<dyn FnMut>
+        impl<R, F, $($arg,)*> IntoClosure<fn($($arg),*) -> R, crate::Closure<dyn FnMut($($arg),*) -> R>> for F
             where F: FnMut($($arg),*) -> R + 'static,
             $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
-            type Output = crate::Closure<dyn FnMut($($arg),*) -> R>;
-
             #[allow(non_snake_case)]
             #[allow(unused)]
-            fn into_closure(mut self) -> Self::Output {
+            fn into_closure(mut self) -> crate::Closure<dyn FnMut($($arg),*) -> R> {
                 let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
@@ -765,7 +765,33 @@ macro_rules! impl_fnmut_stub {
                 ));
                 // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
                 // Return type is Closure which encodes as HeapRef (JS inserts into heap)
-                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, Self::Output>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::Closure<dyn FnMut($($arg),*) -> R>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        // IntoClosure for F: Fn -> Closure<dyn Fn>
+        impl<R, F, $($arg,)*> IntoClosure<fn($($arg),*) -> R, crate::Closure<dyn Fn($($arg),*) -> R>> for F
+            where F: Fn($($arg),*) -> R + 'static,
+            $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_closure(self) -> crate::Closure<dyn Fn($($arg),*) -> R> {
+                let key = register_value(RustCallback::new_fn(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        // Decode arguments and call the closure
+                        decode_args!(decoder; [$($arg,)*] => {
+                            let result = self($($arg),*);
+                            result.encode(encoder);
+                        });
+                    },
+                ));
+                // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
+                // Return type is Closure which encodes as HeapRef (JS inserts into heap)
+                $crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::Closure<dyn Fn($($arg),*) -> R>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }
@@ -1052,18 +1078,16 @@ macro_rules! impl_fnmut_stub_ref {
             }
         }
 
-        // IntoClosure for F: FnMut(&First, ...) -> R
-        impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for F
+        // IntoClosure for F: FnMut(&First, ...) -> R -> Closure<dyn FnMut(&First, ...) -> R>
+        impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R), crate::Closure<dyn FnMut(&$first, $($rest),*) -> R>> for F
             where F: FnMut(&$first, $($rest),*) -> R + 'static,
             $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
-            type Output = crate::Closure<dyn FnMut(&$first, $($rest),*) -> R>;
-
             #[allow(non_snake_case)]
             #[allow(unused)]
-            fn into_closure(mut self) -> Self::Output {
+            fn into_closure(mut self) -> crate::Closure<dyn FnMut(&$first, $($rest),*) -> R> {
                 let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
@@ -1072,7 +1096,31 @@ macro_rules! impl_fnmut_stub_ref {
                         result.encode(encoder);
                     },
                 ));
-                $crate::__rt::wbg_cast::<CallbackKey<fn(&$first, $($rest),*) -> R>, Self::Output>(
+                $crate::__rt::wbg_cast::<CallbackKey<fn(&$first, $($rest),*) -> R>, crate::Closure<dyn FnMut(&$first, $($rest),*) -> R>>(
+                    CallbackKey(key.data().as_ffi(), PhantomData)
+                )
+            }
+        }
+
+        // IntoClosure for F: Fn(&First, ...) -> R -> Closure<dyn Fn(&First, ...) -> R>
+        impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R), crate::Closure<dyn Fn(&$first, $($rest),*) -> R>> for F
+            where F: Fn(&$first, $($rest),*) -> R + 'static,
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            #[allow(unused)]
+            fn into_closure(self) -> crate::Closure<dyn Fn(&$first, $($rest),*) -> R> {
+                let key = register_value(RustCallback::new_fn(
+                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
+                        $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
+                        let result = self(&*anchor, $($rest),*);
+                        result.encode(encoder);
+                    },
+                ));
+                $crate::__rt::wbg_cast::<CallbackKey<fn(&$first, $($rest),*) -> R>, crate::Closure<dyn Fn(&$first, $($rest),*) -> R>>(
                     CallbackKey(key.data().as_ffi(), PhantomData)
                 )
             }

@@ -6093,6 +6093,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "yew-hooks"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77b1769730b76cb3c01273fcc23889c1ff992eec807bb31d58ba8ead65b162ef"
+dependencies = [
+ "gloo",
+ "js-sys",
+ "log",
+ "serde",
+ "wasm-bindgen 0.2.105",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "yew",
+]
+
+[[package]]
 name = "yew-macro"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6113,6 +6129,7 @@ version = "0.1.0"
 dependencies = [
  "wry-testing",
  "yew",
+ "yew-hooks",
 ]
 
 [[package]]

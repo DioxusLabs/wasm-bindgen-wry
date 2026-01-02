@@ -87,7 +87,7 @@ pub(crate) async fn test_async_method() {
         constructor(base) {
             this.base = base;
         }
-        async addAfterDelay(value) {
+        async add_after_delay(value) {
             return new Promise((resolve) => {
                 setTimeout(() => {
                     resolve(this.base + value);
@@ -102,11 +102,11 @@ pub(crate) async fn test_async_method() {
         fn new(base: u32) -> AsyncCalculator;
 
         #[wasm_bindgen(method)]
-        async fn addAfterDelay(this: &AsyncCalculator, value: u32) -> JsValue;
+        async fn add_after_delay(this: &AsyncCalculator, value: u32) -> JsValue;
     }
 
     let calc = AsyncCalculator::new(10);
-    let result = calc.addAfterDelay(5).await;
+    let result = calc.add_after_delay(5).await;
     assert_eq!(result.as_f64().unwrap() as u32, 15);
 }
 
@@ -131,7 +131,7 @@ pub(crate) async fn test_async_method_with_catch() {
         type AsyncValidator;
 
         #[wasm_bindgen(constructor)]
-        fn new(shouldFail: bool) -> AsyncValidator;
+        fn new(should_fail: bool) -> AsyncValidator;
 
         #[wasm_bindgen(method, catch)]
         async fn validate(this: &AsyncValidator, value: &str) -> Result<JsValue, JsValue>;
@@ -151,7 +151,7 @@ pub(crate) async fn test_async_method_with_catch() {
 
 pub(crate) async fn test_async_static_method() {
     #[wasm_bindgen(inline_js = "export class AsyncUtils {
-        static async fetchData(key) {
+        static async fetch_data(key) {
             return new Promise((resolve) => {
                 setTimeout(() => {
                     resolve('data_for_' + key);
@@ -163,9 +163,9 @@ pub(crate) async fn test_async_static_method() {
         type AsyncUtils;
 
         #[wasm_bindgen(static_method_of = AsyncUtils)]
-        async fn fetchData(key: &str) -> JsValue;
+        async fn fetch_data(key: &str) -> JsValue;
     }
 
-    let result = AsyncUtils::fetchData("test_key").await;
+    let result = AsyncUtils::fetch_data("test_key").await;
     assert_eq!(result.as_string().unwrap(), "data_for_test_key");
 }
