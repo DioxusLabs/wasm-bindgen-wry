@@ -145,7 +145,7 @@ where
                 }
             };
 
-            pollster::block_on(async move {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
                 futures_util::select! {
                     _ = run_app.fuse() => {},
                     _ = wait_for_events.fuse() => {},

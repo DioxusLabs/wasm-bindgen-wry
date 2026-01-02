@@ -1,5 +1,5 @@
-use yew_hooks::prelude::*;
 use yew::prelude::*;
+use yew_hooks::prelude::*;
 
 pub fn main() {
     wry_testing::run(|| async {
@@ -15,20 +15,17 @@ fn app() {
 
 #[function_component(Async)]
 fn async_test() -> Html {
-    let state = use_async(async move {
-        fetch("/api/user/123".to_string()).await
+    let state = use_async(async move { fetch("https://dioxuslabs.com/".to_string()).await });
+
+    use_effect({
+        let state = state.clone();
+        move || {
+            state.run();
+        }
     });
 
-    let onclick = {
-        let state = state.clone();
-        Callback::from(move |_| {
-            state.run();
-        })
-    };
-    
     html! {
         <div>
-            <button {onclick} disabled={state.loading}>{ "Start loading" }</button>
             {
                 if state.loading {
                     html! { "Loading" }
@@ -55,6 +52,10 @@ fn async_test() -> Html {
 }
 
 async fn fetch(url: String) -> Result<String, String> {
-    // You can use reqwest to fetch your http api
-    Ok(String::from("Jet Li"))
+    reqwest::get(&url)
+        .await
+        .map_err(|e| e.to_string())?
+        .text()
+        .await
+        .map_err(|e| e.to_string())
 }
