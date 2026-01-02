@@ -173,6 +173,12 @@ impl From<&str> for JsValue {
         cast! {(String => JsValue) val.to_string()}
     }
 }
+// Manual impl for &String
+impl From<&String> for JsValue {
+    fn from(val: &String) -> Self {
+        cast! {(String => JsValue) val.clone()}
+    }
+}
 to_js_value!(String);
 from_js_value!(String);
 to_js_value!(());
@@ -252,6 +258,17 @@ impl<T: ?Sized> Closure<T> {
         let value = core::mem::ManuallyDrop::new(self);
         // Clone the value to get ownership without triggering drop
         value.value.clone()
+    }
+
+    /// Create a `Closure` from a function that can only be called once,
+    /// and return the underlying `JsValue` directly.
+    ///
+    /// This is a convenience method that combines `once` and `into_js_value`.
+    pub fn once_into_js<F, M>(fn_once: F) -> JsValue
+    where
+        F: WasmClosureFnOnce<T, M>,
+    {
+        Closure::once(fn_once).into_js_value()
     }
 }
 
