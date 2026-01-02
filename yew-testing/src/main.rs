@@ -1,5 +1,5 @@
+use wasm_bindgen_futures::spawn_local;
 use yew::prelude::*;
-use yew_hooks::prelude::*;
 
 pub fn main() {
     wry_testing::run(|| async {
@@ -10,52 +10,34 @@ pub fn main() {
 }
 
 fn app() {
-    yew::Renderer::<Async>::new().render();
+    yew::Renderer::<App>::new().render();
 }
 
-#[function_component(Async)]
-fn async_test() -> Html {
-    let state = use_async(async move { fetch("https://dioxuslabs.com/".to_string()).await });
-
-    use_effect({
-        let state = state.clone();
-        move || {
-            state.run();
+#[function_component(App)]
+fn app_component() -> Html {
+    let counter = use_state(|| 0);
+    let increment_count: Callback<_> = use_callback(counter.clone(), {
+        move |_, counter| {
+            println!("Incrementing counter");
+            counter.set(**counter + 1);
         }
     });
 
+    // Auto-increment using spawn_local
+    use_effect_with(increment_count, move |increment_count| {
+        let increment_count = increment_count.clone();
+        spawn_local(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                increment_count.emit(());
+            }
+        });
+    });
+
     html! {
-        <div>
-            {
-                if state.loading {
-                    html! { "Loading" }
-                } else {
-                    html! {}
-                }
-            }
-            {
-                if let Some(data) = &state.data {
-                    html! { data }
-                } else {
-                    html! {}
-                }
-            }
-            {
-                if let Some(error) = &state.error {
-                    html! { error }
-                } else {
-                    html! {}
-                }
-            }
+        <div style="font-family: sans-serif; padding: 20px;">
+            <h1>{ "Yew + Wry Counter" }</h1>
+            <p style="font-size: 48px;">{ *counter }</p>
         </div>
     }
-}
-
-async fn fetch(url: String) -> Result<String, String> {
-    reqwest::get(&url)
-        .await
-        .map_err(|e| e.to_string())?
-        .text()
-        .await
-        .map_err(|e| e.to_string())
 }
