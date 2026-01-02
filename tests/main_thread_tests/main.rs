@@ -8,6 +8,7 @@ mod catch_attribute;
 mod clamped;
 mod jsvalue;
 mod module_import;
+mod reentrant_callbacks;
 mod roundtrip;
 mod string_enum;
 mod thread_local;
@@ -65,6 +66,10 @@ fn main() {
         // Callbacks
         test_with_js_context(callbacks::test_call_callback).await;
         async_test_with_js_context(callbacks::test_call_callback_async).await;
+
+        // Reentrant callbacks (dyn Fn)
+        test_with_js_context(reentrant_callbacks::test_reentrant_fn_closure).await;
+        test_with_js_context(reentrant_callbacks::test_interleaved_fn_closures).await;
 
         // JsValue behavior tests
         test_with_js_context(jsvalue::test_jsvalue_constants).await;

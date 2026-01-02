@@ -18,7 +18,7 @@ use crate::encode::BinaryDecode;
 use crate::function::{
     CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_OBJECT_ENCODER,
 };
-use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
+use crate::ipc::{DecodedData, DecodedVariant, EncodedData, IPCMessage};
 
 /// Application-level events that can be sent through the event loop.
 ///
@@ -165,45 +165,36 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
         0 => {
             let key = KeyData::from_ffi(data.take_u64().unwrap()).into();
 
-            // Get the function from the thread-local encoder
-            let function = THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
-                fn_encoder
-                    .borrow_mut()
+            // Clone the Rc while briefly borrowing the SlotMap, then release the borrow.
+            // This allows nested callbacks to access the SlotMap during our callback execution.
+            let callback = THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
+                let encoder = fn_encoder.borrow();
+                let function = encoder
                     .functions
-                    .get_mut(key)
-                    .and_then(|f| f.take())
-            });
+                    .get(key)
+                    .expect("Function not found for key");
 
-            if let Some(mut function) = function {
-                // Downcast to RustCallback and call it
-                let function_callback = function
-                    .downcast_mut::<RustCallback>()
+                let rust_callback = function
+                    .downcast_ref::<RustCallback>()
                     .expect("Failed to downcast to RustCallback");
 
-                // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
-                crate::batch::BATCH_STATE.with(|state| state.borrow_mut().push_borrow_frame());
+                rust_callback.clone_rc()
+            });
+            // SlotMap borrow is now released - nested callbacks can access it
 
-                let response = IPCMessage::new_respond(|encoder| {
-                    (function_callback.f)(data, encoder);
-                });
+            // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
+            crate::batch::BATCH_STATE.with(|state| state.borrow_mut().push_borrow_frame());
 
-                // Pop the borrow frame after the callback completes
-                crate::batch::BATCH_STATE.with(|state| state.borrow_mut().pop_borrow_frame());
+            // Call through the cloned Rc (uniform Fn interface)
+            let response = IPCMessage::new_respond(|encoder| {
+                (callback)(data, encoder);
+            });
 
-                runtime.js_response(response);
+            // Pop the borrow frame after the callback completes
+            crate::batch::BATCH_STATE.with(|state| state.borrow_mut().pop_borrow_frame());
 
-                // Insert it back into the thread-local encoder
-                THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
-                    fn_encoder
-                        .borrow_mut()
-                        .functions
-                        .get_mut(key)
-                        .unwrap()
-                        .replace(function);
-                });
-            } else {
-                panic!("Function not found for key: {:?}", key);
-            }
+            // Send response to JS
+            runtime.js_response(response);
         }
         // Drop a native Rust object when JS GC'd the wrapper
         DROP_NATIVE_REF_FN_ID => {

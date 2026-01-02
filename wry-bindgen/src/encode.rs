@@ -702,7 +702,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
                         decode_args!(decoder; [$($arg,)*] => {
@@ -720,6 +720,7 @@ macro_rules! impl_fnmut_stub {
         }
 
         // Implement WasmClosure trait for dyn Fn variants (immutable closures)
+        // These CAN be called reentrantly since Fn only needs &self
         impl<R, $($arg,)*> crate::WasmClosure<fn($($arg),*) -> R> for dyn Fn($($arg),*) -> R
             where
             $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
@@ -728,7 +729,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
                         decode_args!(decoder; [$($arg,)*] => {
@@ -753,7 +754,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_closure(mut self) -> Self::Output {
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // Decode arguments and call the closure
                         decode_args!(decoder; [$($arg,)*] => {
@@ -817,7 +818,7 @@ macro_rules! impl_closure_ref_encode {
                 let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
 
                 // Register a temporary callback that calls through the pointer
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // SAFETY: The pointer is valid for the duration of the JS call.
                         // Reconstruct the fat pointer from the stored components.
@@ -858,7 +859,7 @@ macro_rules! impl_closure_ref_encode {
             }
         }
 
-        // Implement BinaryEncode for &dyn Fn(...) -> R
+        // Implement BinaryEncode for &dyn Fn(...) -> R (supports reentrant calls)
         impl<R, $($arg,)*> BinaryEncode for &dyn Fn($($arg),*) -> R
             where
             $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
@@ -874,7 +875,7 @@ macro_rules! impl_closure_ref_encode {
                 let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
 
                 // Register a temporary callback that calls through the pointer
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // SAFETY: The pointer is valid for the duration of the JS call.
                         // Reconstruct the fat pointer from the stored components.
@@ -915,7 +916,7 @@ macro_rules! impl_closure_ref_encode {
             }
         }
 
-        // Implement BinaryEncode for &mut dyn Fn(...) -> R
+        // Implement BinaryEncode for &mut dyn Fn(...) -> R (supports reentrant calls)
         impl<R, $($arg,)*> BinaryEncode for &mut dyn Fn($($arg),*) -> R
             where
             $($arg: BinaryDecode + EncodeTypeDef + 'static, )*
@@ -932,7 +933,7 @@ macro_rules! impl_closure_ref_encode {
                 let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
 
                 // Register a temporary callback that calls through the pointer
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // SAFETY: The pointer is valid for the duration of the JS call.
                         // Reconstruct the fat pointer from the stored components.
@@ -1013,7 +1014,7 @@ macro_rules! impl_fnmut_stub_ref {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
@@ -1027,7 +1028,7 @@ macro_rules! impl_fnmut_stub_ref {
             }
         }
 
-        // WasmClosure for dyn Fn(&First, ...) -> R
+        // WasmClosure for dyn Fn(&First, ...) -> R (supports reentrant calls)
         impl<R, $first, $($rest,)*> crate::WasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn Fn(&$first, $($rest),*) -> R
             where
             $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
@@ -1037,7 +1038,7 @@ macro_rules! impl_fnmut_stub_ref {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
@@ -1063,7 +1064,7 @@ macro_rules! impl_fnmut_stub_ref {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_closure(mut self) -> Self::Output {
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder).unwrap();)*
@@ -1103,7 +1104,7 @@ macro_rules! impl_fn_once {
                 // Use Option to allow taking the FnOnce
                 let mut me = Some(self);
                 // Register the callback using the same pattern as impl_fnmut_stub
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let f = me.take().expect("FnOnce closure called more than once");
                         decode_args!(decoder; [$($arg,)*] => {
@@ -1144,7 +1145,7 @@ macro_rules! impl_fn_once_ref {
             #[allow(unused_variables)]
             fn into_closure(self) -> Closure<dyn FnMut(&$first, $($rest),*) -> R> {
                 let mut me = Some(self);
-                let key = register_value(RustCallback::new(
+                let key = register_value(RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let f = me.take().expect("FnOnce closure called more than once");
                         let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder).unwrap();
