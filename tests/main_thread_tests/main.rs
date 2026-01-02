@@ -118,6 +118,8 @@ fn main() {
 
         // async bindings test
         test_with_js_context(async_bindings::test_call_async);
+        test_with_js_context(async_bindings::test_call_async_returning_js_value);
+        test_with_js_context(async_bindings::test_catch_async_call);
     })
     .unwrap();
 }

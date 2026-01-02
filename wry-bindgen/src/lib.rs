@@ -824,6 +824,9 @@ pub fn throw_val(s: JsValue) -> ! {
     panic!("{:?}", s);
 }
 
+// Re-export extract_rust_handle from js_helpers
+pub use js_helpers::extract_rust_handle;
+
 /// Prelude module for common imports
 pub mod prelude {
     pub use crate::Clamped;
