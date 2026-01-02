@@ -47,34 +47,43 @@ pub(crate) async fn test_call_async_returning_js_value() {
 }
 
 
-pub(crate) async fn test_catch_async_call() {
-    #[wasm_bindgen(inline_js = "export async function throw_value(error) {
-        return new Promise((resolve, reject) => {
-            setTimeout(() => {
-                reject(error);
-            }, 100);
-        });
-    }
-    export async function identity(value) {
+pub(crate) async fn test_catch_async_call_ok() {
+    #[wasm_bindgen(inline_js = "export async function identity(value) {
         return new Promise((resolve) => {
             setTimeout(() => {
+                console.log('Resolving identity with value:', value);
                 resolve(value);
             }, 100);
         });
     }")]
     extern "C" {
         #[wasm_bindgen(catch)]
-        async fn throw_value(error: &str) -> Result<(), JsValue>;
-        #[wasm_bindgen(catch)]
         async fn identity(value: &str) -> Result<JsValue, JsValue>;
     }
+    println!("Testing async function that returns a value...");
+    let result = identity("Hello, world!").await.unwrap();
+    assert_eq!(result.as_string().unwrap(), "Hello, world!");
+}
 
+
+pub(crate) async fn test_catch_async_call_err() {
+    #[wasm_bindgen(inline_js = "export async function throw_value(error) {
+        return new Promise((resolve, reject) => {
+            setTimeout(() => {
+                reject(error);
+            }, 100);
+        });
+    }")]
+    extern "C" {
+        #[wasm_bindgen(catch)]
+        async fn throw_value(error: &str) -> Result<(), JsValue>;
+    }
+    
+    println!("Testing async function that throws an error...");
     let result = throw_value("Test error").await;
     let err = result.err().unwrap();
     assert_eq!(err.as_string().unwrap(), "Test error");
 
-    let result = identity("Hello, world!").await.unwrap();
-    assert_eq!(result.as_string().unwrap(), "Hello, world!");
 }
 
 
