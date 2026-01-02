@@ -57,10 +57,10 @@ pub(crate) fn test_borrowed_ref_in_callback_with_return() {
     let val = make_value();
 
     // Callback receives a borrowed ref
-    let callback = Closure::new(Box::new(|v: &JsValue| {
+    let callback = Closure::new(move |v: &JsValue| {
         // The value should be an object with x = 42
         !v.is_undefined() && !v.is_null()
-    }) as Box<dyn FnMut(&JsValue) -> bool>);
+    });
 
     let result = call_with_value(callback, &val);
     assert!(result, "Callback should receive valid borrowed ref");
@@ -237,18 +237,17 @@ pub(crate) fn test_borrowed_ref_deep_nesting() {
     let obj1 = make_level1();
 
     // Create nested callbacks - each level calls the next
-    let cb1 = Closure::new(Box::new(move |ref2: &JsValue| -> JsValue {
+    let cb1 = Closure::new(move |ref2: &JsValue| -> JsValue {
         level2(
             ref2,
-            Closure::new(Box::new(move |ref3: &JsValue| -> JsValue {
+            Closure::new(move |ref3: &JsValue| -> JsValue {
                 level3(
                     ref3,
-                    Closure::new(Box::new(|ref4: &JsValue| -> JsValue { level4(ref4) })
-                        as Box<dyn FnMut(&JsValue) -> JsValue>),
+                    Closure::new(move |ref4: &JsValue| -> JsValue { level4(ref4) }),
                 )
-            }) as Box<dyn FnMut(&JsValue) -> JsValue>),
+            }),
         )
-    }) as Box<dyn FnMut(&JsValue) -> JsValue>);
+    });
 
     let result = level1(&obj1, cb1);
 
