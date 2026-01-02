@@ -6763,6 +6763,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "bytemuck",
+ "futures-channel",
  "futures-util",
  "inventory",
  "js-sys",

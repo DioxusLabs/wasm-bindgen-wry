@@ -1,3 +1,5 @@
+use futures_util::StreamExt;
+use pollster::FutureExt;
 use wasm_bindgen::{Closure, runtime::wait_for_js_event, wasm_bindgen};
 
 pub(crate) fn test_call_callback() {
@@ -12,7 +14,7 @@ pub(crate) fn test_call_callback() {
     assert_eq!(result, 11);
 }
 
-pub(crate) fn test_call_callback_async() {
+pub(crate) async fn test_call_callback_async() {
     #[wasm_bindgen(
         inline_js = "export function calls_callback_async(cb, value) { setTimeout(() => { cb(value); }, 100); }"
     )]
@@ -21,15 +23,13 @@ pub(crate) fn test_call_callback_async() {
         fn calls_callback_async(cb: Closure<dyn FnMut(u32)>, value: u32);
     }
 
-    let (result_tx, result_rx) = std::sync::mpsc::channel();
+    let (mut result_tx, mut result_rx) = futures_channel::mpsc::unbounded();
     let callback = Closure::new(Box::new(move |x: u32| {
         println!("Callback called with value: {}", x);
-        result_tx.send(x + 1).unwrap();
+        result_tx.start_send(x + 1).unwrap();
     }) as Box<dyn FnMut(u32)>);
     println!("Calling calls_callback_async");
     calls_callback_async(callback, 10);
-    std::thread::spawn(|| {});
-    wait_for_js_event::<()>();
-    let result = result_rx.recv().unwrap();
+    let result = result_rx.next().await.unwrap();
     assert_eq!(result, 11);
 }

@@ -64,7 +64,7 @@ fn main() {
 
         // Callbacks
         test_with_js_context(callbacks::test_call_callback).await;
-        test_with_js_context(callbacks::test_call_callback_async).await;
+        async_test_with_js_context(callbacks::test_call_callback_async).await;
 
         // JsValue behavior tests
         test_with_js_context(jsvalue::test_jsvalue_constants).await;

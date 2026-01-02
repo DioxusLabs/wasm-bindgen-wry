@@ -126,7 +126,9 @@ where
         let run = || {
             let run_app = app();
             let wait_for_events = async move {
-                progress_js_with(|_| unreachable!("no response expected from root task")).await;
+                loop {
+                    progress_js_with(|_| unreachable!("no response expected from root task")).await;
+                }
             };
 
             pollster::block_on(async move {

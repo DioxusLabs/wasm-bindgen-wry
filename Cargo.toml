@@ -30,6 +30,7 @@ web-sys = { path = "wasm-bindgen/crates/web-sys", features = ["CssStyleDeclarati
 wasm-bindgen-futures = { path = "wasm-bindgen/crates/futures" }
 js-sys = { path = "wasm-bindgen/crates/js-sys" }
 pollster = "0.4.0"
+futures-channel = "0.3.31"
 
 [[test]]
 name = "main_thread_tests"
