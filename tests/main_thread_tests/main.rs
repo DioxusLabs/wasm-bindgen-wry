@@ -121,8 +121,13 @@ fn main() {
         // Module import test
         test_with_js_context(module_import::test_module_import).await;
 
-        // async bindings test
-        // async_test_with_js_context(async_bindings::test_call_async).await;
+        // // async bindings test
+        async_test_with_js_context(async_bindings::test_call_async).await;
+        async_test_with_js_context(async_bindings::test_call_async).await;
+        async_test_with_js_context(async_bindings::test_call_async).await;
+        async_test_with_js_context(async_bindings::test_call_async).await;
+        async_test_with_js_context(async_bindings::test_call_async).await;
+        async_test_with_js_context(async_bindings::test_call_async).await;
         // async_test_with_js_context(async_bindings::test_call_async_returning_js_value).await;
         // async_test_with_js_context(async_bindings::test_catch_async_call_ok).await;
         // async_test_with_js_context(async_bindings::test_catch_async_call_err).await;

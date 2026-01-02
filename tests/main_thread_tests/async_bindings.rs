@@ -138,12 +138,17 @@ pub(crate) async fn test_async_method_with_catch() {
     }
 
     // Test successful validation
+    println!("Testing async method with successful validation...");
     let validator_ok = AsyncValidator::new(false);
+    println!("Validator created, calling validate method...");
     let result = validator_ok.validate("test").await.unwrap();
     assert_eq!(result.as_string().unwrap(), "Valid: test");
+    println!("Successful validation passed.");
 
     // Test failed validation
+    println!("Testing async method with failed validation...");
     let validator_fail = AsyncValidator::new(true);
+    println!("Validator created, calling validate method...");
     let result = validator_fail.validate("test").await;
     let err = result.err().unwrap();
     assert_eq!(err.as_string().unwrap(), "Validation failed: test");
