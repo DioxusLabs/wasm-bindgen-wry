@@ -174,10 +174,10 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
             quote_spanned! {span=> #krate::JsValue }
         };
         quote_spanned! {span=>
-            impl std::ops::Deref for #rust_name {
+            impl ::core::ops::Deref for #rust_name {
                 type Target = #deref_to;
-                fn deref(&self) -> &Self::Target {
-                    self.as_ref()
+                fn deref(&self) -> &#deref_to {
+                    <Self as ::core::convert::AsRef<#deref_to>>::as_ref(self)
                 }
             }
         }
