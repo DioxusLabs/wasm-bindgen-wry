@@ -27,6 +27,7 @@ class RustFunction {
   private returnType: TypeClass;
 
   constructor(fnId: number, paramTypes: TypeClass[], returnType: TypeClass) {
+    console.log(`Creating RustFunction wrapper for fnId ${fnId}`);
     this.fnId = fnId;
     this.paramTypes = paramTypes;
     this.returnType = returnType;

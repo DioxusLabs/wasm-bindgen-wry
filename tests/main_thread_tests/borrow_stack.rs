@@ -206,7 +206,7 @@ pub(crate) fn test_borrowed_ref_deep_nesting() {
         }
 
         export function level2(ref2, cb2) {
-            console.log("In level2");
+            console.log("In level2", ref2, cb2);
             const v2 = ref2.level;
             const result3 = cb2({ level: 3 });
             const valid2 = ref2.level === 2;

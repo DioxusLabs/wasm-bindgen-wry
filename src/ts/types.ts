@@ -65,7 +65,9 @@ class HeapRefType implements TypeClass {
 
   decode(decoder: DataDecoder): unknown {
     const id = decoder.takeU64();
-    return window.jsHeap.get(id);
+    const result = window.jsHeap.get(id);
+    console.log(`Decoding HeapRef with id ${id} got from decoder`, result);
+    return result;
   }
 }
 
