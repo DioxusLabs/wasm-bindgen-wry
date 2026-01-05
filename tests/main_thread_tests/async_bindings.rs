@@ -9,7 +9,7 @@ pub(crate) async fn test_call_async() {
             setTimeout(() => {
                 window.value_after_1_second = a + b;
                 resolve()
-            }, 10);
+            }, 100);
         });
     }
     export function get_value_after_1_second() {

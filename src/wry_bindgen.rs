@@ -187,12 +187,14 @@ impl WryBindgen {
 
             if real_path == "handler" {
                 let msg_type = msg.ty().unwrap();
+                println!("got ipc message of type {:?}", msg_type);
                 match msg_type {
                     MessageType::Evaluate => {
                         // New call from JS - save responder and wait for Rust to respond
                         shared.set_ongoing_request(responder);
                     }
                     MessageType::Respond => {
+                        println!("shared.pending_evaluates = {}", shared.pending_evaluates);
                         // JS is sending a result back to Rust
                         if shared.is_in_conversation() {
                             // We're in the middle of a conversation (Rust sent an Evaluate,
@@ -211,6 +213,7 @@ impl WryBindgen {
                     }
                 }
                 get_runtime().queue_rust_call(msg);
+                println!("Queued Rust call");
                 return;
             }
 

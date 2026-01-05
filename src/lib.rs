@@ -130,7 +130,7 @@ where
     set_event_loop_proxy({
         let proxy = proxy.clone();
         Box::new(move |event| {
-            let _ = proxy.send_event(event);
+            proxy.send_event(event).unwrap();
         })
     });
     let registry = &*FUNCTION_REGISTRY;

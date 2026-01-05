@@ -2,6 +2,7 @@ use wasm_bindgen::{Closure, wasm_bindgen};
 use wry_testing::{bindings::set_on_error, set_on_log};
 
 mod add_number_js;
+mod async_bindings;
 mod borrow_stack;
 mod callbacks;
 mod catch_attribute;
@@ -11,9 +12,8 @@ mod module_import;
 mod reentrant_callbacks;
 mod roundtrip;
 mod string_enum;
-mod thread_local;
 mod structs;
-mod async_bindings;
+mod thread_local;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
     return window.jsHeap.heapObjectsAlive();
@@ -28,7 +28,12 @@ async fn test_with_js_context_allow_new_js_values<F: FnOnce()>(f: F) {
     async_test_with_js_context_allow_new_js_values(async || f()).await;
 }
 
-async fn async_test_with_js_context_allow_new_js_values<Fut: std::future::Future<Output = ()>, F: FnOnce() -> Fut>(f: F) {
+async fn async_test_with_js_context_allow_new_js_values<
+    Fut: std::future::Future<Output = ()>,
+    F: FnOnce() -> Fut,
+>(
+    f: F,
+) {
     println!("testing {}", std::any::type_name::<F>());
     f().await;
 }
@@ -37,13 +42,16 @@ async fn test_with_js_context<F: FnOnce()>(f: F) {
     async_test_with_js_context_allow_new_js_values(async || f()).await;
 }
 
-async fn async_test_with_js_context<Fut: std::future::Future<Output = ()>, F: FnOnce() -> Fut>(f: F) {
+async fn async_test_with_js_context<Fut: std::future::Future<Output = ()>, F: FnOnce() -> Fut>(
+    f: F,
+) {
     async_test_with_js_context_allow_new_js_values(|| async move {
         let before = heap_objects_alive();
         f().await;
         let after = heap_objects_alive();
         assert_eq!(before, after, "JS heap object leak detected");
-    }).await;
+    })
+    .await;
 }
 
 fn main() {
@@ -122,12 +130,10 @@ fn main() {
         // test_with_js_context(module_import::test_module_import).await;
 
         // async bindings test
-        async_test_with_js_context(async_bindings::test_call_async).await;
-        async_test_with_js_context(async_bindings::test_call_async).await;
-        async_test_with_js_context(async_bindings::test_call_async).await;
-        async_test_with_js_context(async_bindings::test_call_async).await;
-        async_test_with_js_context(async_bindings::test_call_async).await;
-        async_test_with_js_context(async_bindings::test_call_async).await;
+        for _ in 0..6 {
+            async_test_with_js_context(async_bindings::test_call_async).await;
+            println!("---\n\n\n");
+        }
         // async_test_with_js_context(async_bindings::test_call_async_returning_js_value).await;
         // async_test_with_js_context(async_bindings::test_catch_async_call_ok).await;
         // async_test_with_js_context(async_bindings::test_catch_async_call_err).await;

@@ -47,7 +47,7 @@ impl ApplicationHandler<AppEvent> for State {
         let proxy = self.proxy.clone();
         let protocol_handler = self.wry_bindgen.create_protocol_handler(
             move |event| {
-                let _ = proxy.send_event(event);
+                proxy.send_event(event).unwrap();
             },
             root_response,
         );
@@ -96,6 +96,7 @@ impl ApplicationHandler<AppEvent> for State {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
+        println!("got user event {:?}", event);
         if let Some(webview) = &self.webview {
             if let Some(status) = self.wry_bindgen.handle_user_event(event, webview) {
                 event_loop.exit();

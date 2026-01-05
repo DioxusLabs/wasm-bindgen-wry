@@ -17,7 +17,7 @@ wry-bindgen-macro = { path = "../wry-bindgen-macro" }
 # We use this instead of std because wasm bindgen supports no_std environments
 once_cell = { version = "1.21.3", features = ["critical-section"] }
 spin = "0.10.0"
-futures-channel = "0.3.31"
+async-channel = "2.5.0"
 futures-core = "0.3.31"
 pollster = "0.4.0"
 

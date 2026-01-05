@@ -5,10 +5,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::cell::RefCell;
-use core::task::{Context, Poll};
-use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
-use futures_core::stream::Stream;
+use async_channel::{Receiver, Sender, unbounded};
 use once_cell::sync::OnceCell;
 use spin::RwLock;
 
@@ -41,7 +38,7 @@ pub enum AppEvent {
 pub struct WryRuntime {
     pub proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
     pub(crate) queued_rust_calls: RwLock<Vec<IPCMessage>>,
-    pub(crate) sender: RwLock<Option<UnboundedSender<IPCMessage>>>,
+    pub(crate) sender: RwLock<Option<Sender<IPCMessage>>>,
 }
 
 impl WryRuntime {
@@ -67,19 +64,22 @@ impl WryRuntime {
     /// Queue a Rust call from JavaScript.
     pub fn queue_rust_call(&self, responder: IPCMessage) {
         if let Some(sender) = self.sender.write().as_mut() {
-            let _ = sender.start_send(responder);
+            sender.try_send(responder).unwrap();
+            println!("Sending Rust call immediately");
         } else {
+            println!("Queueing Rust call");
             self.queued_rust_calls.write().push(responder);
         }
     }
 
     /// Set the sender for Rust calls and flush any queued calls.
-    pub fn set_sender(&self, sender: UnboundedSender<IPCMessage>) {
+    pub fn set_sender(&self, sender: Sender<IPCMessage>) {
+        println!("Setting Rust call sender");
         let mut queued = self.queued_rust_calls.write();
         *self.sender.write() = Some(sender);
         for call in queued.drain(..) {
             if let Some(sender) = self.sender.write().as_mut() {
-                let _ = sender.start_send(call);
+                sender.try_send(call).unwrap();
             }
         }
     }
@@ -112,11 +112,11 @@ pub fn get_runtime() -> &'static WryRuntime {
 }
 
 thread_local! {
-    static THREAD_LOCAL_RECEIVER: RefCell<UnboundedReceiver<IPCMessage>> = {
+    static THREAD_LOCAL_RECEIVER: Receiver<IPCMessage> = {
         let runtime = get_runtime();
-        let (sender, receiver) = futures_channel::mpsc::unbounded();
+        let (sender, receiver) = unbounded();
         runtime.set_sender(sender);
-        RefCell::new(receiver)
+        receiver
     };
 }
 
@@ -135,22 +135,20 @@ pub async fn wait_for_js_event<R: BinaryDecode>() -> Option<R> {
 
 pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
     let runtime = get_runtime();
-    fn poll_fn(context: &mut Context) -> Poll<Option<IPCMessage>> {
-        THREAD_LOCAL_RECEIVER.with(|receiver| {
-            let mut receiver = receiver.borrow_mut();
-            let receiver = &mut *receiver;
-            let receiver = std::pin::pin!(receiver);
-            receiver.poll_next(context)
-        })
-    }
-    let response = std::future::poll_fn(move |cx| poll_fn(cx))
+
+    println!("Polling JS response...");
+    let response = THREAD_LOCAL_RECEIVER
+        .with(|receiver| receiver.clone())
+        .recv()
         .await
         .expect("Failed to receive JS response");
 
     let decoder = response.decoded().expect("Failed to decode response");
+    println!("Received IPC response: {:?}", decoder);
     match decoder {
         DecodedVariant::Respond { data } => Some(with_respond(data)),
         DecodedVariant::Evaluate { mut data } => {
+            println!("Handling Rust callback from JS");
             handle_rust_callback(runtime, &mut data);
             None
         }
