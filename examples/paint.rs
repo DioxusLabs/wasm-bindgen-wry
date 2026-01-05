@@ -9,6 +9,7 @@ use wry_testing::run;
 fn main() -> wry::Result<()> {
     run(|| async {
         app();
+        std::future::pending().await
     })
 }
 
