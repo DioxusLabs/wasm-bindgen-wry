@@ -147,7 +147,6 @@ impl<T: JsCast + 'static> RefFromBinaryDecode for T {
         // getting the next borrow ID from our batch state.
         use crate::batch::BATCH_STATE;
         let id = BATCH_STATE.with(|state| state.borrow_mut().get_next_borrow_id());
-        println!("RefFromBinaryDecode: recovered borrow ID {}", id);
         let value = JsValue::from_id(id);
         Ok(JsCastAnchor {
             value,
