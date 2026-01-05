@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use wasm_bindgen::wasm_bindgen;
 use wry_testing::JsValue;
 
@@ -7,7 +9,7 @@ pub(crate) async fn test_call_async() {
             setTimeout(() => {
                 window.value_after_1_second = a + b;
                 resolve()
-            }, 100);
+            }, 10);
         });
     }
     export function get_value_after_1_second() {
@@ -22,8 +24,11 @@ pub(crate) async fn test_call_async() {
 
     let future = set_value_after_1_second(2, 3);
     println!("Waiting for async function to complete...");
+    let start = Instant::now();
     let _: () = future.await;
-    println!("Async function completed.");
+    let duration = start.elapsed();
+    assert!(duration.as_millis() >= 10, "Async function returned too quickly");
+    println!("Async function completed after {:?}", duration);
     let result = get_value_after_1_second();
     assert_eq!(result, 5);
 }
