@@ -27,7 +27,6 @@ class RustFunction {
   private returnType: TypeClass;
 
   constructor(fnId: number, paramTypes: TypeClass[], returnType: TypeClass) {
-    console.log(`Creating RustFunction wrapper for fnId ${fnId}`);
     this.fnId = fnId;
     this.paramTypes = paramTypes;
     this.returnType = returnType;
@@ -38,9 +37,7 @@ class RustFunction {
   call(...args: any[]): any {
     // Push a borrow frame before encoding args - nested calls won't clear our borrowed refs
     window.jsHeap.pushBorrowFrame();
-    console.log("Pushed borrow frame for RustFunction call");
 
-    console.log(`Calling Rust function ID ${this.fnId} with args:`, args);
     // Build Evaluate message: [0, fn_id]
     const encoder = new DataEncoder();
     encoder.pushU8(MessageType.Evaluate);
@@ -54,10 +51,8 @@ class RustFunction {
     // Send to Rust and get response (Rust may call back to JS during this)
     const response = sync_request_binary("wry://handler", encoder.finalize());
     const result = handleBinaryResponse(response)!;
-    console.log("Received response from RustFunction call", result);
 
     // Pop the borrow frame - clears borrowed refs from this call
-    console.log("Finished RustFunction call, popping borrow frame");
     window.jsHeap.popBorrowFrame();
 
     // Decode return value

@@ -26,7 +26,6 @@ const exportRegistry = new FinalizationRegistry<{ handle: number; className: str
  */
 function callExport(exportName: string, ...args: any[]): any {
   window.jsHeap.pushBorrowFrame();
-  console.log("Pushed borrow frame for callExport of", exportName);
 
   const encoder = new DataEncoder();
   encoder.pushU8(MessageType.Evaluate);
@@ -45,7 +44,6 @@ function callExport(exportName: string, ...args: any[]): any {
   const response = sync_request_binary("wry://handler", encoder.finalize());
   const decoder = handleBinaryResponse(response);
 
-  console.log("Finished callExport for", exportName, "popping borrow frame");
   window.jsHeap.popBorrowFrame();
 
   // If we have response data, try to decode it

@@ -131,7 +131,6 @@ function handleBinaryResponse(
   const decoder = new DataDecoder(response);
   const rawMsgType = decoder.takeU8();
   const msgType: MessageType = rawMsgType;
-  console.log("Handling binary response of type", msgType);
 
   if (msgType === MessageType.Respond) {
     // Respond - just return the decoder for further processing
@@ -145,7 +144,6 @@ function handleBinaryResponse(
     // Push a single borrow frame for this entire Evaluate message
     // This frame persists across all operations and nested calls
     window.jsHeap.pushBorrowFrame();
-    console.log("Starting Evaluate message, pushed borrow frame");
 
     // Process all operations
     while (decoder.hasMoreU32()) {
@@ -156,7 +154,6 @@ function handleBinaryResponse(
       // Get the raw JS function
       const functionRegistry = getFunctionRegistry();
       const jsFunction = functionRegistry[fnId];
-      console.log("Evaluating function", jsFunction, "with type info", typeInfo);
       if (!jsFunction) {
         throw new Error("Unknown function ID in response: " + fnId);
       }
@@ -172,7 +169,6 @@ function handleBinaryResponse(
     }
 
     // Pop the borrow frame after all operations complete
-    console.log("Finished Evaluate message, popping borrow frame");
     window.jsHeap.popBorrowFrame();
 
     const nextResponse = sync_request_binary(

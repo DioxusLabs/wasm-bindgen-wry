@@ -115,13 +115,13 @@ where
     }
 
     let app = || async move {
-        // set_on_error(Closure::new(|err: String, stack: String| {
-        //     println!("[ERROR IN JS CONSOLE] {}\nStack trace:\n{}", err, stack);
-        // }));
+        set_on_error(Closure::new(|err: String, stack: String| {
+            println!("[ERROR IN JS CONSOLE] {}\nStack trace:\n{}", err, stack);
+        }));
 
-        // set_on_log(Closure::new(|msg: String| {
-        //     println!("[JS] {}", msg);
-        // }));
+        set_on_log(Closure::new(|msg: String| {
+            println!("[JS] {}", msg);
+        }));
         app().await
     };
 
