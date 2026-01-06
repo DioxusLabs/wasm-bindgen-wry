@@ -92,7 +92,7 @@ impl BatchState {
         if let Some(saved_pointer) = self.borrow_frame_stack.pop() {
             self.borrow_stack_pointer = saved_pointer;
         } else {
-            eprintln!("Warning: pop_borrow_frame called with empty frame stack");
+            panic!("pop_borrow_frame called with empty frame stack");
         }
     }
 
@@ -261,7 +261,11 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
 
 /// Flush the current batch and return the decoded result.
 pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
-    flush_and_then(|mut data| R::decode(&mut data).expect("Failed to decode return value"))
+    flush_and_then(|mut data| {
+        let response = R::decode(&mut data).expect("Failed to decode return value");
+        assert!(data.is_empty(), "Extra data remaining after decoding response");
+        response
+})
 }
 
 pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> R {

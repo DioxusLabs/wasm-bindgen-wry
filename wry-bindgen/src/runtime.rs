@@ -3,14 +3,21 @@
 //! This module handles the connection between the Rust runtime and the
 //! JavaScript environment via winit's event loop.
 
+use core::cell::RefCell;
+use core::pin::Pin;
+use std::rc::Rc;
+use std::sync::OnceLock;
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use async_channel::{Receiver, Sender, unbounded};
+use async_channel::{Receiver, Sender};
+use futures_util::{FutureExt, StreamExt};
 use once_cell::sync::OnceCell;
 use spin::RwLock;
 
 use slotmap::{DefaultKey, KeyData};
 
+use crate::MessageType;
 use crate::encode::BinaryDecode;
 use crate::function::{
     CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_OBJECT_ENCODER,
@@ -31,6 +38,50 @@ pub enum AppEvent {
     Shutdown(i32),
 }
 
+pub struct IPCSenders {
+    eval_sender: Sender<IPCMessage>,
+    respond_sender: futures_channel::mpsc::UnboundedSender<IPCMessage>,
+}
+
+impl IPCSenders {
+    pub fn start_send(&self, msg: IPCMessage) {
+        match msg.ty().unwrap() {
+            MessageType::Evaluate => {
+                self.eval_sender
+                    .try_send(msg)
+                    .expect("Failed to send evaluate message");
+            }
+            MessageType::Respond => {
+                self.respond_sender
+                    .unbounded_send(msg)
+                    .expect("Failed to send respond message");
+            }
+        }
+    }
+}
+
+struct IPCReceivers {
+    eval_receiver: Pin<Box<Receiver<IPCMessage>>>,
+    respond_receiver: futures_channel::mpsc::UnboundedReceiver<IPCMessage>,
+}
+
+impl IPCReceivers {
+    pub async fn recv(&mut self) -> IPCMessage {
+        let Self {
+            eval_receiver,
+            respond_receiver,
+        } = self;
+        futures_util::select! {
+            eval_msg = eval_receiver.next().fuse() => {
+                eval_msg.expect("Failed to receive evaluate message")
+            },
+            respond_msg = respond_receiver.next().fuse() => {
+                respond_msg.expect("Failed to receive respond message")
+            },
+        }
+    }
+}
+
 /// The runtime environment for communicating with JavaScript.
 ///
 /// This struct holds the event loop proxy for sending messages to the
@@ -38,7 +89,7 @@ pub enum AppEvent {
 pub struct WryRuntime {
     pub proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
     pub(crate) queued_rust_calls: RwLock<Vec<IPCMessage>>,
-    pub(crate) sender: RwLock<Option<Sender<IPCMessage>>>,
+    pub(crate) senders: OnceLock<IPCSenders>,
 }
 
 impl WryRuntime {
@@ -47,7 +98,7 @@ impl WryRuntime {
         Self {
             proxy,
             queued_rust_calls: RwLock::new(Vec::new()),
-            sender: RwLock::new(None),
+            senders: OnceLock::new(),
         }
     }
 
@@ -63,21 +114,22 @@ impl WryRuntime {
 
     /// Queue a Rust call from JavaScript.
     pub fn queue_rust_call(&self, responder: IPCMessage) {
-        if let Some(sender) = self.sender.write().as_mut() {
-            sender.try_send(responder).unwrap();
+        if let Some(senders) = self.senders.get() {
+            senders.start_send(responder);
         } else {
             self.queued_rust_calls.write().push(responder);
         }
     }
 
     /// Set the sender for Rust calls and flush any queued calls.
-    pub fn set_sender(&self, sender: Sender<IPCMessage>) {
+    pub fn set_sender(&self, senders: IPCSenders) {
+        self.senders
+            .set(senders)
+            .unwrap_or_else(|_| panic!("Sender already set"));
         let mut queued = self.queued_rust_calls.write();
-        *self.sender.write() = Some(sender);
+        let senders = self.senders.get().expect("Senders not set");
         for call in queued.drain(..) {
-            if let Some(sender) = self.sender.write().as_mut() {
-                sender.try_send(call).unwrap();
-            }
+            senders.start_send(call);
         }
     }
 }
@@ -109,12 +161,20 @@ pub fn get_runtime() -> &'static WryRuntime {
 }
 
 thread_local! {
-    static THREAD_LOCAL_RECEIVER: Receiver<IPCMessage> = {
+    static THREAD_LOCAL_RECEIVER: Rc<RefCell<IPCReceivers>> = Rc::new(RefCell::new({
         let runtime = get_runtime();
-        let (sender, receiver) = unbounded();
-        runtime.set_sender(sender);
-        receiver
-    };
+        let (eval_sender, eval_receiver) = async_channel::unbounded();
+        let (respond_sender, respond_receiver) = futures_channel::mpsc::unbounded();
+        let senders = IPCSenders {
+            eval_sender,
+            respond_sender,
+        };
+        runtime.set_sender(senders);
+        IPCReceivers {
+            eval_receiver: Box::pin(eval_receiver),
+            respond_receiver,
+        }
+    }));
 }
 
 /// Wait for a JS response, handling any Rust callbacks that occur during the wait.
@@ -127,7 +187,11 @@ pub async fn wait_for_js_result<R: BinaryDecode>() -> R {
 }
 
 pub async fn wait_for_js_event<R: BinaryDecode>() -> Option<R> {
-    progress_js_with(|mut data| R::decode(&mut data).expect("Failed to decode return value")).await
+    progress_js_with(|mut data| {
+        let response = R::decode(&mut data).expect("Failed to decode return value");
+        assert!(data.is_empty(), "Extra data remaining after decoding response");
+        response
+    }).await
 }
 
 pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
@@ -135,9 +199,9 @@ pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) 
 
     let response = THREAD_LOCAL_RECEIVER
         .with(|receiver| receiver.clone())
+        .borrow_mut()
         .recv()
-        .await
-        .expect("Failed to receive JS response");
+        .await;
 
     let decoder = response.decoded().expect("Failed to decode response");
     match decoder {
@@ -145,6 +209,21 @@ pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) 
         DecodedVariant::Evaluate { mut data } => {
             handle_rust_callback(runtime, &mut data);
             None
+        }
+    }
+}
+
+pub async fn poll_callbacks() {
+    let runtime = get_runtime();
+    let receiver = THREAD_LOCAL_RECEIVER.with(|receiver| receiver.borrow().eval_receiver.clone());
+
+    while let Ok(response) = receiver.recv().await {
+        let decoder = response.decoded().expect("Failed to decode response");
+        match decoder {
+            DecodedVariant::Respond { .. } => unreachable!(),
+            DecodedVariant::Evaluate { mut data } => {
+                handle_rust_callback(runtime, &mut data);
+            }
         }
     }
 }
@@ -204,9 +283,8 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
         // Call an exported Rust struct method
         CALL_EXPORT_FN_ID => {
             // Read the export name
-            let export_name =
+            let export_name: alloc::string::String =
                 crate::encode::BinaryDecode::decode(data).expect("Failed to decode export name");
-            let export_name: alloc::string::String = export_name;
 
             // Find the export handler
             let export = crate::inventory::iter::<crate::JsExportSpec>()
@@ -215,6 +293,8 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
 
             // Call the handler
             let result = (export.handler)(data);
+
+            assert!(data.is_empty(), "Extra data remaining after export call");
 
             // Send response
             let response = match result {

@@ -10,8 +10,8 @@ use std::rc::Rc;
 
 use wry::RequestAsyncResponder;
 
-use wasm_bindgen::ipc::{decode_data, DecodedVariant, IPCMessage, MessageType};
-use wasm_bindgen::runtime::{get_runtime, AppEvent};
+use wasm_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
+use wasm_bindgen::runtime::{AppEvent, get_runtime};
 
 use crate::FunctionRegistry;
 
@@ -41,12 +41,19 @@ impl Default for WebviewLoadingState {
 #[derive(Default)]
 struct SharedWebviewState {
     ongoing_request: Option<RequestAsyncResponder>,
-    /// Count of Evaluates we've sent to JS that we're still waiting for responses to
-    pending_evaluates: usize,
+    /// How many responses we are waiting for from JS
+    pending_js_evaluates: usize,
+    /// How many responses JS is waiting for from us
+    pending_rust_evaluates: usize,
 }
 
 impl SharedWebviewState {
     fn set_ongoing_request(&mut self, responder: RequestAsyncResponder) {
+        if self.ongoing_request.is_some() {
+            panic!(
+                "WARNING: Overwriting existing ongoing_request! Previous request will never be responded to."
+            );
+        }
         self.ongoing_request = Some(responder);
     }
 
@@ -58,17 +65,8 @@ impl SharedWebviewState {
         self.ongoing_request.is_some()
     }
 
-    fn is_in_conversation(&self) -> bool {
-        self.has_pending_request() || self.pending_evaluates > 0
-    }
-
     fn respond_to_request(&mut self, response: IPCMessage) {
         if let Some(responder) = self.take_ongoing_request() {
-            let ty = response.ty().unwrap();
-            if ty == MessageType::Evaluate {
-                self.pending_evaluates += 1;
-            }
-
             let body = response.into_data();
             responder.respond(
                 wry::http::Response::builder()
@@ -77,6 +75,8 @@ impl SharedWebviewState {
                     .body(body)
                     .expect("Failed to build response"),
             );
+        } else {
+            panic!("WARNING: respond_to_request called but no pending request! Response dropped.");
         }
     }
 }
@@ -179,33 +179,28 @@ impl WryBindgen {
                 return;
             }
 
-            let mut shared = shared.borrow_mut();
-            let Some(msg) = decode_request_data(request) else {
-                responder.respond(error_response());
-                return;
-            };
-
+            // Js sent us either an Evaluate or Respond message
             if real_path == "handler" {
+                let mut shared = shared.borrow_mut();
+                let Some(msg) = decode_request_data(request) else {
+                    responder.respond(error_response());
+                    return;
+                };
                 let msg_type = msg.ty().unwrap();
                 match msg_type {
+                    // New call from JS - save responder and wait for the js application thread to respond
                     MessageType::Evaluate => {
-                        // New call from JS - save responder and wait for Rust to respond
+                        shared.pending_rust_evaluates += 1;
                         shared.set_ongoing_request(responder);
                     }
+                    // Response from JS to a previous Evaluate - decrement pending count and respond accordingly
                     MessageType::Respond => {
-                        // JS is sending a result back to Rust
-                        if shared.is_in_conversation() {
-                            // We're in the middle of a conversation (Rust sent an Evaluate,
-                            // JS processed it, now sending the result). Save responder and
-                            // wait for Rust to send the next message (another Evaluate or
-                            // the final Respond).
-                            if shared.pending_evaluates > 0 {
-                                shared.pending_evaluates -= 1;
-                            }
+                        shared.pending_js_evaluates = shared.pending_js_evaluates.saturating_sub(1);
+                        if shared.pending_rust_evaluates > 0 || shared.pending_js_evaluates > 0 {
+                            // Still more round-trips expected
                             shared.set_ongoing_request(responder);
                         } else {
-                            // No active conversation - this is the final result.
-                            // Respond immediately with blank.
+                            // Conversation is over
                             responder.respond(blank_response());
                         }
                     }
@@ -231,6 +226,7 @@ impl WryBindgen {
             AppEvent::Shutdown(status) => {
                 return Some(status);
             }
+            // The rust thread sent us an IPCMessage to send to JS
             AppEvent::Ipc(ipc_msg) => {
                 {
                     let mut state = self.state.borrow_mut();
@@ -238,15 +234,30 @@ impl WryBindgen {
                         queued.push(ipc_msg);
                         return None;
                     }
-                } // Release borrow before accessing shared
+                }
 
                 let mut shared = self.shared.borrow_mut();
 
+                let ty = ipc_msg.ty().unwrap();
+                match ty {
+                    // Rust wants to evaluate something in js
+                    MessageType::Evaluate => {
+                        shared.pending_js_evaluates += 1;
+                    }
+                    // Rust is responding to a previous js evaluate
+                    MessageType::Respond => {
+                        shared.pending_rust_evaluates =
+                            shared.pending_rust_evaluates.saturating_sub(1);
+                    }
+                }
+
+                // If there is an ongoing request, respond to immediately
                 if shared.has_pending_request() {
                     shared.respond_to_request(ipc_msg);
                     return None;
                 }
 
+                // Otherwise call into js through evaluate_script
                 let decoded = ipc_msg.decoded().unwrap();
 
                 if let DecodedVariant::Evaluate { .. } = decoded {

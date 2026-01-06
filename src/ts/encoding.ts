@@ -253,6 +253,15 @@ class DataDecoder {
   skipBytes(count: number): void {
     this.u8Offset += count;
   }
+
+  isEmpty(): boolean {
+    return (
+      this.u8Offset >= this.u8Buf.length &&
+      this.u16Offset >= this.u16Buf.length &&
+      this.u32Offset >= this.u32Buf.length &&
+      this.strOffset >= this.strBuf.length
+    );
+  }
 }
 
 export { DataDecoder, DataEncoder };

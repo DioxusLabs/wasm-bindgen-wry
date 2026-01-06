@@ -65,14 +65,17 @@ function sync_request_binary(
  *
  * @param dataBase64 - Base64 encoded binary data containing message with operations
  */
-function evaluate_from_rust_binary(dataBase64: string): DataDecoder | null {
+function evaluate_from_rust_binary(dataBase64: string) {
   // Decode base64 to ArrayBuffer
   const binary = atob(dataBase64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return handleBinaryResponse(bytes.buffer);
+  const remaining = handleBinaryResponse(bytes.buffer);
+  if (remaining) {
+    throw new Error("Unprocessed data remaining after Evaluate handling");
+  }
 }
 
 /**
@@ -176,6 +179,10 @@ function handleBinaryResponse(
       encoder.finalize()
     );
     return handleBinaryResponse(nextResponse);
+  }
+
+  if (!decoder.isEmpty()) {
+    throw new Error("Unprocessed data remaining after Evaluate handling");
   }
 
   return null;

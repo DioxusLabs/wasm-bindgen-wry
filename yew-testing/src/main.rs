@@ -27,7 +27,7 @@ fn app_component() -> Html {
     use_effect_with(increment_count, move |increment_count| {
         let increment_count = increment_count.clone();
         spawn_local(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(0)).await;
             increment_count.emit(());
         });
     });
