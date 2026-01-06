@@ -27,13 +27,13 @@ mod cast;
 pub mod convert;
 pub mod encode;
 pub mod function;
+mod intern;
 pub mod ipc;
 mod js_helpers;
 mod lazy;
 pub mod object_store;
 pub mod runtime;
 mod value;
-mod intern;
 
 pub use intern::*;
 

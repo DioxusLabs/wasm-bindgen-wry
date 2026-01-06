@@ -21,20 +21,23 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     let mut prefix = String::new();
 
     // Determine the module content expression: either inline_js or include_str!(module_path)
-    let module_content: Option<(proc_macro2::Span, TokenStream)> =
-        if let Some((span, inline_js_module)) = &program.attrs.inline_js {
-            Some((*span, inline_js_module.to_token_stream()))
-        } else if let Some((span, module_path)) = &program.attrs.module {
-            // If path starts with '/', make it relative to CARGO_MANIFEST_DIR
-            let include_expr = if module_path.starts_with('/') {
-                quote_spanned! {*span=> include_str!(concat!(env!("CARGO_MANIFEST_DIR"), #module_path)) }
-            } else {
-                quote_spanned! {*span=> include_str!(#module_path) }
-            };
-            Some((*span, include_expr))
+    let module_content: Option<(proc_macro2::Span, TokenStream)> = if let Some((
+        span,
+        inline_js_module,
+    )) = &program.attrs.inline_js
+    {
+        Some((*span, inline_js_module.to_token_stream()))
+    } else if let Some((span, module_path)) = &program.attrs.module {
+        // If path starts with '/', make it relative to CARGO_MANIFEST_DIR
+        let include_expr = if module_path.starts_with('/') {
+            quote_spanned! {*span=> include_str!(concat!(env!("CARGO_MANIFEST_DIR"), #module_path)) }
         } else {
-            None
+            quote_spanned! {*span=> include_str!(#module_path) }
         };
+        Some((*span, include_expr))
+    } else {
+        None
+    };
 
     if let Some((span, content_expr)) = module_content {
         let unique_hash = {
@@ -592,14 +595,12 @@ fn generate_async_function(
 
     // Generate the async function based on kind
     match &func.kind {
-        ImportFunctionKind::Normal => {
-            Ok(quote_spanned! {span=>
-                #(#rust_attrs)*
-                #vis async fn #rust_name(#fn_params) #ret_clause {
-                    #async_body #ret_handling
-                }
-            })
-        }
+        ImportFunctionKind::Normal => Ok(quote_spanned! {span=>
+            #(#rust_attrs)*
+            #vis async fn #rust_name(#fn_params) #ret_clause {
+                #async_body #ret_handling
+            }
+        }),
         ImportFunctionKind::Method { receiver }
         | ImportFunctionKind::Getter { receiver, .. }
         | ImportFunctionKind::Setter { receiver, .. }
@@ -1694,11 +1695,26 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
     // Generate JsClassMemberSpec for the method
     let arg_count = method.arguments.len();
     let (member_name, member_kind) = match &method.kind {
-        ExportMethodKind::Constructor => (js_name.clone(), quote! { #krate::JsClassMemberKind::Constructor }),
-        ExportMethodKind::Method { .. } => (js_name.clone(), quote! { #krate::JsClassMemberKind::Method }),
-        ExportMethodKind::StaticMethod => (js_name.clone(), quote! { #krate::JsClassMemberKind::StaticMethod }),
-        ExportMethodKind::Getter { property } => (property.clone(), quote! { #krate::JsClassMemberKind::Getter }),
-        ExportMethodKind::Setter { property } => (property.clone(), quote! { #krate::JsClassMemberKind::Setter }),
+        ExportMethodKind::Constructor => (
+            js_name.clone(),
+            quote! { #krate::JsClassMemberKind::Constructor },
+        ),
+        ExportMethodKind::Method { .. } => (
+            js_name.clone(),
+            quote! { #krate::JsClassMemberKind::Method },
+        ),
+        ExportMethodKind::StaticMethod => (
+            js_name.clone(),
+            quote! { #krate::JsClassMemberKind::StaticMethod },
+        ),
+        ExportMethodKind::Getter { property } => (
+            property.clone(),
+            quote! { #krate::JsClassMemberKind::Getter },
+        ),
+        ExportMethodKind::Setter { property } => (
+            property.clone(),
+            quote! { #krate::JsClassMemberKind::Setter },
+        ),
     };
 
     let js_class_member_spec = quote_spanned! {span=>

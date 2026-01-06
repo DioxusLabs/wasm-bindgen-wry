@@ -5,9 +5,13 @@ use web_sys::window;
 
 fn main() {
     wry_testing::run(|| async {
-        window().unwrap().document().unwrap().body().unwrap().set_inner_html(
-            r#"<div id="main"></div>"#,
-        );
+        window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .body()
+            .unwrap()
+            .set_inner_html(r#"<div id="main"></div>"#);
         launch(app);
         std::future::pending::<()>().await;
     })

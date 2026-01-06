@@ -1,5 +1,5 @@
 use tokio::select;
-use wasm_bindgen::{wasm_bindgen};
+use wasm_bindgen::wasm_bindgen;
 
 mod add_number_js;
 mod async_bindings;

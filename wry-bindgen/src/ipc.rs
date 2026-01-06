@@ -295,7 +295,10 @@ impl<'a> DecodedData<'a> {
 
     /// Check if the decoded data is empty.
     pub fn is_empty(&self) -> bool {
-        self.u8_buf.is_empty() && self.u16_buf.is_empty() && self.u32_buf.is_empty() && self.str_buf.is_empty()
+        self.u8_buf.is_empty()
+            && self.u16_buf.is_empty()
+            && self.u32_buf.is_empty()
+            && self.str_buf.is_empty()
     }
 }
 

@@ -191,9 +191,13 @@ pub async fn wait_for_js_result<R: BinaryDecode>() -> R {
 pub async fn wait_for_js_event<R: BinaryDecode>() -> Option<R> {
     progress_js_with(|mut data| {
         let response = R::decode(&mut data).expect("Failed to decode return value");
-        assert!(data.is_empty(), "Extra data remaining after decoding response");
+        assert!(
+            data.is_empty(),
+            "Extra data remaining after decoding response"
+        );
         response
-    }).await
+    })
+    .await
 }
 
 pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
