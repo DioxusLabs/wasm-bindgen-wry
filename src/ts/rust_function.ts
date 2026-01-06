@@ -56,7 +56,11 @@ class RustFunction {
     window.jsHeap.popBorrowFrame();
 
     // Decode return value
-    return this.returnType.decode(result);
+    const decoded = this.returnType.decode(result);
+    if (!result.isEmpty()) {
+      throw new Error("Unprocessed data remaining after RustFunction call");
+    }
+    return decoded;
   }
 }
 

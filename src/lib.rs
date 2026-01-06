@@ -4,7 +4,7 @@
 //! Rust-JavaScript bindings via the wry-bindgen macro system.
 
 use futures_util::FutureExt;
-use wasm_bindgen::runtime::progress_js_with;
+use wasm_bindgen::runtime::{poll_callbacks};
 use winit::event_loop::EventLoop;
 
 use wasm_bindgen::{Closure, FUNCTION_REGISTRY, FunctionRegistry};
@@ -139,18 +139,18 @@ where
     std::thread::spawn(move || {
         let run = || {
             let run_app = app();
-            let wait_for_events = async move {
-                loop {
-                    progress_js_with(|_| unreachable!("no response expected from root task")).await;
-                }
-            };
+            let wait_for_events = poll_callbacks();
 
-            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
-                futures_util::select! {
-                    _ = run_app.fuse() => {},
-                    _ = wait_for_events.fuse() => {},
-                }
-            });
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    futures_util::select! {
+                        _ = run_app.fuse() => {},
+                        _ = wait_for_events.fuse() => {},
+                    }
+                });
         };
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
         let status = if let Err(panic_info) = result {

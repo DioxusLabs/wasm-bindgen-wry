@@ -15,7 +15,7 @@ pub(crate) fn test_call_callback() {
 
 pub(crate) async fn test_call_callback_async() {
     #[wasm_bindgen(
-        inline_js = "export function calls_callback_async(cb, value) { setTimeout(() => { cb(value); }, 100); }"
+        inline_js = "export function calls_callback_async(cb, value) { setTimeout(() => { cb(value); }, 1); }"
     )]
     extern "C" {
         #[wasm_bindgen(js_name = calls_callback_async)]
@@ -28,7 +28,8 @@ pub(crate) async fn test_call_callback_async() {
         result_tx.start_send(x + 1).unwrap();
     }) as Box<dyn FnMut(u32)>);
     println!("Calling calls_callback_async");
-    calls_callback_async(callback, 10);
+    let random = rand::random::<u32>() % 1000;
+    calls_callback_async(callback, random);
     let result = result_rx.next().await.unwrap();
-    assert_eq!(result, 11);
+    assert_eq!(result, random + 1);
 }
