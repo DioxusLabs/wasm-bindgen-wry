@@ -1,5 +1,5 @@
 [package]
-name = "gloo-testing"
+name = "gloo"
 version = "0.1.0"
 edition = "2024"
 
@@ -10,7 +10,7 @@ wasm-bindgen = "0.2.54"
 wasm-bindgen-futures = { version = "0.4.56" }
 console_error_panic_hook = "0.1.7"
 futures-util = "0.3"
-wry-testing = { version = "0.1.0", path = ".." }
+wry-testing = { version = "0.1.0", path = "../.." }
 
 [dependencies.web-sys]
 version = "0.3.19"

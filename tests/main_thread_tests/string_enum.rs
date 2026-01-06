@@ -89,7 +89,10 @@ pub fn test_string_enum_pass_to_js() {
     assert_eq!(result2, "low-power", "JS should receive 'low-power'");
 
     let result3 = get_string_enum_value(WebGlPowerPreference::HighPerformance);
-    assert_eq!(result3, "high-performance", "JS should receive 'high-performance'");
+    assert_eq!(
+        result3, "high-performance",
+        "JS should receive 'high-performance'"
+    );
 }
 
 // JavaScript function that returns a string enum value

@@ -47,7 +47,11 @@ pub(crate) fn test_reentrant_fn_closure() {
     assert_eq!(result, 4, "Expected sum of 4 from reentrant calls");
     assert_eq!(call_count.get(), 4, "Expected 4 total calls");
 
-    println!("Reentrant Fn closure test passed: {} calls, result = {}", call_count.get(), result);
+    println!(
+        "Reentrant Fn closure test passed: {} calls, result = {}",
+        call_count.get(),
+        result
+    );
 }
 
 /// Test that multiple different Fn closures can interleave calls.
@@ -106,5 +110,9 @@ pub(crate) fn test_interleaved_fn_closures() {
     assert_eq!(result, 111, "Expected 111 from interleaved calls");
     assert_eq!(total_calls.get(), 3, "Expected 3 total calls");
 
-    println!("Interleaved Fn closures test passed: {} calls, result = {}", total_calls.get(), result);
+    println!(
+        "Interleaved Fn closures test passed: {} calls, result = {}",
+        total_calls.get(),
+        result
+    );
 }

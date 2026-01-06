@@ -1,4 +1,3 @@
-
 // Copyright 2019 the Piet Authors
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 
@@ -15,9 +14,13 @@ const SAMPLE_PICTURE_NO: usize = 11;
 
 fn main() {
     wry_testing::run(|| async {
-        window().unwrap().document().unwrap().body().unwrap().set_inner_html(
-            r#"<canvas id="canvas"></canvas>"#,
-        );
+        window()
+            .unwrap()
+            .document()
+            .unwrap()
+            .body()
+            .unwrap()
+            .set_inner_html(r#"<canvas id="canvas"></canvas>"#);
         run();
         std::future::pending::<()>().await;
     })

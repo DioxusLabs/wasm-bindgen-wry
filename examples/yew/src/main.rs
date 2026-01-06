@@ -1,14 +1,14 @@
 // https://github.com/yewstack/yew/blob/master/examples/todomvc adapted for wry-testing
 use gloo::storage::{LocalStorage, Storage};
 use gloo::utils::window;
+use serde_derive::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
-use web_sys::{HtmlInputElement as InputElement};
+use strum_macros::{Display, EnumIter};
+use web_sys::HtmlInputElement as InputElement;
 use yew::events::{FocusEvent, KeyboardEvent};
+use yew::html::IntoPropValue;
 use yew::html::Scope;
 use yew::{Classes, Component, Context, Html, NodeRef, TargetCast, classes, html};
-use serde_derive::{Deserialize, Serialize};
-use strum_macros::{Display, EnumIter};
-use yew::html::IntoPropValue;
 
 pub fn main() {
     wry_testing::run(|| async {
@@ -19,7 +19,8 @@ pub fn main() {
 }
 
 fn app() {
-    window().document().unwrap().head().unwrap().set_inner_html(r#"<meta charset="utf-8" />
+    window().document().unwrap().head().unwrap().set_inner_html(
+        r#"<meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Yew • TodoMVC</title>
     <link
@@ -31,7 +32,8 @@ fn app() {
       href="https://cdn.jsdelivr.net/npm/todomvc-app-css@2.3.0/index.css"
     />
 
-    <link data-trunk rel="rust" />"#);
+    <link data-trunk rel="rust" />"#,
+    );
     yew::Renderer::<App>::new().render();
 }
 

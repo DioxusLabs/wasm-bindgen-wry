@@ -883,7 +883,7 @@ dependencies = [
  "dioxus-logger",
  "dioxus-signals",
  "dioxus-stores",
- "dioxus-web",
+ "dioxus-web 0.7.2",
  "manganis",
  "subsecond",
  "warnings",
@@ -1242,6 +1242,15 @@ dependencies = [
 
 [[package]]
 name = "dioxus-web"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "web-sys",
+ "wry-testing",
+]
+
+[[package]]
+name = "dioxus-web"
 version = "0.7.2"
 source = "git+https://github.com/ealmloff/dioxus?branch=web-desktop#896bdca73da138987d7f21ffe7675e9470353799"
 dependencies = [
@@ -1270,15 +1279,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-streams",
  "web-sys",
-]
-
-[[package]]
-name = "dioxus-web-testing"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "web-sys",
- "wry-testing",
 ]
 
 [[package]]
@@ -1874,6 +1874,20 @@ dependencies = [
 
 [[package]]
 name = "gloo"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "console_error_panic_hook",
+ "futures-util",
+ "gloo 0.11.0",
+ "wasm-bindgen 0.2.106",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wry-testing",
+]
+
+[[package]]
+name = "gloo"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d15282ece24eaf4bd338d73ef580c6714c8615155c4190c781290ee3fa0fd372"
@@ -2019,20 +2033,6 @@ dependencies = [
  "thiserror 1.0.69",
  "wasm-bindgen 0.2.105",
  "web-sys",
-]
-
-[[package]]
-name = "gloo-testing"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "console_error_panic_hook",
- "futures-util",
- "gloo",
- "wasm-bindgen 0.2.105",
- "wasm-bindgen-futures",
- "web-sys",
- "wry-testing",
 ]
 
 [[package]]
@@ -5024,7 +5024,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "decf97738ce15b9e9cc1671ea29b0f6c56538719e1a092d19cc2134bf144e40e"
 dependencies = [
  "futures",
- "gloo",
+ "gloo 0.11.0",
  "num_cpus",
  "once_cell",
  "pin-project",
@@ -6407,13 +6407,29 @@ checksum = "fdd20c5420375476fbd4394763288da7eb0cc0b8c11deed431a91562af7335d3"
 
 [[package]]
 name = "yew"
+version = "0.1.0"
+dependencies = [
+ "gloo 0.11.0",
+ "serde",
+ "serde_derive",
+ "strum",
+ "strum_macros",
+ "tokio",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wry-testing",
+ "yew 0.22.0",
+]
+
+[[package]]
+name = "yew"
 version = "0.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3346273ed61b636f5d84e6c696d40f380045b5565b36c5c47f8fc634b8bf5be6"
 dependencies = [
  "console_error_panic_hook",
  "futures",
- "gloo",
+ "gloo 0.11.0",
  "implicit-clone",
  "indexmap",
  "js-sys",
@@ -6443,22 +6459,6 @@ dependencies = [
  "quote",
  "rustversion",
  "syn 2.0.113",
-]
-
-[[package]]
-name = "yew-testing"
-version = "0.1.0"
-dependencies = [
- "gloo",
- "serde",
- "serde_derive",
- "strum",
- "strum_macros",
- "tokio",
- "wasm-bindgen-futures",
- "web-sys",
- "wry-testing",
- "yew",
 ]
 
 [[package]]

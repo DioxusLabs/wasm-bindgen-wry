@@ -4,7 +4,7 @@
 //! Rust-JavaScript bindings via the wry-bindgen macro system.
 
 use futures_util::FutureExt;
-use wasm_bindgen::runtime::{poll_callbacks};
+use wasm_bindgen::runtime::poll_callbacks;
 use winit::event_loop::EventLoop;
 
 use wasm_bindgen::{Closure, FUNCTION_REGISTRY, FunctionRegistry};

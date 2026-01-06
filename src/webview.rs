@@ -9,9 +9,9 @@ use wry::{Rect, WebViewBuilder};
 
 use wasm_bindgen::runtime::AppEvent;
 
+use crate::FunctionRegistry;
 use crate::home::root_response;
 use crate::wry_bindgen::WryBindgen;
-use crate::FunctionRegistry;
 
 pub(crate) struct State {
     wry_bindgen: WryBindgen,
