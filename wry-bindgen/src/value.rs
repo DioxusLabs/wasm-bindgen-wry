@@ -85,7 +85,7 @@ impl JsValue {
     /// Check if this value is an instance of a specific JS type.
     #[inline]
     pub fn has_type<T: crate::JsCast>(&self) -> bool {
-        T::instanceof(self)
+        T::is_type_of(self)
     }
 
     /// Get the internal ABI representation (heap index), consuming self.
