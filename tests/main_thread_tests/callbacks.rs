@@ -1,5 +1,6 @@
-use futures_util::StreamExt;
+use futures_util::{StreamExt, stream::futures_unordered};
 use wasm_bindgen::{Closure, wasm_bindgen};
+use wry_testing::{JsValue, batch};
 
 pub(crate) fn test_call_callback() {
     #[wasm_bindgen(inline_js = "export function calls_callback(cb, value) { return cb(value); }")]
@@ -32,4 +33,40 @@ pub(crate) async fn test_call_callback_async() {
     calls_callback_async(callback, random);
     let result = result_rx.next().await.unwrap();
     assert_eq!(result, random + 1);
+}
+
+pub(crate) async fn test_join_many_callbacks_async() {
+    #[wasm_bindgen(inline_js = "export async function identity(callback, key) {
+        setTimeout(() => {
+            callback(key);
+        }, 100 + key % 10);
+    }")]
+    extern "C" {
+        #[wasm_bindgen]
+        fn identity(callback: Closure<dyn FnMut(JsValue)>, key: u32);
+    }
+
+    let mut futures = futures_unordered::FuturesUnordered::new();
+    let mut expected = Vec::new();
+    for i in 0..100u32 {
+        let (tx, rx) = futures_channel::oneshot::channel();
+        let closure = Closure::once(move |x: JsValue| {
+            tx.send(x).unwrap();
+        });
+        identity(closure, i);
+        futures.push(rx);
+        expected.push(i);
+    }
+    while let Some(Ok(result)) = futures.next().await {
+        let Some(index) = expected.iter().position(|&x| x == result) else {
+            println!("Unexpected result: {:?}", result);
+            std::future::pending::<()>().await;
+            break;
+        };
+        expected.remove(index);
+    }
+    assert!(
+        expected.is_empty(),
+        "Not all expected results were received"
+    );
 }

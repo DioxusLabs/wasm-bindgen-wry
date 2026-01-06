@@ -60,13 +60,9 @@ impl BatchState {
     /// Get the next heap ID for placeholder allocation.
     /// Uses free-list strategy: reuses freed IDs first, then allocates new ones.
     pub fn get_next_heap_id(&mut self) -> u64 {
-        if let Some(id) = self.free_ids.pop() {
-            id
-        } else {
-            let id = self.max_id;
-            self.max_id += 1;
-            id
-        }
+        let id = self.max_id;
+        self.max_id += 1;
+        id
     }
 
     /// Get the next borrow ID from the borrow stack (indices 1-127).
@@ -263,9 +259,12 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
 pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
     flush_and_then(|mut data| {
         let response = R::decode(&mut data).expect("Failed to decode return value");
-        assert!(data.is_empty(), "Extra data remaining after decoding response");
+        assert!(
+            data.is_empty(),
+            "Extra data remaining after decoding response"
+        );
         response
-})
+    })
 }
 
 pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> R {

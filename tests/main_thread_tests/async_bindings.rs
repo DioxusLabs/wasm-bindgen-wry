@@ -193,19 +193,20 @@ pub(crate) async fn test_join_many_async() {
         });
     }")]
     extern "C" {
-        async fn identity(key: u64) -> JsValue;
+        #[wasm_bindgen]
+        async fn identity(key: u32) -> JsValue;
     }
 
     let mut futures = futures_unordered::FuturesUnordered::new();
     let mut expected = Vec::new();
-    for i in 0..100 {
+    for i in 0..1000u32 {
         futures.push(identity(i));
         expected.push(i);
     }
     while let Some(result) = futures.next().await {
         println!("Got result: {:?}", result);
-        let as_u64 = result.as_f64().unwrap() as u64;
-        let index = expected.iter().position(|&x| x == as_u64).unwrap();
+        let as_u32 = result.as_f64().unwrap() as u32;
+        let index = expected.iter().position(|&x| x == as_u32).unwrap();
         expected.remove(index);
     }
 }

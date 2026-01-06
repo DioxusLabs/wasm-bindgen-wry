@@ -72,6 +72,7 @@ fn main() {
         // Callbacks
         test_with_js_context(callbacks::test_call_callback).await;
         async_test_with_js_context(callbacks::test_call_callback_async).await;
+        async_test_with_js_context(callbacks::test_join_many_callbacks_async).await;
 
         // Reentrant callbacks (dyn Fn)
         test_with_js_context(reentrant_callbacks::test_reentrant_fn_closure).await;

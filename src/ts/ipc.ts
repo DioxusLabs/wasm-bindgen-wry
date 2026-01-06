@@ -53,7 +53,7 @@ function sync_request_binary(
   xhr.setRequestHeader("dioxus-data", base64);
   xhr.send();
 
-  if (xhr.status === 200 && xhr.response && xhr.response.byteLength > 0) {
+  if (xhr.status === 200 && xhr.response) {
     return xhr.response as ArrayBuffer;
   }
   return null;

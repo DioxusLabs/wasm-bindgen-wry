@@ -57,7 +57,7 @@ class RustFunction {
 
     // Decode return value
     const decoded = this.returnType.decode(result);
-    if (!result.isEmpty()) {
+    if (result && !result.isEmpty()) {
       throw new Error("Unprocessed data remaining after RustFunction call");
     }
     return decoded;

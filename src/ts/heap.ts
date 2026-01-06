@@ -37,13 +37,8 @@ class JSHeap {
   }
 
   insert(value: unknown): number {
-    let id: number;
-    if (this.freeIds.length > 0) {
-      id = this.freeIds.pop()!;
-    } else {
-      id = this.maxId;
-      this.maxId++;
-    }
+    let id = this.maxId;
+    this.maxId++;
     this.slots[id] = value;
     return id;
   }
@@ -60,7 +55,7 @@ class JSHeap {
 
     const value = this.slots[id];
 
-    this.slots[id] = undefined;
+    delete this.slots[id];
     this.freeIds.push(id);
     return value;
   }
@@ -77,7 +72,9 @@ class JSHeap {
   // Returns the stack slot index
   addBorrowedRef(obj: unknown): number {
     if (this.borrowStackPointer <= 1) {
-      throw new Error("Borrow stack overflow: too many borrowed references in a single operation");
+      throw new Error(
+        "Borrow stack overflow: too many borrowed references in a single operation"
+      );
     }
     this.borrowStackPointer--;
     this.slots[this.borrowStackPointer] = obj;
@@ -97,7 +94,7 @@ class JSHeap {
     if (savedPointer !== undefined) {
       // Clear refs from this frame only (from current pointer up to saved pointer)
       for (let i = this.borrowStackPointer; i < savedPointer; i++) {
-        this.slots[i] = undefined;
+        delete this.slots[i];
       }
       this.borrowStackPointer = savedPointer;
     }
