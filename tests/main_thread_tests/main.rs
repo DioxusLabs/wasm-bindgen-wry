@@ -62,10 +62,6 @@ async fn async_test_with_js_context<Fut: std::future::Future<Output = ()>, F: Fn
 
 fn main() {
     wry_testing::run_headless(|| async {
-        for _ in 0..1000 {
-            test_with_js_context(borrow_stack::test_borrowed_ref_deep_nesting).await;
-        }
-
         // Adding numbers with and without batching
         test_with_js_context(add_number_js::test_add_number_js).await;
         test_with_js_context(add_number_js::test_add_number_js_batch).await;
@@ -152,6 +148,7 @@ fn main() {
         async_test_with_js_context(async_bindings::test_async_method).await;
         async_test_with_js_context(async_bindings::test_async_method_with_catch).await;
         async_test_with_js_context(async_bindings::test_async_static_method).await;
+        async_test_with_js_context(async_bindings::test_join_many_async).await;
     })
     .unwrap();
 }

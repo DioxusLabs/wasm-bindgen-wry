@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use futures_util::{StreamExt, stream::futures_unordered};
 use wasm_bindgen::wasm_bindgen;
 use wry_testing::JsValue;
 
@@ -27,7 +28,10 @@ pub(crate) async fn test_call_async() {
     let start = Instant::now();
     let _: () = future.await;
     let duration = start.elapsed();
-    assert!(duration.as_millis() >= 10, "Async function returned too quickly");
+    assert!(
+        duration.as_millis() >= 10,
+        "Async function returned too quickly"
+    );
     println!("Async function completed after {:?}", duration);
     let result = get_value_after_1_second();
     assert_eq!(result, 5);
@@ -178,4 +182,30 @@ pub(crate) async fn test_async_static_method() {
 
     let result = AsyncUtils::fetch_data("test_key").await;
     assert_eq!(result.as_string().unwrap(), "data_for_test_key");
+}
+
+pub(crate) async fn test_join_many_async() {
+    #[wasm_bindgen(inline_js = "export async function identity(key) {
+        return new Promise((resolve) => {
+            setTimeout(() => {
+                resolve(key);
+            }, 100 + key);
+        });
+    }")]
+    extern "C" {
+        async fn identity(key: u64) -> JsValue;
+    }
+
+    let mut futures = futures_unordered::FuturesUnordered::new();
+    let mut expected = Vec::new();
+    for i in 0..100 {
+        futures.push(identity(i));
+        expected.push(i);
+    }
+    while let Some(result) = futures.next().await {
+        println!("Got result: {:?}", result);
+        let as_u64 = result.as_f64().unwrap() as u64;
+        let index = expected.iter().position(|&x| x == as_u64).unwrap();
+        expected.remove(index);
+    }
 }
