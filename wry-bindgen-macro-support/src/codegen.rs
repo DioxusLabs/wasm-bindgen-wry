@@ -267,9 +267,14 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
     let js_name = &ty.js_name;
 
     // Generate JavaScript instanceof check code with vendor prefix fallback
+    // Always generate a safe check that returns false if the class doesn't exist,
+    // matching wasm-bindgen's try-catch behavior
     let instanceof_js_code = if ty.vendor_prefixes.is_empty() {
-        // Simple case: just check instanceof against the class name
-        format!("(a0) => a0 instanceof {}", js_name)
+        // Simple case: check if class exists before instanceof
+        format!(
+            "(a0) => typeof {} !== 'undefined' && a0 instanceof {}",
+            js_name, js_name
+        )
     } else {
         // Generate vendor-prefixed fallback:
         // (a0) => a0 instanceof (typeof Foo !== 'undefined' ? Foo : (typeof webkitFoo !== 'undefined' ? webkitFoo : ...))
@@ -296,6 +301,17 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
 
     let instanceof_registry_name = format!("{}::__instanceof", rust_name);
 
+    // Generate is_type_of implementation if provided
+    let is_type_of_impl = ty.is_type_of.as_ref().map(|is_type_of| {
+        quote_spanned! {span=>
+            #[inline]
+            fn is_type_of(__val: &#krate::JsValue) -> bool {
+                let __is_type_of: fn(&#krate::JsValue) -> bool = #is_type_of;
+                __is_type_of(__val)
+            }
+        }
+    });
+
     let jscast_impl = quote_spanned! {span=>
         impl #krate::JsCast for #rust_name {
             fn instanceof(__val: &#krate::JsValue) -> bool {
@@ -316,6 +332,8 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
                 // Call the function
                 __func.call(__val)
             }
+
+            #is_type_of_impl
 
             fn unchecked_from_js(val: #krate::JsValue) -> Self {
                 Self { obj: val }

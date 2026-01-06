@@ -86,6 +86,8 @@ pub struct ImportType {
     pub derives: Vec<syn::Attribute>,
     /// Vendor prefixes for fallback (e.g., webkit, moz)
     pub vendor_prefixes: Vec<Ident>,
+    /// Custom is_type_of expression for type checking
+    pub is_type_of: Option<syn::Expr>,
 }
 
 /// An imported JavaScript function
@@ -679,6 +681,9 @@ fn extract_wasm_bindgen_attrs(attrs: &[syn::Attribute]) -> syn::Result<BindgenAt
             if let Some(span) = parsed.indexing_deleter {
                 combined.indexing_deleter = Some(span);
             }
+            if let Some(v) = parsed.is_type_of {
+                combined.is_type_of = Some(v);
+            }
             combined.vendor_prefixes.extend(parsed.vendor_prefixes);
         }
     }
@@ -842,6 +847,7 @@ fn parse_foreign_type(t: syn::ForeignItemType, attrs: BindgenAttrs) -> syn::Resu
     let extends: Vec<Path> = attrs.extends.into_iter().map(|(_, p)| p).collect();
     let typescript_type = attrs.typescript_type.map(|(_, t)| t);
     let vendor_prefixes: Vec<Ident> = attrs.vendor_prefixes.into_iter().map(|(_, i)| i).collect();
+    let is_type_of = attrs.is_type_of.map(|(_, e)| e);
 
     // Extract derive attributes (non-wasm_bindgen attributes that should be preserved)
     let derives: Vec<syn::Attribute> = t
@@ -859,6 +865,7 @@ fn parse_foreign_type(t: syn::ForeignItemType, attrs: BindgenAttrs) -> syn::Resu
         typescript_type,
         derives,
         vendor_prefixes,
+        is_type_of,
     })
 }
 
