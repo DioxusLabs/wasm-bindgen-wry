@@ -3,6 +3,10 @@
 //! This module provides types for calling JavaScript functions from Rust
 //! and for registering Rust callbacks that can be called from JavaScript.
 
+// Allow clippy lints for macro-generated code and internal types
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

@@ -12,6 +12,17 @@ use crate::ast::{
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote, quote_spanned};
 
+/// Generate clippy allow attributes for macro-generated code
+fn clippy_allows() -> TokenStream {
+    quote! {
+        #[allow(clippy::unused_unit)]
+        #[allow(clippy::too_many_arguments)]
+        #[allow(clippy::type_complexity)]
+        #[allow(clippy::should_implement_trait)]
+        #[allow(clippy::await_holding_refcell_ref)]
+    }
+}
+
 /// Generate code for the entire program
 pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     let mut tokens = TokenStream::new();
@@ -424,6 +435,7 @@ fn generate_function(
 
     // Get the rust attributes to forward (like #[cfg(...)] and #[doc = "..."])
     let rust_attrs = func.fn_rust_attrs();
+    let allows = clippy_allows();
 
     // Generate the full function based on kind
     match &func.kind {
@@ -437,6 +449,7 @@ fn generate_function(
                 let class_ident = format_ident!("{}", &ns[0]);
                 return Ok(quote_spanned! {span=>
                     impl #class_ident {
+                        #allows
                         #rust_attrs
                         #vis fn #rust_name(#fn_params) -> #ret_type {
                             #func_body
@@ -445,6 +458,7 @@ fn generate_function(
                 });
             }
             Ok(quote_spanned! {span=>
+                #allows
                 #rust_attrs
                 #vis fn #rust_name(#fn_params) -> #ret_type {
                     #func_body
@@ -469,6 +483,7 @@ fn generate_function(
 
             Ok(quote_spanned! {span=>
                 impl #receiver_type {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#method_args) -> #ret_type {
                         #func_body
@@ -481,6 +496,7 @@ fn generate_function(
             // Use the actual return type (may be Result<T, JsValue> for catch constructors)
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#fn_params) -> #ret_type {
                         #func_body
@@ -492,6 +508,7 @@ fn generate_function(
             let class_ident = format_ident!("{}", class);
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#fn_params) -> #ret_type {
                         #func_body
@@ -593,9 +610,12 @@ fn generate_async_function(
         ),
     };
 
+    let allows = clippy_allows();
+
     // Generate the async function based on kind
     match &func.kind {
         ImportFunctionKind::Normal => Ok(quote_spanned! {span=>
+            #allows
             #(#rust_attrs)*
             #vis async fn #rust_name(#fn_params) #ret_clause {
                 #async_body #ret_handling
@@ -619,6 +639,7 @@ fn generate_async_function(
 
             Ok(quote_spanned! {span=>
                 impl #receiver_type {
+                    #allows
                     #(#rust_attrs)*
                     #vis async fn #rust_name(#method_args) #ret_clause {
                         #async_body #ret_handling
@@ -630,6 +651,7 @@ fn generate_async_function(
             let class_ident = format_ident!("{}", class);
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #(#rust_attrs)*
                     #vis async fn #rust_name(#fn_params) #ret_clause {
                         #async_body #ret_handling
@@ -641,6 +663,7 @@ fn generate_async_function(
             let class_ident = format_ident!("{}", class);
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #(#rust_attrs)*
                     #vis async fn #rust_name(#fn_params) #ret_clause {
                         #async_body #ret_handling
@@ -997,10 +1020,12 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
     };
 
     // Generate helper methods (from_str, to_str, from_js_value)
+    let allows = clippy_allows();
     let impl_methods = quote! {
         #[automatically_derived]
         impl #enum_name {
             /// Convert a string to this enum variant.
+            #allows
             pub fn from_str(s: &str) -> ::core::option::Option<#enum_name> {
                 match s {
                     #(#variant_values => ::core::option::Option::Some(#variant_paths),)*
@@ -1017,6 +1042,7 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
             }
 
             /// Convert a JsValue (if it's a string) to this enum variant.
+            #allows
             #vis fn from_js_value(obj: &#krate::JsValue) -> ::core::option::Option<#enum_name> {
                 ::core::option::Option::and_then(obj.as_string(), |s| Self::from_str(&s))
             }
@@ -1646,11 +1672,13 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
         None => quote_spanned! {span=> },
     };
 
+    let allows = clippy_allows();
     let method_impl = match &method.kind {
         ExportMethodKind::Constructor | ExportMethodKind::StaticMethod => {
             // No self parameter
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#(#fn_args),*) #ret_type #body
                 }
@@ -1669,6 +1697,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
             };
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#fn_args_with_self) #ret_type #body
                 }
@@ -1677,6 +1706,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
         ExportMethodKind::Getter { .. } => {
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(&self) #ret_type #body
                 }
@@ -1685,6 +1715,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
         ExportMethodKind::Setter { .. } => {
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(&mut self, #(#fn_args),*) #body
                 }

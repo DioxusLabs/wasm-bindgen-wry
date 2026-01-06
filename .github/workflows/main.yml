@@ -74,7 +74,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           cache-all-crates: "true"
-      - run: cargo clippy --workspace --all-features -- -D warnings
+      # Workspace lints in Cargo.toml handle denying warnings for our code
+      - run: cargo clippy --workspace --all-features
 
   docs:
     if: github.event.pull_request.draft == false

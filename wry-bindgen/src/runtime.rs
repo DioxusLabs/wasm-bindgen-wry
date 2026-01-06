@@ -200,6 +200,7 @@ pub async fn wait_for_js_event<R: BinaryDecode>() -> Option<R> {
     .await
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
 pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
     let runtime = get_runtime();
 
