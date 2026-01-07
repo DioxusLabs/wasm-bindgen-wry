@@ -254,9 +254,7 @@ where
         return Err(AlreadyStartedError);
     }
     // Spawn the app thread with panic handling - if the app panics, shut down the webview
-    std::thread::Builder::new()
-        .stack_size(2 * 1024 * 1024)
-        .spawn(move || {
+    std::thread::spawn(move || {
         let run = || {
             let run_app = app();
             let wait_for_events = poll_callbacks();
@@ -282,7 +280,7 @@ where
             0 // Exit with success status on normal completion
         };
         shutdown(status);
-    }).expect("Failed to spawn app thread");
+    });
 
     Ok(WryBindgen::new())
 }
