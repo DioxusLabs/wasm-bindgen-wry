@@ -6290,6 +6290,7 @@ dependencies = [
 name = "wry-bindgen-macro"
 version = "0.1.0"
 dependencies = [
+ "quote",
  "wry-bindgen-macro-support",
 ]
 

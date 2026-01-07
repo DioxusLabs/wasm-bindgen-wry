@@ -41,3 +41,22 @@ pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
         Err(err) => err.to_compile_error().into(),
     }
 }
+
+/// Link to a JS file for use with workers/worklets.
+///
+/// This macro is only meaningful in WASM contexts. When running outside of WASM,
+/// it will panic at runtime.
+///
+/// # Example
+///
+/// ```ignore
+/// use web_sys::Worker;
+/// let worker = Worker::new(&wasm_bindgen::link_to!(module = "/src/worker.js"));
+/// ```
+#[proc_macro]
+pub fn link_to(_input: TokenStream) -> TokenStream {
+    quote::quote! {
+        panic!("link_to! cannot be used when running outside of wasm")
+    }
+    .into()
+}

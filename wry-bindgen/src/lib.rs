@@ -453,8 +453,9 @@ pub use ipc::{
 };
 pub use runtime::{WryRuntime, get_runtime, set_event_loop_proxy, wait_for_js_result};
 
-// Re-export the macro
+// Re-export the macros
 pub use wry_bindgen_macro::wasm_bindgen;
+pub use wry_bindgen_macro::link_to;
 
 // Re-export inventory for macro use
 pub use inventory;
@@ -894,14 +895,58 @@ impl<T, E: core::fmt::Debug> UnwrapThrowExt<T> for Result<T, E> {
 
 #[cold]
 #[inline(never)]
-pub fn throw_str(message: &str) -> ! {
-    panic!("{}", message);
-}
-
-#[cold]
-#[inline(never)]
 pub fn throw_val(s: JsValue) -> ! {
     panic!("{:?}", s);
+}
+
+/// Throw a JS exception with the given message.
+///
+/// # Panics
+/// This function always panics when running outside of WASM.
+#[cold]
+#[inline(never)]
+pub fn throw_str(s: &str) -> ! {
+    panic!("cannot throw JS exception when running outside of wasm: {}", s);
+}
+
+/// Returns the number of live externref objects.
+///
+/// # Panics
+/// This function always panics when running outside of WASM.
+pub fn externref_heap_live_count() -> u32 {
+    panic!("cannot introspect wasm memory when running outside of wasm")
+}
+
+/// Returns a handle to this Wasm instance's `WebAssembly.Module`.
+///
+/// # Panics
+/// This function always panics when running outside of WASM.
+pub fn module() -> JsValue {
+    panic!("cannot introspect wasm memory when running outside of wasm")
+}
+
+/// Returns a handle to this Wasm instance's `WebAssembly.Instance.prototype.exports`.
+///
+/// # Panics
+/// This function always panics when running outside of WASM.
+pub fn exports() -> JsValue {
+    panic!("cannot introspect wasm memory when running outside of wasm")
+}
+
+/// Returns a handle to this Wasm instance's `WebAssembly.Memory`.
+///
+/// # Panics
+/// This function always panics when running outside of WASM.
+pub fn memory() -> JsValue {
+    panic!("cannot introspect wasm memory when running outside of wasm")
+}
+
+/// Returns a handle to this Wasm instance's `WebAssembly.Table` (indirect function table).
+///
+/// # Panics
+/// This function always panics when running outside of WASM.
+pub fn function_table() -> JsValue {
+    panic!("cannot introspect wasm memory when running outside of wasm")
 }
 
 // Re-export extract_rust_handle from js_helpers
