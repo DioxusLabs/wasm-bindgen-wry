@@ -336,7 +336,6 @@ use alloc::string::{String, ToString};
 use core::ops::{Deref, DerefMut};
 // Re-export core types
 pub use cast::JsCast;
-pub use convert::{FromWasmAbi, IntoWasmAbi, RefFromWasmAbi};
 pub use lazy::JsThreadLocal;
 pub use value::JsValue;
 
@@ -404,10 +403,6 @@ where
         }
     }
 }
-
-// Note: From<&T> for JsValue where T: JsCast is NOT implemented here.
-// Instead, each type that needs this conversion gets its own impl generated
-// by the #[wasm_bindgen] macro. This avoids conflicts with those generated impls.
 
 impl AsRef<JsValue> for JsError {
     fn as_ref(&self) -> &JsValue {
