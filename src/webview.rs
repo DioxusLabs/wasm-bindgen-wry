@@ -96,11 +96,11 @@ impl ApplicationHandler<AppEvent> for State {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: AppEvent) {
-        if let Some(webview) = &self.webview {
-            if let Some(status) = self.wry_bindgen.handle_user_event(event, webview) {
-                event_loop.exit();
-                std::process::exit(status);
-            }
+        if let Some(webview) = &self.webview
+            && let Some(status) = self.wry_bindgen.handle_user_event(event, webview)
+        {
+            event_loop.exit();
+            std::process::exit(status);
         }
     }
 

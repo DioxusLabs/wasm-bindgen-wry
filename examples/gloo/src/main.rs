@@ -46,7 +46,7 @@ fn render_date(el: &web_sys::Element) {
     // print the current date
     let date = chrono::Local::now();
 
-    let format_str = if date.second() % 2 == 0 {
+    let format_str = if date.second().is_multiple_of(2) {
         "%Y-%m-%d %H %M"
     } else {
         "%Y-%m-%d %H:%M"

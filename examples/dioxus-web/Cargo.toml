@@ -7,3 +7,6 @@ edition = "2024"
 dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "web-desktop", features = ["web"] }
 web-sys = { version = "0.3.83", path = "../../wasm-bindgen/crates/web-sys", features = ["Document", "HtmlElement", "Node"] }
 wry-testing = { version = "0.1.0", path = "../.." }
+
+[lints]
+workspace = true

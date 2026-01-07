@@ -3,7 +3,7 @@
 //! This module generates Rust code that uses the wry-bindgen runtime
 //! and inventory-based function registration.
 
-use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use std::hash::{BuildHasher, RandomState};
 
 use crate::ast::{
     ExportMethod, ExportMethodKind, ExportStruct, ImportFunction, ImportFunctionKind, ImportStatic,
@@ -11,6 +11,17 @@ use crate::ast::{
 };
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote, quote_spanned};
+
+/// Generate clippy allow attributes for macro-generated code
+fn clippy_allows() -> TokenStream {
+    quote! {
+        #[allow(clippy::unused_unit)]
+        #[allow(clippy::too_many_arguments)]
+        #[allow(clippy::type_complexity)]
+        #[allow(clippy::should_implement_trait)]
+        #[allow(clippy::await_holding_refcell_ref)]
+    }
+}
 
 /// Generate code for the entire program
 pub fn generate(program: &Program) -> syn::Result<TokenStream> {
@@ -42,9 +53,8 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
     if let Some((span, content_expr)) = module_content {
         let unique_hash = {
             let s = RandomState::new();
-            let mut hasher = s.build_hasher();
-            content_expr.to_string().hash(&mut hasher);
-            hasher.finish()
+
+            s.hash_one(content_expr.to_string())
         };
         let unique_ident = format_ident!("__WRY_BINDGEN_INLINE_JS_MODULE_HASH_{}", unique_hash);
         // Create a static and submit it to the inventory
@@ -59,7 +69,7 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
                 __WRY_BINDGEN_INLINE_JS_MODULE.const_hash()
             };
         });
-        prefix = format!("module_{{{}:x}}.", unique_ident);
+        prefix = format!("module_{{{unique_ident}:x}}.");
     }
 
     // Collect type names being defined in this block
@@ -274,35 +284,30 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
     // matching wasm-bindgen's try-catch behavior
     let instanceof_js_code = if ty.vendor_prefixes.is_empty() {
         // Simple case: check if class exists before instanceof
-        format!(
-            "(a0) => typeof {} !== 'undefined' && a0 instanceof {}",
-            js_name, js_name
-        )
+        format!("(a0) => typeof {js_name} !== 'undefined' && a0 instanceof {js_name}")
     } else {
         // Generate vendor-prefixed fallback:
         // (a0) => a0 instanceof (typeof Foo !== 'undefined' ? Foo : (typeof webkitFoo !== 'undefined' ? webkitFoo : ...))
-        let mut class_expr = format!("(typeof {} !== 'undefined' ? {} : ", js_name, js_name);
+        let mut class_expr = format!("(typeof {js_name} !== 'undefined' ? {js_name} : ");
         for (i, prefix) in ty.vendor_prefixes.iter().enumerate() {
-            let prefixed = format!("{}{}", prefix, js_name);
+            let prefixed = format!("{prefix}{js_name}");
             if i == ty.vendor_prefixes.len() - 1 {
                 // Last prefix - use Object as final fallback (which will make instanceof return false for non-objects)
                 class_expr.push_str(&format!(
-                    "(typeof {} !== 'undefined' ? {} : Object)",
-                    prefixed, prefixed
+                    "(typeof {prefixed} !== 'undefined' ? {prefixed} : Object)"
                 ));
             } else {
                 class_expr.push_str(&format!(
-                    "(typeof {} !== 'undefined' ? {} : ",
-                    prefixed, prefixed
+                    "(typeof {prefixed} !== 'undefined' ? {prefixed} : "
                 ));
             }
         }
         // Close all the parentheses
         class_expr.push(')');
-        format!("(a0) => a0 instanceof {}", class_expr)
+        format!("(a0) => a0 instanceof {class_expr}")
     };
 
-    let instanceof_registry_name = format!("{}::__instanceof", rust_name);
+    let instanceof_registry_name = format!("{rust_name}::__instanceof");
 
     // Generate is_type_of implementation if provided
     let is_type_of_impl = ty.is_type_of.as_ref().map(|is_type_of| {
@@ -391,10 +396,10 @@ fn generate_function(
         | ImportFunctionKind::IndexingSetter { .. }
         | ImportFunctionKind::IndexingDeleter { .. } => {
             let class = func.js_class.as_deref().unwrap_or("global");
-            format!("{}::{}", class, rust_name)
+            format!("{class}::{rust_name}")
         }
-        ImportFunctionKind::Constructor { class } => format!("{}::new", class),
-        ImportFunctionKind::StaticMethod { class } => format!("{}::{}", class, rust_name),
+        ImportFunctionKind::Constructor { class } => format!("{class}::new"),
+        ImportFunctionKind::StaticMethod { class } => format!("{class}::{rust_name}"),
     };
 
     // Generate argument lists
@@ -443,26 +448,30 @@ fn generate_function(
 
     // Get the rust attributes to forward (like #[cfg(...)] and #[doc = "..."])
     let rust_attrs = func.fn_rust_attrs();
+    let allows = clippy_allows();
 
     // Generate the full function based on kind
     match &func.kind {
         ImportFunctionKind::Normal => {
             // Check if this function has a single-element js_namespace that matches a type
             // defined in this extern block. If so, generate as a static method to avoid collisions.
-            if let Some(ns) = &func.js_namespace {
-                if ns.len() == 1 && type_names.contains(&ns[0]) {
-                    let class_ident = format_ident!("{}", &ns[0]);
-                    return Ok(quote_spanned! {span=>
-                        impl #class_ident {
-                            #rust_attrs
-                            #vis fn #rust_name(#fn_params) -> #ret_type {
-                                #func_body
-                            }
+            if let Some(ns) = &func.js_namespace
+                && ns.len() == 1
+                && type_names.contains(&ns[0])
+            {
+                let class_ident = format_ident!("{}", &ns[0]);
+                return Ok(quote_spanned! {span=>
+                    impl #class_ident {
+                        #allows
+                        #rust_attrs
+                        #vis fn #rust_name(#fn_params) -> #ret_type {
+                            #func_body
                         }
-                    });
-                }
+                    }
+                });
             }
             Ok(quote_spanned! {span=>
+                #allows
                 #rust_attrs
                 #vis fn #rust_name(#fn_params) -> #ret_type {
                     #func_body
@@ -487,6 +496,7 @@ fn generate_function(
 
             Ok(quote_spanned! {span=>
                 impl #receiver_type {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#method_args) -> #ret_type {
                         #func_body
@@ -499,6 +509,7 @@ fn generate_function(
             // Use the actual return type (may be Result<T, JsValue> for catch constructors)
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#fn_params) -> #ret_type {
                         #func_body
@@ -510,6 +521,7 @@ fn generate_function(
             let class_ident = format_ident!("{}", class);
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#fn_params) -> #ret_type {
                         #func_body
@@ -611,9 +623,12 @@ fn generate_async_function(
         ),
     };
 
+    let allows = clippy_allows();
+
     // Generate the async function based on kind
     match &func.kind {
         ImportFunctionKind::Normal => Ok(quote_spanned! {span=>
+            #allows
             #(#rust_attrs)*
             #vis async fn #rust_name(#fn_params) #ret_clause {
                 #async_body #ret_handling
@@ -637,6 +652,7 @@ fn generate_async_function(
 
             Ok(quote_spanned! {span=>
                 impl #receiver_type {
+                    #allows
                     #(#rust_attrs)*
                     #vis async fn #rust_name(#method_args) #ret_clause {
                         #async_body #ret_handling
@@ -648,6 +664,7 @@ fn generate_async_function(
             let class_ident = format_ident!("{}", class);
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #(#rust_attrs)*
                     #vis async fn #rust_name(#fn_params) #ret_clause {
                         #async_body #ret_handling
@@ -659,6 +676,7 @@ fn generate_async_function(
             let class_ident = format_ident!("{}", class);
             Ok(quote_spanned! {span=>
                 impl #class_ident {
+                    #allows
                     #(#rust_attrs)*
                     #vis async fn #rust_name(#fn_params) #ret_clause {
                         #async_body #ret_handling
@@ -678,17 +696,15 @@ fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix
 
     // Add each vendor prefix
     for (i, vendor_prefix) in prefixes.iter().enumerate() {
-        let prefixed_class = format!("{}{}", vendor_prefix, class);
+        let prefixed_class = format!("{vendor_prefix}{class}");
         if i == prefixes.len() - 1 {
             // Last one - end with undefined if none found
             result.push_str(&format!(
-                "(typeof {prefix}{} !== 'undefined' ? {prefix}{} : undefined)",
-                prefixed_class, prefixed_class
+                "(typeof {prefix}{prefixed_class} !== 'undefined' ? {prefix}{prefixed_class} : undefined)"
             ));
         } else {
             result.push_str(&format!(
-                "(typeof {prefix}{} !== 'undefined' ? {prefix}{} : ",
-                prefixed_class, prefixed_class
+                "(typeof {prefix}{prefixed_class} !== 'undefined' ? {prefix}{prefixed_class} : "
             ));
         }
     }
@@ -720,36 +736,32 @@ fn generate_js_code(
     let (params, body) = match &func.kind {
         ImportFunctionKind::Normal => {
             // Use a{index} naming to avoid conflicts with JS reserved words
-            let args: Vec<_> = (0..func.arguments.len())
-                .map(|i| format!("a{}", i))
-                .collect();
+            let args: Vec<_> = (0..func.arguments.len()).map(|i| format!("a{i}")).collect();
             let args_str = args.join(", ");
             (
-                format!("({})", args_str),
-                format!("{prefix}{}({})", js_name, args_str),
+                format!("({args_str})"),
+                format!("{prefix}{js_name}({args_str})"),
             )
         }
         ImportFunctionKind::Method { .. } => {
             // Use a{index} naming to avoid conflicts with JS reserved words
-            let args: Vec<_> = (0..func.arguments.len())
-                .map(|i| format!("a{}", i))
-                .collect();
+            let args: Vec<_> = (0..func.arguments.len()).map(|i| format!("a{i}")).collect();
             let args_str = args.join(", ");
             if args.is_empty() {
-                ("(obj)".to_string(), format!("obj.{}()", js_name))
+                ("(obj)".to_string(), format!("obj.{js_name}()"))
             } else {
                 (
-                    format!("(obj, {})", args_str),
-                    format!("obj.{}({})", js_name, args_str),
+                    format!("(obj, {args_str})"),
+                    format!("obj.{js_name}({args_str})"),
                 )
             }
         }
         ImportFunctionKind::Getter { property, .. } => {
-            ("(obj)".to_string(), format!("obj.{}", property))
+            ("(obj)".to_string(), format!("obj.{property}"))
         }
         ImportFunctionKind::Setter { property, .. } => (
             "(obj, value)".to_string(),
-            format!("obj.{} = value", property),
+            format!("obj.{property} = value"),
         ),
         ImportFunctionKind::IndexingGetter { .. } => {
             // obj[index] - takes one argument (the index)
@@ -768,9 +780,7 @@ fn generate_js_code(
         }
         ImportFunctionKind::Constructor { class } => {
             // Use a{index} naming to avoid conflicts with JS reserved words
-            let args: Vec<_> = (0..func.arguments.len())
-                .map(|i| format!("a{}", i))
-                .collect();
+            let args: Vec<_> = (0..func.arguments.len()).map(|i| format!("a{i}")).collect();
             let args_str = args.join(", ");
 
             // Check if this type has vendor prefixes
@@ -779,25 +789,23 @@ fn generate_js_code(
                     // Generate vendor-prefixed fallback code
                     let constructor_expr =
                         generate_vendor_prefixed_constructor(class, prefixes, &prefix);
-                    format!("new ({})({})", constructor_expr, args_str)
+                    format!("new ({constructor_expr})({args_str})")
                 } else {
-                    format!("new {prefix}{}({})", class, args_str)
+                    format!("new {prefix}{class}({args_str})")
                 }
             } else {
-                format!("new {prefix}{}({})", class, args_str)
+                format!("new {prefix}{class}({args_str})")
             };
 
-            (format!("({})", args_str), body)
+            (format!("({args_str})"), body)
         }
         ImportFunctionKind::StaticMethod { class } => {
             // Use a{index} naming to avoid conflicts with JS reserved words
-            let args: Vec<_> = (0..func.arguments.len())
-                .map(|i| format!("a{}", i))
-                .collect();
+            let args: Vec<_> = (0..func.arguments.len()).map(|i| format!("a{i}")).collect();
             let args_str = args.join(", ");
             (
-                format!("({})", args_str),
-                format!("{prefix}{}.{}({})", class, js_name, args_str),
+                format!("({args_str})"),
+                format!("{prefix}{class}.{js_name}({args_str})"),
             )
         }
     };
@@ -817,8 +825,7 @@ fn generate_js_code(
 fn wrap_body_with_try_catch(body: &str) -> String {
     // Wrap the body in try-catch and return Result-like object
     format!(
-        "{{{{ try {{{{ return {{{{ ok: {} }}}}; }}}} catch(e) {{{{ return {{{{ err: e }}}}; }}}} }}}}",
-        body
+        "{{{{ try {{{{ return {{{{ ok: {body} }}}}; }}}} catch(e) {{{{ return {{{{ err: e }}}}; }}}} }}}}"
     )
 }
 
@@ -926,7 +933,7 @@ fn generate_static(
     let span = rust_name.span();
 
     // Generate registry name for the static accessor
-    let registry_name = format!("__static_{}", rust_name);
+    let registry_name = format!("__static_{rust_name}");
 
     // Generate JavaScript code to access the static
     let js_code = generate_static_js_code(st, prefix);
@@ -975,7 +982,7 @@ fn generate_static_js_code(st: &ImportStatic, prefix: &str) -> String {
         prefix.to_string()
     };
 
-    format!("() => {}{}", full_prefix, js_name)
+    format!("() => {full_prefix}{js_name}")
 }
 
 /// Generate code for a string enum
@@ -991,8 +998,7 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
     let variant_indices: Vec<u32> = (0..variant_count as u32).collect();
 
     let invalid_to_str_msg = format!(
-        "Converting an invalid string enum ({}) back to a string is currently not supported",
-        enum_name
+        "Converting an invalid string enum ({enum_name}) back to a string is currently not supported"
     );
 
     // Generate variant paths for match arms (EnumName::VariantName)
@@ -1015,10 +1021,12 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
     };
 
     // Generate helper methods (from_str, to_str, from_js_value)
+    let allows = clippy_allows();
     let impl_methods = quote! {
         #[automatically_derived]
         impl #enum_name {
             /// Convert a string to this enum variant.
+            #allows
             pub fn from_str(s: &str) -> ::core::option::Option<#enum_name> {
                 match s {
                     #(#variant_values => ::core::option::Option::Some(#variant_paths),)*
@@ -1035,6 +1043,7 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
             }
 
             /// Convert a JsValue (if it's a string) to this enum variant.
+            #allows
             #vis fn from_js_value(obj: &#krate::JsValue) -> ::core::option::Option<#enum_name> {
                 ::core::option::Option::and_then(obj.as_string(), |s| Self::from_str(&s))
             }
@@ -1158,7 +1167,7 @@ fn generate_export_struct(s: &ExportStruct, krate: &TokenStream) -> syn::Result<
     }
 
     // Generate drop function
-    let drop_fn_name = format!("{}::__drop", js_name);
+    let drop_fn_name = format!("{js_name}::__drop");
     let drop_impl = quote_spanned! {span=>
         // Drop function for the struct
         const _: () = {
@@ -1281,8 +1290,8 @@ fn generate_field_accessor(
     }
 
     let struct_name_str = struct_name.to_string();
-    let getter_name = format!("{}::{}_get", struct_name_str, js_field_name);
-    let setter_name = format!("{}::{}_set", struct_name_str, js_field_name);
+    let getter_name = format!("{struct_name_str}::{js_field_name}_get");
+    let setter_name = format!("{struct_name_str}::{js_field_name}_set");
 
     // Generate getter
     let getter_body = if field.getter_with_clone {
@@ -1409,8 +1418,8 @@ fn generate_inspectable(
     krate: &TokenStream,
 ) -> syn::Result<TokenStream> {
     let span = struct_name.span();
-    let to_json_name = format!("{}::toJSON", js_name);
-    let to_string_name = format!("{}::toString", js_name);
+    let to_json_name = format!("{js_name}::toJSON");
+    let to_string_name = format!("{js_name}::toString");
 
     // Build JSON object from fields
     let field_names: Vec<_> = fields
@@ -1523,7 +1532,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
     let span = rust_name.span();
 
     let class_str = class.to_string();
-    let export_name = format!("{}::{}", class_str, js_name);
+    let export_name = format!("{class_str}::{js_name}");
 
     // Generate argument decoding
     let arg_names: Vec<_> = method.arguments.iter().map(|a| &a.name).collect();
@@ -1675,11 +1684,13 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
         None => quote_spanned! {span=> },
     };
 
+    let allows = clippy_allows();
     let method_impl = match &method.kind {
         ExportMethodKind::Constructor | ExportMethodKind::StaticMethod => {
             // No self parameter
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#(#fn_args),*) #ret_type #body
                 }
@@ -1698,6 +1709,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
             };
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(#fn_args_with_self) #ret_type #body
                 }
@@ -1706,6 +1718,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
         ExportMethodKind::Getter { .. } => {
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(&self) #ret_type #body
                 }
@@ -1714,6 +1727,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
         ExportMethodKind::Setter { .. } => {
             quote_spanned! {span=>
                 impl #class {
+                    #allows
                     #rust_attrs
                     #vis fn #rust_name(&mut self, #(#fn_args),*) #body
                 }
@@ -1791,10 +1805,10 @@ fn extract_result_ok_type(ty: &syn::Type) -> Option<syn::Type> {
         if segment.ident != "Result" {
             return None;
         }
-        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-            if let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first() {
-                return Some(ok_ty.clone());
-            }
+        if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+            && let Some(syn::GenericArgument::Type(ok_ty)) = args.args.first()
+        {
+            return Some(ok_ty.clone());
         }
     }
     None

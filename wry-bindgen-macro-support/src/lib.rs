@@ -23,8 +23,10 @@ pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, syn:
     let attrs = parser::parse_attrs(attr)?;
 
     // Convert to our AST and generate code
-    let mut program = ast::Program::default();
-    program.attrs = attrs;
+    let mut program = ast::Program {
+        attrs,
+        ..Default::default()
+    };
     ast::parse_item(&mut program, item)?;
 
     // Generate the output tokens

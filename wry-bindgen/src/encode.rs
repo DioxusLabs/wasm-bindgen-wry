@@ -246,7 +246,7 @@ impl BinaryEncode for u128 {
 
 impl BinaryDecode for u128 {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
-        Ok(decoder.take_u128()?)
+        decoder.take_u128()
     }
 }
 
@@ -1355,13 +1355,13 @@ impl EncodeTypeDef for Clamped<Vec<u8>> {
     }
 }
 
-impl<'a> EncodeTypeDef for Clamped<&'a [u8]> {
+impl EncodeTypeDef for Clamped<&[u8]> {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::U8Clamped as u8);
     }
 }
 
-impl<'a> EncodeTypeDef for Clamped<&'a mut [u8]> {
+impl EncodeTypeDef for Clamped<&mut [u8]> {
     fn encode_type_def(buf: &mut Vec<u8>) {
         buf.push(TypeTag::U8Clamped as u8);
     }
@@ -1376,7 +1376,7 @@ impl BinaryEncode for Clamped<Vec<u8>> {
     }
 }
 
-impl<'a> BinaryEncode for Clamped<&'a [u8]> {
+impl BinaryEncode for Clamped<&[u8]> {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.0.len() as u32);
         for &val in self.0 {
@@ -1385,7 +1385,7 @@ impl<'a> BinaryEncode for Clamped<&'a [u8]> {
     }
 }
 
-impl<'a> BinaryEncode for Clamped<&'a mut [u8]> {
+impl BinaryEncode for Clamped<&mut [u8]> {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.0.len() as u32);
         for &mut val in self.0 {

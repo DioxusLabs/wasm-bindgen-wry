@@ -15,3 +15,5 @@ wry-testing = { version = "0.1.0", path = "../.." }
 [dependencies.web-sys]
 version = "0.3.19"
 features = ["console", "Window", "Document", "HtmlDocument", "HtmlElement", "Element", "Node"]
+[lints]
+workspace = true

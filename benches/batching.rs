@@ -30,7 +30,7 @@ pub fn bench_batch_create_element_1() {
 
 pub fn bench_batch_create_element_100() {
     let _results = wry_testing::batch(|| {
-        let tag = format!("div");
+        let tag = "div".to_string();
         (0..100).map(|_| create_element(&tag)).collect::<Vec<_>>()
     });
 }

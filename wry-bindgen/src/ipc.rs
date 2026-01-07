@@ -46,8 +46,7 @@ impl fmt::Display for DecodeError {
             DecodeError::MessageTooShort { expected, actual } => {
                 write!(
                     f,
-                    "message too short: expected at least {} bytes, got {}",
-                    expected, actual
+                    "message too short: expected at least {expected} bytes, got {actual}"
                 )
             }
             DecodeError::U8BufferEmpty => write!(f, "u8 buffer empty when trying to read"),
@@ -56,15 +55,14 @@ impl fmt::Display for DecodeError {
             DecodeError::StringBufferTooShort { expected, actual } => {
                 write!(
                     f,
-                    "string buffer too short: expected {} bytes, got {}",
-                    expected, actual
+                    "string buffer too short: expected {expected} bytes, got {actual}"
                 )
             }
             DecodeError::InvalidUtf8 { position } => {
-                write!(f, "invalid UTF-8 at position {}", position)
+                write!(f, "invalid UTF-8 at position {position}")
             }
             DecodeError::InvalidMessageType { value } => {
-                write!(f, "invalid message type: {}", value)
+                write!(f, "invalid message type: {value}")
             }
             DecodeError::InvalidHeaderOffsets {
                 u16_offset,
@@ -74,11 +72,10 @@ impl fmt::Display for DecodeError {
             } => {
                 write!(
                     f,
-                    "invalid header offsets: u16={}, u8={}, str={}, total_len={}",
-                    u16_offset, u8_offset, str_offset, total_len
+                    "invalid header offsets: u16={u16_offset}, u8={u8_offset}, str={str_offset}, total_len={total_len}"
                 )
             }
-            DecodeError::Custom(msg) => write!(f, "{}", msg),
+            DecodeError::Custom(msg) => write!(f, "{msg}"),
         }
     }
 }

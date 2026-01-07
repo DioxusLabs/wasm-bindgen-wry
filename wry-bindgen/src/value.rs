@@ -37,7 +37,8 @@ pub(crate) const JSIDX_RESERVED: u64 = JSIDX_OFFSET + 4;
 /// Unlike wasm-bindgen which runs in a single-threaded Wasm environment,
 /// this implementation uses the IPC protocol to communicate with JS.
 pub struct JsValue {
-    idx: u64,
+    #[doc(hidden)]
+    pub idx: u64,
 }
 
 impl JsValue {
@@ -117,13 +118,14 @@ impl JsValue {
     }
 
     /// Creates a JS string from a Rust string.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> JsValue {
-        s.try_into().unwrap()
+        s.into()
     }
 
     /// Creates a JS number from an f64.
     pub fn from_f64(n: f64) -> JsValue {
-        n.try_into().unwrap()
+        n.into()
     }
 }
 

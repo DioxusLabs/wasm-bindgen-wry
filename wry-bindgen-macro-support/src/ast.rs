@@ -19,10 +19,10 @@ fn extract_simple_type_name(ty: &Type) -> Option<String> {
             if let Some(segment) = p.path.segments.last() {
                 let seg_name = segment.ident.to_string();
                 if seg_name == "Result" || seg_name == "Option" {
-                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments {
-                        if let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first() {
-                            return extract_simple_type_name(inner_ty);
-                        }
+                    if let syn::PathArguments::AngleBracketed(args) = &segment.arguments
+                        && let Some(syn::GenericArgument::Type(inner_ty)) = args.args.first()
+                    {
+                        return extract_simple_type_name(inner_ty);
                     }
                 } else {
                     // For other types, return the segment name
@@ -163,17 +163,17 @@ pub enum ImportFunctionKind {
         /// Property name (may differ from function name)
         property: String,
     },
-    /// Indexing getter (e.g., obj[index])
+    /// Indexing getter (e.g., `obj[index]`)
     IndexingGetter {
         /// The receiver type
         receiver: Type,
     },
-    /// Indexing setter (e.g., obj[index] = value)
+    /// Indexing setter (e.g., `obj[index] = value`)
     IndexingSetter {
         /// The receiver type
         receiver: Type,
     },
-    /// Indexing deleter (e.g., delete obj[index])
+    /// Indexing deleter (e.g., `delete obj[index]`)
     IndexingDeleter {
         /// The receiver type
         receiver: Type,

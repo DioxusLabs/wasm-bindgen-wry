@@ -1,5 +1,4 @@
 use wasm_bindgen::wasm_bindgen;
-use wry_testing;
 
 pub(crate) fn test_add_number_js() {
     #[wasm_bindgen(inline_js = "export function add(a, b) { return a + b; }")]

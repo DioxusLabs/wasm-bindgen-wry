@@ -109,18 +109,18 @@ where
         }
 
         winit::platform::x11::register_xlib_error_hook(Box::new(|_display, error| {
-            let error = error as *mut x11_dl::xlib::ErrorEvent;
+            let error = error as *mut x11_dl::xlib::XErrorEvent;
             (unsafe { (*error).error_code }) == 170
         }));
     }
 
     let app = || async move {
         set_on_error(Closure::new(|err: String, stack: String| {
-            println!("[ERROR IN JS CONSOLE] {}\nStack trace:\n{}", err, stack);
+            println!("[ERROR IN JS CONSOLE] {err}\nStack trace:\n{stack}");
         }));
 
         set_on_log(Closure::new(|msg: String| {
-            println!("[JS] {}", msg);
+            println!("[JS] {msg}");
         }));
         app().await
     };
@@ -157,9 +157,9 @@ where
             eprintln!("App thread panicked, shutting down webview");
             // Try to print panic info
             if let Some(s) = panic_info.downcast_ref::<&str>() {
-                eprintln!("Panic message: {}", s);
+                eprintln!("Panic message: {s}");
             } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                eprintln!("Panic message: {}", s);
+                eprintln!("Panic message: {s}");
             }
             1 // Exit with error status on panic
         } else {

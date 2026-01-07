@@ -88,18 +88,18 @@ pub(crate) fn test_jsvalue_from_js() {
 
     // Get values from JS and verify using JsValue methods
     let undef = get_undefined();
-    eprintln!("[TEST] get_undefined() returned idx={:?}", undef);
+    eprintln!("[TEST] get_undefined() returned idx={undef:?}");
     assert!(
         undef.is_undefined(),
         "get_undefined() should return undefined"
     );
 
     let null = get_null();
-    eprintln!("[TEST] get_null() returned idx={:?}", null);
+    eprintln!("[TEST] get_null() returned idx={null:?}");
     assert!(null.is_null(), "get_null() should return null");
 
     let obj = get_object();
-    eprintln!("[TEST] get_object() returned idx={:?}", obj);
+    eprintln!("[TEST] get_object() returned idx={obj:?}");
     assert!(!obj.is_undefined(), "get_object() should NOT be undefined");
     assert!(!obj.is_null(), "get_object() should NOT be null");
 }

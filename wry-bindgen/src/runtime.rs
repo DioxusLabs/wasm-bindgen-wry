@@ -200,6 +200,7 @@ pub async fn wait_for_js_event<R: BinaryDecode>() -> Option<R> {
     .await
 }
 
+#[allow(clippy::await_holding_refcell_ref)]
 pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
     let runtime = get_runtime();
 
@@ -295,7 +296,7 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             // Find the export handler
             let export = crate::inventory::iter::<crate::JsExportSpec>()
                 .find(|e| e.name == export_name)
-                .unwrap_or_else(|| panic!("Unknown export: {}", export_name));
+                .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
 
             // Call the handler
             let result = (export.handler)(data);
@@ -308,7 +309,7 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
                     encoder.extend(&encoded);
                 }),
                 Err(err) => {
-                    panic!("Export call failed: {}", err);
+                    panic!("Export call failed: {err}");
                 }
             };
             runtime.js_response(response);

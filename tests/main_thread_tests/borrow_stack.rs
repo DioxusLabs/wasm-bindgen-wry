@@ -29,10 +29,10 @@ pub(crate) fn test_borrowed_ref_in_callback() {
         // The value should be an object with x = 42
         println!("calling is_undefined");
         let is_undefined = v.is_undefined();
-        println!("is_undefined = {}", is_undefined);
+        println!("is_undefined = {is_undefined}");
         println!("calling is_null");
         let is_null = v.is_null();
-        println!("is_null = {}", is_null);
+        println!("is_null = {is_null}");
         response_clone.set(!is_undefined && !is_null)
     });
 
@@ -249,16 +249,16 @@ pub(crate) fn test_borrowed_ref_deep_nesting() {
             println!("Creating cb3");
             let cb3 = Closure::new(move |ref4: &JsValue| -> JsValue {
                 println!("Calling level4");
-                let out = level4(ref4);
-                out
+
+                level4(ref4)
             });
             println!("Calling level3");
-            let out = level3(ref3, cb3);
-            out
+
+            level3(ref3, cb3)
         });
         println!("Calling level2");
-        let out = level2(ref2, cb2);
-        out
+
+        level2(ref2, cb2)
     });
     println!("Calling level1");
     let result = level1(&obj1, cb1);

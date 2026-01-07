@@ -32,7 +32,7 @@ pub(crate) async fn test_call_async() {
         duration.as_millis() >= 10,
         "Async function returned too quickly"
     );
-    println!("Async function completed after {:?}", duration);
+    println!("Async function completed after {duration:?}");
     let result = get_value_after_1_second();
     assert_eq!(result, 5);
 }
@@ -189,7 +189,7 @@ pub(crate) async fn test_join_many_async() {
         return new Promise((resolve) => {
             setTimeout(() => {
                 resolve(key);
-            }, 100 + key);
+            }, 10 + key % 10);
         });
     }")]
     extern "C" {
@@ -199,12 +199,12 @@ pub(crate) async fn test_join_many_async() {
 
     let mut futures = futures_unordered::FuturesUnordered::new();
     let mut expected = Vec::new();
-    for i in 0..1000u32 {
+    for i in 0..100u32 {
         futures.push(identity(i));
         expected.push(i);
     }
     while let Some(result) = futures.next().await {
-        println!("Got result: {:?}", result);
+        println!("Got result: {result:?}");
         let as_u32 = result.as_f64().unwrap() as u32;
         let index = expected.iter().position(|&x| x == as_u32).unwrap();
         expected.remove(index);

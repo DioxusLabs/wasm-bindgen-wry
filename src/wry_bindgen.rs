@@ -265,7 +265,7 @@ impl WryBindgen {
                     // JS will iterate over operations in the buffer
                     let engine = base64::engine::general_purpose::STANDARD;
                     let data_base64 = engine.encode(ipc_msg.data());
-                    let code = format!("window.evaluate_from_rust_binary(\"{}\")", data_base64);
+                    let code = format!("window.evaluate_from_rust_binary(\"{data_base64}\")");
                     webview.evaluate_script(&code).unwrap();
                 }
             }

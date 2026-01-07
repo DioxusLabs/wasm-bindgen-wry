@@ -21,9 +21,7 @@ fn app() {
 
     // Add a clock with #current-time that updates every second.
     let body = document.body().expect("document should have a body");
-    body.set_inner_html(
-        r#"<canvas id="canvas" height="150" width="150"></canvas>"#,
-    );
+    body.set_inner_html(r#"<canvas id="canvas" height="150" width="150"></canvas>"#);
 
     let document = web_sys::window().unwrap().document().unwrap();
     let canvas = document.get_element_by_id("canvas").unwrap();
@@ -63,5 +61,4 @@ fn app() {
         .unwrap();
 
     context.stroke();
-
 }

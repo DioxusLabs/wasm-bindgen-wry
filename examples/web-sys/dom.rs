@@ -6,7 +6,7 @@ use web_sys::{Document, HtmlElement};
 use wry_testing::run;
 
 fn main() -> wry::Result<()> {
-    run(||async  {
+    run(|| async {
         app();
         std::future::pending().await
     })

@@ -3,6 +3,10 @@
 //! This module provides types for calling JavaScript functions from Rust
 //! and for registering Rust callbacks that can be called from JavaScript.
 
+// Allow clippy lints for macro-generated code and internal types
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -27,9 +31,9 @@ pub const CALL_EXPORT_FN_ID: u32 = 0xFFFFFFFE;
 
 thread_local! {
     /// Cache mapping type definition bytes to the assigned type_id for the JS side
-    static TYPE_CACHE: RefCell<BTreeMap<Vec<u8>, u32>> = RefCell::new(BTreeMap::new());
+    static TYPE_CACHE: RefCell<BTreeMap<Vec<u8>, u32>> = const { RefCell::new(BTreeMap::new()) };
     /// Next type ID to assign
-    static NEXT_TYPE_ID: Cell<u32> = Cell::new(0);
+    static NEXT_TYPE_ID: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Encode type definitions for a function call.

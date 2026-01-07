@@ -333,7 +333,7 @@ impl Parse for BindgenAttr {
 
             _ => Err(syn::Error::new(
                 span,
-                format!("unknown wasm_bindgen attribute: `{}`", name),
+                format!("unknown wasm_bindgen attribute: `{name}`"),
             )),
         }
     }

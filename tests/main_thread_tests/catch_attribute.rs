@@ -12,8 +12,8 @@ pub(crate) fn test_catch_throws_error() {
     assert!(result.is_err(), "Expected error from throwing function");
 
     if let Err(e) = result {
-        let error_string = format!("{:?}", e);
-        println!("Caught error: {}", error_string);
+        let error_string = format!("{e:?}");
+        println!("Caught error: {error_string}");
         assert!(
             error_string.contains("test error") || error_string.contains("Error"),
             "Error should contain error message"

@@ -101,8 +101,7 @@ impl BatchState {
 
         debug_assert!(
             !self.free_ids.contains(&id) && !self.ids_to_free.iter().any(|ids| ids.contains(&id)),
-            "Double-free detected for heap ID {}",
-            id
+            "Double-free detected for heap ID {id}"
         );
         match self.ids_to_free.last_mut() {
             Some(ids) => {
@@ -179,8 +178,7 @@ pub fn is_batching() -> bool {
 pub(crate) fn queue_js_drop(id: u64) {
     debug_assert!(
         id >= JSIDX_RESERVED,
-        "Attempted to drop reserved JS heap ID {}",
-        id
+        "Attempted to drop reserved JS heap ID {id}"
     );
     BATCH_STATE.with(|state| {
         let id = { state.borrow_mut().release_heap_id(id) };
