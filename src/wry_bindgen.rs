@@ -7,9 +7,7 @@
 use base64::Engine;
 use std::cell::RefCell;
 use std::rc::Rc;
-
 use wry::RequestAsyncResponder;
-
 use wasm_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
 use wasm_bindgen::runtime::{AppEvent, get_runtime};
 
@@ -225,6 +223,10 @@ impl WryBindgen {
         match event {
             AppEvent::Shutdown(status) => {
                 return Some(status);
+            }
+            AppEvent::RunOnMainThread(task) => {
+                task.execute();
+                return None;
             }
             // The rust thread sent us an IPCMessage to send to JS
             AppEvent::Ipc(ipc_msg) => {

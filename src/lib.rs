@@ -23,7 +23,7 @@ pub use wry_bindgen::WryBindgen;
 // Re-export prelude items that apps need
 pub use wasm_bindgen::JsValue;
 pub use wasm_bindgen::prelude::{
-    AppEvent, batch, set_event_loop_proxy, shutdown, wait_for_js_result,
+    AppEvent, batch, run_on_main_thread, set_event_loop_proxy, shutdown, wait_for_js_result,
 };
 
 use crate::bindings::set_on_error;
