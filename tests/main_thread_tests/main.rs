@@ -1,5 +1,5 @@
 use tokio::select;
-use wasm_bindgen::wasm_bindgen;
+use wasm_bindgen::{batch::batch_async, wasm_bindgen};
 
 mod add_number_js;
 mod async_bindings;
@@ -26,37 +26,45 @@ extern "C" {
     pub fn heap_objects_alive() -> u32;
 }
 
-async fn test_with_js_context_allow_new_js_values<F: FnOnce()>(f: F) {
+async fn test_with_js_context_allow_new_js_values<F: Fn()>(f: F) {
     async_test_with_js_context_allow_new_js_values(async || f()).await;
 }
 
 async fn async_test_with_js_context_allow_new_js_values<
     Fut: std::future::Future<Output = ()>,
-    F: FnOnce() -> Fut,
+    F: Fn() -> Fut,
 >(
     f: F,
 ) {
-    println!("testing {}", std::any::type_name::<F>());
+    println!("testing {} outside of batch", std::any::type_name::<F>());
     select! {
         result = f() => result,
         _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
             panic!("Test timed out after 5 seconds");
         }
     };
+    println!("testing {} inside of batch", std::any::type_name::<F>());
+    select! {
+        result = batch_async(f()) => result,
+        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+            panic!("Test timed out after 5 seconds");
+        }
+    };
 }
 
-async fn test_with_js_context<F: FnOnce()>(f: F) {
+async fn test_with_js_context<F: Fn()>(f: F) {
     async_test_with_js_context_allow_new_js_values(async || f()).await;
 }
 
-async fn async_test_with_js_context<Fut: std::future::Future<Output = ()>, F: FnOnce() -> Fut>(
-    f: F,
-) {
-    async_test_with_js_context_allow_new_js_values(|| async move {
-        // let before = heap_objects_alive();
-        f().await;
-        // let after = heap_objects_alive();
-        // assert_eq!(before, after, "JS heap object leak detected");
+async fn async_test_with_js_context<Fut: std::future::Future<Output = ()>, F: Fn() -> Fut>(f: F) {
+    async_test_with_js_context_allow_new_js_values(move || {
+        let f = f();
+        async move {
+            // let before = heap_objects_alive();
+            f.await;
+            // let after = heap_objects_alive();
+            // assert_eq!(before, after, "JS heap object leak detected");
+        }
     })
     .await;
 }

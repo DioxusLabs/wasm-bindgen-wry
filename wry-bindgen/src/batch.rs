@@ -5,6 +5,7 @@
 
 use alloc::vec::Vec;
 use core::cell::RefCell;
+use std::boxed::Box;
 
 use crate::DecodedData;
 use crate::encode::{BatchableResult, BinaryDecode};
@@ -303,6 +304,14 @@ pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     BATCH_STATE.with(|state| state.borrow_mut().set_batching(currently_batching));
 
     result
+}
+
+/// Like `batch`, but async.
+pub fn batch_async<'a, R, F: core::future::Future<Output = R> + 'a>(
+    f: F,
+) -> impl core::future::Future<Output = R> + 'a {
+    let mut f = Box::pin(f);
+    std::future::poll_fn(move |ctx| batch(|| f.as_mut().poll(ctx)))
 }
 
 pub fn force_flush() {
