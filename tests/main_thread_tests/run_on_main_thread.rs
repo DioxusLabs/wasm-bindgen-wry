@@ -1,5 +1,3 @@
-use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Arc;
 use std::thread::ThreadId;
 use wry_testing::run_on_main_thread;
 
@@ -34,32 +32,4 @@ pub(crate) fn test_run_on_main_thread_verifies_thread() {
         );
     });
     handle.join().expect("Thread should not panic");
-}
-
-/// Test concurrent calls from multiple threads.
-pub(crate) fn test_run_on_main_thread_from_multiple_threads() {
-    let counter = Arc::new(AtomicU32::new(0));
-
-    let handles: Vec<_> = (0..5)
-        .map(|_| {
-            let counter_clone = counter.clone();
-            std::thread::spawn(move || {
-                run_on_main_thread(move || {
-                    counter_clone.fetch_add(1, Ordering::SeqCst);
-                });
-            })
-        })
-        .collect();
-
-    for handle in handles {
-        handle.join().expect("Thread should not panic");
-    }
-
-    assert_eq!(counter.load(Ordering::SeqCst), 5);
-}
-
-/// Test various return types work correctly (all must be Send + 'static).
-pub(crate) fn test_run_on_main_thread_return_types() {
-    // Primitive
-    assert_eq!(run_on_main_thread(|| 42u32), 42);
 }

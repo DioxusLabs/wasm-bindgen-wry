@@ -7,9 +7,9 @@
 use base64::Engine;
 use std::cell::RefCell;
 use std::rc::Rc;
-use wry::RequestAsyncResponder;
 use wasm_bindgen::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
 use wasm_bindgen::runtime::{AppEvent, get_runtime};
+use wry::RequestAsyncResponder;
 
 use crate::FunctionRegistry;
 

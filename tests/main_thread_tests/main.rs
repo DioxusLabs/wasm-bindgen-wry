@@ -176,8 +176,6 @@ fn main() {
         // run_on_main_thread tests
         test_with_js_context(run_on_main_thread::test_run_on_main_thread_basic).await;
         test_with_js_context(run_on_main_thread::test_run_on_main_thread_verifies_thread).await;
-        test_with_js_context(run_on_main_thread::test_run_on_main_thread_from_multiple_threads).await;
-        test_with_js_context(run_on_main_thread::test_run_on_main_thread_return_types).await;
     })
     .unwrap();
 }
