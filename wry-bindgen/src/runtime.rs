@@ -7,8 +7,8 @@ use core::any::Any;
 use core::error::Error;
 use core::fmt::Display;
 use core::pin::Pin;
-use std::sync::mpsc;
 use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::thread::ThreadId;
 
 use alloc::boxed::Box;
