@@ -327,6 +327,7 @@ impl<T: ?Sized> Closure<T> {
     pub fn once_into_js<F, M>(fn_once: F) -> JsValue
     where
         F: WasmClosureFnOnce<T, M>,
+        T: Sized
     {
         Closure::once(fn_once).into_js_value()
     }
