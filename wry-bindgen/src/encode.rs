@@ -54,11 +54,11 @@ pub trait BatchableResult: BinaryDecode {
 
 /// Marker for cached type definition (type already sent, just reference by ID)
 /// Format: [TYPE_CACHED] [type_id: u32]
-pub const TYPE_CACHED: u8 = 0xFF;
+pub(crate) const TYPE_CACHED: u8 = 0xFF;
 
 /// Marker for full type definition (first time sending this type signature)
 /// Format: [TYPE_FULL] [type_id: u32] [param_count: u8] [param TypeDefs...] [return TypeDef]
-pub const TYPE_FULL: u8 = 0xFE;
+pub(crate) const TYPE_FULL: u8 = 0xFE;
 
 /// Type tags for the binary type definition protocol.
 /// Used to encode type information that JavaScript can parse to create TypeClass instances.

@@ -1,3 +1,5 @@
+use wasm_bindgen::wry::WryBindgen;
+
 pub fn root_response() -> wry::http::Response<Vec<u8>> {
     // Serve the main HTML page
     let html = format!(
@@ -10,7 +12,7 @@ pub fn root_response() -> wry::http::Response<Vec<u8>> {
 <body>
 </body>
 </html>"#,
-        include_str!("./js/main.js")
+        WryBindgen::INITIALIZATION_SCRIPT
     );
 
     wry::http::Response::builder()

@@ -138,6 +138,10 @@ pub struct WryBindgen {
 }
 
 impl WryBindgen {
+    /// The script you need to include in the initialization of your webview.
+    pub const INITIALIZATION_SCRIPT: &'static str = include_str!("./js/main.js");
+
+
     /// Create a new WryBindgen instance.
     ///
     /// # Arguments

@@ -7,14 +7,10 @@
 //!
 //! The crate is organized into several modules:
 //!
-//! - [`ipc`] - Binary IPC protocol types for message encoding/decoding
 //! - [`encode`] - Core encoding/decoding traits for Rust types
-//! - `value` - JsValue type representing JavaScript heap references
 //! - [`function`] - JSFunction type for calling JavaScript functions
 //! - [`mod@batch`] - Batching system for grouping multiple JS operations
 //! - [`runtime`] - Event loop and runtime management
-//! - `cast` - Type casting trait for JavaScript types
-//! - `lazy` - Lazy initialization for global JavaScript values
 
 #![no_std]
 
