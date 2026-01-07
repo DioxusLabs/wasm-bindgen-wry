@@ -18,7 +18,6 @@ use spin::RwLock;
 use slotmap::{DefaultKey, KeyData};
 
 use crate::MessageType;
-use crate::encode::BinaryDecode;
 use crate::function::{
     CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_OBJECT_ENCODER,
 };
@@ -66,21 +65,23 @@ struct IPCReceivers {
 }
 
 impl IPCReceivers {
-    pub async fn recv(&mut self) -> IPCMessage {
-        let Self {
-            eval_receiver,
-            respond_receiver,
-        } = self;
-        futures_util::select_biased! {
-            // We need to always poll the respond receiver first. If the response is ready, quit immediately
-            // before running any more callbacks
-            respond_msg = respond_receiver.next().fuse() => {
-                respond_msg.expect("Failed to receive respond message")
-            },
-            eval_msg = eval_receiver.next().fuse() => {
-                eval_msg.expect("Failed to receive evaluate message")
-            },
-        }
+    pub fn recv_blocking(&mut self) -> IPCMessage {
+        pollster::block_on(async {
+            let Self {
+                eval_receiver,
+                respond_receiver,
+            } = self;
+            futures_util::select_biased! {
+                // We need to always poll the respond receiver first. If the response is ready, quit immediately
+                // before running any more callbacks
+                respond_msg = respond_receiver.next().fuse() => {
+                    respond_msg.expect("Failed to receive respond message")
+                },
+                eval_msg = eval_receiver.next().fuse() => {
+                    eval_msg.expect("Failed to receive evaluate message")
+                },
+            }
+        })
     }
 }
 
@@ -179,36 +180,13 @@ thread_local! {
     }));
 }
 
-/// Wait for a JS response, handling any Rust callbacks that occur during the wait.
-pub async fn wait_for_js_result<R: BinaryDecode>() -> R {
-    loop {
-        if let Some(result) = wait_for_js_event::<R>().await {
-            return result;
-        }
-    }
-}
-
-pub async fn wait_for_js_event<R: BinaryDecode>() -> Option<R> {
-    progress_js_with(|mut data| {
-        let response = R::decode(&mut data).expect("Failed to decode return value");
-        assert!(
-            data.is_empty(),
-            "Extra data remaining after decoding response"
-        );
-        response
-    })
-    .await
-}
-
-#[allow(clippy::await_holding_refcell_ref)]
-pub async fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
+pub(crate) fn progress_js_with<O>(with_respond: impl for<'a> Fn(DecodedData<'a>) -> O) -> Option<O> {
     let runtime = get_runtime();
 
     let response = THREAD_LOCAL_RECEIVER
         .with(|receiver| receiver.clone())
         .borrow_mut()
-        .recv()
-        .await;
+        .recv_blocking();
 
     let decoder = response.decoded().expect("Failed to decode response");
     match decoder {

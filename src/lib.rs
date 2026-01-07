@@ -23,7 +23,7 @@ pub use wry_bindgen::WryBindgen;
 // Re-export prelude items that apps need
 pub use wasm_bindgen::JsValue;
 pub use wasm_bindgen::prelude::{
-    AppEvent, batch, set_event_loop_proxy, shutdown, wait_for_js_result,
+    AppEvent, batch, set_event_loop_proxy, shutdown,
 };
 
 use crate::bindings::set_on_error;
@@ -47,7 +47,6 @@ use crate::bindings::set_on_error;
 ///         let document = WINDOW.with(|w| w.document());
 ///         // ... build your UI
 ///     });
-///     wait_for_js_event::<()>();
 /// }
 /// ```
 pub fn run<F, Fut>(app: F) -> wry::Result<()>
@@ -77,7 +76,6 @@ where
 ///         let document = WINDOW.with(|w| w.document());
 ///         // ... build your UI
 ///     });
-///     wait_for_js_event::<()>();
 /// }
 /// ```
 pub fn run_headless<F, Fut>(app: F) -> wry::Result<()>
