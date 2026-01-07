@@ -5,7 +5,7 @@
 
 use std::rc::Rc;
 
-use wasm_bindgen::{JsValue, wasm_bindgen};
+use wasm_bindgen::{JsValue, batch::force_flush, wasm_bindgen};
 
 /// Test borrowed refs with callbacks
 pub(crate) fn test_borrowed_ref_in_callback() {
@@ -37,6 +37,8 @@ pub(crate) fn test_borrowed_ref_in_callback() {
     });
 
     call_with_value(callback, &val);
+    // force a flush to make all callbacks execute
+    force_flush();
     let result = response.get();
     assert!(result, "Callback should receive valid borrowed ref");
 }
@@ -153,6 +155,11 @@ pub(crate) fn test_borrowed_ref_nested_frames() {
     // JS will call our callback with inner_obj as borrowed ref
     // Our callback will call JS with innermost_obj as borrowed ref
     let result = call_with_refs(&outer_obj, callback);
+
+    // Force a flush before checking callback state (needed for batch mode)
+    // Since call_with_refs returns JsValue (needs_flush=false), the batch may not have
+    // executed yet.
+    force_flush();
 
     // Verify callback was called
     assert!(
