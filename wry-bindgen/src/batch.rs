@@ -6,8 +6,8 @@
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use crate::ipc::DecodedData;
 use crate::encode::{BatchableResult, BinaryDecode};
+use crate::ipc::DecodedData;
 use crate::ipc::{EncodedData, IPCMessage, MessageType};
 use crate::runtime::get_runtime;
 use crate::value::{JSIDX_OFFSET, JSIDX_RESERVED};

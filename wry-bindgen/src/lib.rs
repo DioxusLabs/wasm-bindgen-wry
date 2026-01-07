@@ -437,9 +437,7 @@ impl JsCast for JsError {
 pub use batch::batch;
 pub use encode::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
 pub use function::JSFunction;
-pub use ipc::{
-    DecodeError, DecodedData, EncodedData,
-};
+pub use ipc::{DecodeError, DecodedData, EncodedData};
 pub use runtime::{WryRuntime, start_app};
 
 // Re-export the macros
