@@ -907,10 +907,7 @@ pub fn throw_val(s: JsValue) -> ! {
 #[cold]
 #[inline(never)]
 pub fn throw_str(s: &str) -> ! {
-    panic!(
-        "cannot throw JS exception when running outside of wasm: {}",
-        s
-    );
+    panic!("cannot throw JS exception when running outside of wasm: {s}");
 }
 
 /// Returns the number of live externref objects.
