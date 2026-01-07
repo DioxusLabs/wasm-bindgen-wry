@@ -10,8 +10,8 @@ echo "Generating wry-bindgen public API..."
 
 # Filter out cosmetic differences and unstable APIs
 filter_cosmetic() {
-    grep -v "^pub fn " |            # Method signatures from trait impls (cosmetic formatting differences)
-    grep -v "^pub type.*::Output = <&'static wasm_bindgen::JsValue" |          # Type aliases formatted differently
+    # grep -v "^pub fn " |            # Method signatures from trait impls (cosmetic formatting differences)
+    grep -v "^.*<&'static wasm_bindgen::JsValue as" |          # Type aliases formatted differently
     grep -v "^pub type.*Prim\d" |          # Types from unstable convert traits
     grep -v "convert::" |           # Unstable convert module (low priority)
     grep -v "WasmRet" |             # Unstable convert types
@@ -24,12 +24,10 @@ filter_cosmetic() {
     grep -v "from_abi" |            # Unstable ABI methods
     grep -v "::Abi" |               # ABI type aliases
     grep -v "::Anchor" |            # Anchor type aliases
-    grep -v "UnwrapThrowExt" |      # WASM-specific panic trait
     grep -v "JsStatic" |            # Deprecated
-    grep -v "JsThreadLocal" |       # Thread local wrapper
     grep -v "impl core::ops.*for &wasm_bindgen::JsValue$" |  # impl Op for &JsValue (cosmetic: we use impl Op<&JsValue> for &JsValue)
     grep -v "impl<'a> core::cmp::PartialEq<&'a" |  # Explicit lifetime PartialEq (cosmetic: we use non-lifetime version)
-    grep -v "?core::marker::Sized" |  # Unsized bounds (cosmetic difference)
+    grep -v "?core::marker::Sized" |
     grep -v "^pub struct wasm_bindgen::JsError$" |  # JsError struct (we have #[repr(transparent)] prefix)
     grep -v "^pub struct wasm_bindgen::prelude::JsError$"  # JsError in prelude (same as above)
 }

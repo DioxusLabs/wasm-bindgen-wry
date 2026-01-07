@@ -251,7 +251,7 @@ pub struct Closure<T: ?Sized> {
     pub(crate) value: JsValue,
 }
 
-impl<T: ?Sized> Closure<T> {
+impl<T> Closure<T> {
     pub fn new<M, F: IntoClosure<M, Self>>(f: F) -> Self {
         f.into_closure()
     }
@@ -286,7 +286,8 @@ impl<T: ?Sized> AsRef<JsValue> for Closure<T> {
     }
 }
 
-impl<T: ?Sized> core::fmt::Debug for Closure<T> {
+impl<T> core::fmt::Debug for Closure<T>
+{
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Closure")
             .field("value", &self.value)
@@ -454,8 +455,8 @@ pub use ipc::{
 pub use runtime::{WryRuntime, get_runtime, set_event_loop_proxy, wait_for_js_result};
 
 // Re-export the macros
-pub use wry_bindgen_macro::wasm_bindgen;
 pub use wry_bindgen_macro::link_to;
+pub use wry_bindgen_macro::wasm_bindgen;
 
 // Re-export inventory for macro use
 pub use inventory;
@@ -865,7 +866,7 @@ macro_rules! __wry_bindgen_thread_local {
 
 /// Extension trait for Option to unwrap or throw a JS error.
 /// This is API-compatible with wasm-bindgen's UnwrapThrowExt.
-pub trait UnwrapThrowExt<T> {
+pub trait UnwrapThrowExt<T>: Sized {
     /// Unwrap the value or panic with a message.
     fn unwrap_throw(self) -> T;
 
@@ -883,7 +884,10 @@ impl<T> UnwrapThrowExt<T> for Option<T> {
     }
 }
 
-impl<T, E: core::fmt::Debug> UnwrapThrowExt<T> for Result<T, E> {
+impl<T, E> UnwrapThrowExt<T> for Result<T, E>
+where
+    E: core::fmt::Debug,
+{
     fn unwrap_throw(self) -> T {
         self.expect("called `Result::unwrap_throw()` on an `Err` value")
     }
@@ -906,7 +910,10 @@ pub fn throw_val(s: JsValue) -> ! {
 #[cold]
 #[inline(never)]
 pub fn throw_str(s: &str) -> ! {
-    panic!("cannot throw JS exception when running outside of wasm: {}", s);
+    panic!(
+        "cannot throw JS exception when running outside of wasm: {}",
+        s
+    );
 }
 
 /// Returns the number of live externref objects.

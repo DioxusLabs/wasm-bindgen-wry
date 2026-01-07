@@ -28,7 +28,7 @@ pub struct JsThreadLocal<T: 'static> {
     inner: &'static LocalKey<T>,
 }
 
-impl<T: 'static> JsThreadLocal<T> {
+impl<T> JsThreadLocal<T> {
     /// Create a new `JsThreadLocal` from a `LocalKey`.
     #[doc(hidden)]
     pub const fn new(inner: &'static LocalKey<T>) -> Self {
