@@ -7,12 +7,12 @@ use core::any::Any;
 use core::error::Error;
 use core::fmt::Display;
 use core::pin::Pin;
+use std::sync::mpsc;
 use std::sync::OnceLock;
 use std::thread::ThreadId;
 
 use alloc::boxed::Box;
 use async_channel::{Receiver, Sender};
-use futures_channel::oneshot;
 use futures_util::{FutureExt, StreamExt};
 use once_cell::sync::OnceCell;
 use spin::RwLock;
@@ -29,14 +29,14 @@ use crate::wry::WryBindgen;
 /// A task to be executed on the main thread with completion signaling and return value.
 pub struct MainThreadTask {
     task: Box<dyn FnOnce() -> Box<dyn Any + Send + 'static> + Send + 'static>,
-    completion: Option<oneshot::Sender<Box<dyn Any + Send + 'static>>>,
+    completion: Option<mpsc::SyncSender<Box<dyn Any + Send + 'static>>>,
 }
 
 impl MainThreadTask {
     /// Create a new main thread task.
     pub fn new(
         task: Box<dyn FnOnce() -> Box<dyn Any + Send + 'static> + Send + 'static>,
-        completion: oneshot::Sender<Box<dyn Any + Send + 'static>>,
+        completion: mpsc::SyncSender<Box<dyn Any + Send + 'static>>,
     ) -> Self {
         Self {
             task,
@@ -315,15 +315,14 @@ where
         return f();
     }
 
-    let (tx, rx) = oneshot::channel::<Box<dyn Any + Send + 'static>>();
+    let (tx, rx) = mpsc::sync_channel::<Box<dyn Any + Send + 'static>>(1);
     let task = MainThreadTask::new(
         Box::new(move || Box::new(f()) as Box<dyn Any + Send + 'static>),
         tx,
     );
     let runtime = get_runtime();
     (runtime.proxy)(AppEvent::run_on_main_thread(task));
-    let result = pollster::block_on(rx).expect("Main thread did not complete the task");
-    // SAFETY: We know the type is T because we boxed it as T above
+    let result = rx.recv().expect("Main thread did not complete the task");
     *result
         .downcast::<T>()
         .expect("Failed to downcast return value")
