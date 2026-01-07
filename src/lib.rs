@@ -19,6 +19,7 @@ pub use bindings::set_on_log;
 // Re-export prelude items that apps need
 pub use wasm_bindgen::JsValue;
 pub use wasm_bindgen::prelude::batch;
+pub use wasm_bindgen::run_on_main_thread;
 
 use crate::bindings::set_on_error;
 

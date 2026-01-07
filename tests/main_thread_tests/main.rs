@@ -13,6 +13,7 @@ mod jsvalue;
 mod module_import;
 mod reentrant_callbacks;
 mod roundtrip;
+mod run_on_main_thread;
 mod string_enum;
 mod structs;
 mod thread_local;
@@ -171,6 +172,10 @@ fn main() {
         async_test_with_js_context(async_bindings::test_async_method_with_catch).await;
         async_test_with_js_context(async_bindings::test_async_static_method).await;
         async_test_with_js_context(async_bindings::test_join_many_async).await;
+
+        // run_on_main_thread tests
+        test_with_js_context(run_on_main_thread::test_run_on_main_thread_basic).await;
+        test_with_js_context(run_on_main_thread::test_run_on_main_thread_verifies_thread).await;
     })
     .unwrap();
 }

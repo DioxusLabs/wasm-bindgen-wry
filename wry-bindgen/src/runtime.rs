@@ -3,9 +3,13 @@
 //! This module handles the connection between the Rust runtime and the
 //! JavaScript environment via winit's event loop.
 
+use core::any::Any;
 use core::error::Error;
 use core::fmt::Display;
 use core::pin::Pin;
+use std::sync::OnceLock;
+use std::sync::mpsc;
+use std::thread::ThreadId;
 
 use alloc::boxed::Box;
 use async_channel::{Receiver, Sender};
@@ -21,6 +25,41 @@ use crate::function::{
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 use crate::wry::WryBindgen;
+
+/// A task to be executed on the main thread with completion signaling and return value.
+pub struct MainThreadTask {
+    task: Box<dyn FnOnce() -> Box<dyn Any + Send + 'static> + Send + 'static>,
+    completion: Option<mpsc::SyncSender<Box<dyn Any + Send + 'static>>>,
+}
+
+impl MainThreadTask {
+    /// Create a new main thread task.
+    pub fn new(
+        task: Box<dyn FnOnce() -> Box<dyn Any + Send + 'static> + Send + 'static>,
+        completion: mpsc::SyncSender<Box<dyn Any + Send + 'static>>,
+    ) -> Self {
+        Self {
+            task,
+            completion: Some(completion),
+        }
+    }
+
+    /// Execute the task and signal completion with the return value.
+    pub fn execute(mut self) {
+        let result = (self.task)();
+        if let Some(sender) = self.completion.take() {
+            let _ = sender.send(result);
+        }
+    }
+}
+
+impl std::fmt::Debug for MainThreadTask {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MainThreadTask")
+            .field("task", &"<closure>")
+            .finish()
+    }
+}
 
 /// Application-level events that can be sent through the event loop.
 ///
@@ -53,6 +92,13 @@ impl AppEvent {
         }
     }
 
+    /// Create a new run-on-main-thread event.
+    fn run_on_main_thread(task: MainThreadTask) -> Self {
+        Self {
+            event: AppEventVariant::RunOnMainThread(task),
+        }
+    }
+
     /// Consume the event and return the inner variant.
     pub(crate) fn into_variant(self) -> AppEventVariant {
         self.event
@@ -67,6 +113,8 @@ pub(crate) enum AppEventVariant {
     WebviewLoaded,
     /// Request to shut down the application with a status code
     Shutdown(i32),
+    /// Execute a closure on the main thread
+    RunOnMainThread(MainThreadTask),
 }
 
 pub struct IPCSenders {
@@ -164,6 +212,15 @@ impl WryRuntime {
 }
 
 static RUNTIME: OnceCell<WryRuntime> = OnceCell::new();
+static MAIN_THREAD_ID: OnceLock<ThreadId> = OnceLock::new();
+
+/// Check if the current thread is the main thread.
+fn is_main_thread() -> bool {
+    MAIN_THREAD_ID
+        .get()
+        .map(|id| *id == std::thread::current().id())
+        .unwrap_or(false)
+}
 
 /// Error indicating that the runtime has already been started.
 #[derive(Debug)]
@@ -186,6 +243,11 @@ pub fn start_app<F>(
 where
     F: core::future::Future<Output = ()> + 'static,
 {
+    // Record the main thread ID before doing anything else
+    MAIN_THREAD_ID
+        .set(std::thread::current().id())
+        .unwrap_or_else(|_| panic!("Main thread ID already set"));
+
     let event_loop_proxy = Box::new(event_loop_proxy) as Box<dyn Fn(AppEvent) + Send + Sync>;
     if RUNTIME.set(WryRuntime::new(event_loop_proxy)).is_err() {
         eprintln!("start_app can only be called once per process. Exiting.");
@@ -229,6 +291,41 @@ where
 /// the webview to close and the application to exit with the given status code.
 pub(crate) fn shutdown(status: i32) {
     get_runtime().shutdown(status);
+}
+
+/// Execute a closure on the main thread (winit event loop thread) and block until it completes,
+/// returning the closure's result.
+///
+/// This function is useful for operations that must be performed on the main thread,
+/// such as certain GUI operations or accessing thread-local state on the main thread.
+///
+/// # Panics
+/// - Panics if called before the runtime is initialized (before `start_app` is called)
+/// - If the main thread exits before completing the task
+///
+/// # Note
+/// If called from the main thread, the closure is executed immediately to avoid deadlock.
+pub fn run_on_main_thread<T, F>(f: F) -> T
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    // If we're already on the main thread, execute immediately to avoid deadlock
+    if is_main_thread() {
+        return f();
+    }
+
+    let (tx, rx) = mpsc::sync_channel::<Box<dyn Any + Send + 'static>>(1);
+    let task = MainThreadTask::new(
+        Box::new(move || Box::new(f()) as Box<dyn Any + Send + 'static>),
+        tx,
+    );
+    let runtime = get_runtime();
+    (runtime.proxy)(AppEvent::run_on_main_thread(task));
+    let result = rx.recv().expect("Main thread did not complete the task");
+    *result
+        .downcast::<T>()
+        .expect("Failed to downcast return value")
 }
 
 /// Get the runtime environment.

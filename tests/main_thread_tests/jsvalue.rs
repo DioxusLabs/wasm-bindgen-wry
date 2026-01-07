@@ -734,9 +734,9 @@ pub(crate) fn test_owned_bitwise_operators() {
     let result = make_num(20.0) >> make_num(2.0);
     assert_eq!(to_int(&result), 5, "owned >> owned should work");
 
-    // Test !owned (bitwise not)
+    // Test !owned (logical not / is_falsy)
     let result = !make_num(10.0);
-    assert!(!result, "!! truthy value should be true work");
+    assert!(!result, "!! truthy value should be true");
 
     // Test mixed ownership
     let a = make_num(10.0);

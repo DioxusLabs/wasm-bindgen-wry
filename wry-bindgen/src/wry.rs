@@ -264,6 +264,10 @@ impl WryBindgen {
             AppEventVariant::Shutdown(status) => {
                 return Some(status);
             }
+            AppEventVariant::RunOnMainThread(task) => {
+                task.execute();
+                return None;
+            }
             // The rust thread sent us an IPCMessage to send to JS
             AppEventVariant::Ipc(ipc_msg) => {
                 {
