@@ -532,9 +532,10 @@ impl Neg for &JsValue {
 }
 
 impl Not for &JsValue {
-    type Output = JsValue;
-    fn not(self) -> JsValue {
-        JsValue::bit_not(self)
+    type Output = bool;
+
+    fn not(self) -> Self::Output {
+        JsValue::is_falsy(self)
     }
 }
 
@@ -616,9 +617,9 @@ impl Neg for JsValue {
 }
 
 impl Not for JsValue {
-    type Output = JsValue;
-    fn not(self) -> JsValue {
-        JsValue::bit_not(&self)
+    type Output = bool;
+    fn not(self) -> Self::Output {
+        JsValue::is_falsy(&self)
     }
 }
 

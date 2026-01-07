@@ -150,10 +150,10 @@ impl TryFrom<JsValue> for f64 {
 }
 
 impl TryFrom<&JsValue> for f64 {
-    type Error = ();
+    type Error = JsValue;
 
     fn try_from(value: &JsValue) -> Result<Self, Self::Error> {
-        value.as_f64().ok_or(())
+        value.as_f64().ok_or_else(|| value.clone())
     }
 }
 
