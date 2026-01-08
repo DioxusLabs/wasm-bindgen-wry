@@ -32,7 +32,7 @@ fn encode_function_types(encoder: &mut EncodedData, encode_types: impl FnOnce(&m
     let mut type_buf = Vec::new();
     encode_types(&mut type_buf);
 
-    crate::batch::BATCH_STATE.with(|state| {
+    crate::batch::RUNTIME.with(|state| {
         let (id, is_cached) = state.borrow_mut().get_or_create_type_id(type_buf.clone());
         if is_cached {
             // Cached - just send marker + ID

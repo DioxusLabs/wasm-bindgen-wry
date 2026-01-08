@@ -17,7 +17,7 @@ use futures_util::{FutureExt, StreamExt};
 use spin::RwLock;
 
 use crate::BinaryDecode;
-use crate::batch::BATCH_STATE;
+use crate::batch::RUNTIME;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
@@ -383,7 +383,7 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
 
             // Clone the Rc while briefly borrowing the batch state, then release the borrow.
             // This allows nested callbacks to access the object store during our callback execution.
-            let callback = BATCH_STATE.with(|state| {
+            let callback = RUNTIME.with(|state| {
                 let state = state.borrow();
                 let rust_callback = state.get_object::<RustCallback>(key);
 
@@ -391,7 +391,7 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             });
 
             // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
-            crate::batch::BATCH_STATE.with(|state| state.borrow_mut().push_borrow_frame());
+            crate::batch::RUNTIME.with(|state| state.borrow_mut().push_borrow_frame());
 
             // Call through the cloned Rc (uniform Fn interface)
             let response = IPCMessage::new_respond(|encoder| {
@@ -399,7 +399,7 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             });
 
             // Pop the borrow frame after the callback completes
-            crate::batch::BATCH_STATE.with(|state| state.borrow_mut().pop_borrow_frame());
+            crate::batch::RUNTIME.with(|state| state.borrow_mut().pop_borrow_frame());
 
             // Send response to JS
             runtime.js_response(response);

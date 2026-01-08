@@ -270,7 +270,7 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
                 false
             }
 
-            fn batched_placeholder(batch: &mut #krate::batch::BatchState) -> Self {
+            fn batched_placeholder(batch: &mut #krate::batch::Runtime) -> Self {
                 Self { obj: <#krate::JsValue as #krate::BatchableResult>::batched_placeholder(batch) }
             }
         }
@@ -1064,7 +1064,7 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
                 true
             }
 
-            fn batched_placeholder(_batch: &mut #krate::batch::BatchState) -> Self {
+            fn batched_placeholder(_batch: &mut #krate::batch::Runtime) -> Self {
                 ::core::unreachable!("needs_flush types should never call batched_placeholder")
             }
         }
@@ -1215,7 +1215,7 @@ fn generate_export_struct(s: &ExportStruct, krate: &TokenStream) -> syn::Result<
                 true
             }
 
-            fn batched_placeholder(_: &mut #krate::batch::BatchState) -> Self {
+            fn batched_placeholder(_: &mut #krate::batch::Runtime) -> Self {
                 ::core::unreachable!("needs_flush types should never call batched_placeholder")
             }
         }

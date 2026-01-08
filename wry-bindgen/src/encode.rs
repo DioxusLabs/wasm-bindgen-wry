@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 
 use crate::Closure;
 use crate::WasmClosureFnOnce;
-use crate::batch::{BATCH_STATE, BatchState};
+use crate::batch::{RUNTIME, Runtime};
 use crate::convert::RefFromBinaryDecode;
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::object_store::ObjectHandle;
@@ -48,7 +48,7 @@ pub trait BatchableResult: BinaryDecode {
     /// For opaque types, this reserves a heap ID from the batch.
     /// For trivial types like (), this returns the known value.
     /// For types that need_flush, this is never called.
-    fn batched_placeholder(batch: &mut BatchState) -> Self;
+    fn batched_placeholder(batch: &mut Runtime) -> Self;
 }
 
 /// Marker for cached type definition (type already sent, just reference by ID)
@@ -120,7 +120,7 @@ impl BatchableResult for () {
         false
     }
 
-    fn batched_placeholder(_: &mut BatchState) -> Self {}
+    fn batched_placeholder(_: &mut Runtime) -> Self {}
 }
 
 impl EncodeTypeDef for () {
@@ -502,7 +502,7 @@ impl<T: BinaryDecode> BatchableResult for Option<T> {
         true
     }
 
-    fn batched_placeholder(_batch: &mut BatchState) -> Self {
+    fn batched_placeholder(_batch: &mut Runtime) -> Self {
         unreachable!("needs_flush types should never call batched_placeholder")
     }
 }
@@ -533,7 +533,7 @@ impl<T: BinaryDecode, E: BinaryDecode> BatchableResult for Result<T, E> {
         true
     }
 
-    fn batched_placeholder(_batch: &mut BatchState) -> Self {
+    fn batched_placeholder(_batch: &mut Runtime) -> Self {
         unreachable!("needs_flush types should never call batched_placeholder")
     }
 }
@@ -555,7 +555,7 @@ impl BinaryDecode for JsValue {
         // JS value is always in sync with the dom. We should never need to decode it.
         // Use get_next_heap_id() (NOT get_next_placeholder_id()) because decode() is
         // called for callback parameters from JS, not for return value placeholders.
-        BATCH_STATE.with(|state| {
+        RUNTIME.with(|state| {
             let mut batch = state.borrow_mut();
             Ok(JsValue::from_id(batch.get_next_heap_id()))
         })
@@ -567,7 +567,7 @@ impl BatchableResult for JsValue {
         false
     }
 
-    fn batched_placeholder(batch: &mut BatchState) -> Self {
+    fn batched_placeholder(batch: &mut Runtime) -> Self {
         // Use get_next_placeholder_id() to track reserved slots for JS
         JsValue::from_id(batch.get_next_placeholder_id())
     }
@@ -578,7 +578,7 @@ impl<F: ?Sized> BatchableResult for Closure<F> {
         false
     }
 
-    fn batched_placeholder(batch: &mut BatchState) -> Self {
+    fn batched_placeholder(batch: &mut Runtime) -> Self {
         Closure {
             _phantom: PhantomData,
             value: JsValue::batched_placeholder(batch),
@@ -595,7 +595,7 @@ macro_rules! impl_needs_flush {
                     true
                 }
 
-                fn batched_placeholder(_batch: &mut BatchState) -> Self {
+                fn batched_placeholder(_batch: &mut Runtime) -> Self {
                     unreachable!("needs_flush types should never call batched_placeholder")
                 }
             }
@@ -1290,7 +1290,7 @@ impl<T: BinaryDecode> BatchableResult for Vec<T> {
         true
     }
 
-    fn batched_placeholder(_batch: &mut BatchState) -> Self {
+    fn batched_placeholder(_batch: &mut Runtime) -> Self {
         unreachable!("needs_flush types should never call batched_placeholder")
     }
 }
@@ -1384,7 +1384,7 @@ impl BatchableResult for Clamped<Vec<u8>> {
         true
     }
 
-    fn batched_placeholder(_batch: &mut BatchState) -> Self {
+    fn batched_placeholder(_batch: &mut Runtime) -> Self {
         unreachable!("needs_flush types should never call batched_placeholder")
     }
 }

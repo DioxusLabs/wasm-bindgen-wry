@@ -20,7 +20,7 @@ use crate::value::{JSIDX_OFFSET, JSIDX_RESERVED};
 ///
 /// Uses a free-list strategy for heap ID allocation to stay in sync with JS heap.
 /// Also stores exported Rust structs and callback functions.
-pub struct BatchState {
+pub struct Runtime {
     /// The encoder accumulating batched operations
     encoder: EncodedData,
     /// Stack of freed IDs available for reuse
@@ -50,7 +50,7 @@ pub struct BatchState {
     next_object_handle: u32,
 }
 
-impl BatchState {
+impl Runtime {
     pub(crate) fn new() -> Self {
         Self {
             encoder: Self::new_encoder_for_evaluate(),
@@ -257,13 +257,13 @@ impl BatchState {
 }
 
 thread_local! {
-    /// Thread-local batch state - always exists, reset after each flush
-    pub(crate) static BATCH_STATE: RefCell<BatchState> = RefCell::new(BatchState::new());
+    /// Thread-local runtime state - always exists, reset after each flush
+    pub(crate) static RUNTIME: RefCell<Runtime> = RefCell::new(Runtime::new());
 }
 
 /// Check if we're currently inside a batch() call
 pub fn is_batching() -> bool {
-    BATCH_STATE.with(|state| state.borrow().is_batching())
+    RUNTIME.with(|state| state.borrow().is_batching())
 }
 
 /// Queue a JS drop operation for a heap ID.
@@ -273,7 +273,7 @@ pub(crate) fn queue_js_drop(id: u64) {
         id >= JSIDX_RESERVED,
         "Attempted to drop reserved JS heap ID {id}"
     );
-    BATCH_STATE.with(|state| {
+    RUNTIME.with(|state| {
         let id = { state.borrow_mut().release_heap_id(id) };
         if let Some(id) = id {
             crate::js_helpers::js_drop_heap_ref(id);
@@ -305,7 +305,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     // We take the current encoder out of the thread-local state to avoid borrowing issues
     // and then put it back after adding the operation. Drops or other calls may happen while
     // we are encoding, but they should be queued after this operation.
-    let mut batch = BATCH_STATE.with(|state| {
+    let mut batch = RUNTIME.with(|state| {
         let mut state = state.borrow_mut();
         // Push a new operation into the batch
         state.push_ids_to_free();
@@ -313,7 +313,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     });
     add_operation(&mut batch, fn_id, add_args);
 
-    BATCH_STATE.with(|state| {
+    RUNTIME.with(|state| {
         let mut state = state.borrow_mut();
         let encoded_during_op = core::mem::replace(&mut state.encoder, batch);
         state.extend_encoder(&encoded_during_op);
@@ -327,7 +327,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
                 assert!(data.is_empty());
             });
         }
-        BATCH_STATE.with(|state| {
+        RUNTIME.with(|state| {
             let mut state = state.borrow_mut();
             R::batched_placeholder(&mut state)
         })
@@ -336,7 +336,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     };
 
     // After running, free any queued IDs for this operation
-    BATCH_STATE.with(|state| {
+    RUNTIME.with(|state| {
         let ids = { state.borrow_mut().pop_and_release_ids() };
         for id in ids {
             crate::js_helpers::js_drop_heap_ref(id);
@@ -361,7 +361,7 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> R {
     use crate::runtime::AppEvent;
 
-    let batch_msg = BATCH_STATE.with(|state| state.borrow_mut().take_message());
+    let batch_msg = RUNTIME.with(|state| state.borrow_mut().take_message());
 
     // Send and wait for result
     let runtime = get_runtime();
@@ -379,7 +379,7 @@ pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> 
 pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     let currently_batching = is_batching();
     // Start batching
-    BATCH_STATE.with(|state| state.borrow_mut().set_batching(true));
+    RUNTIME.with(|state| state.borrow_mut().set_batching(true));
 
     // Execute the closure
     let result = f();
@@ -390,7 +390,7 @@ pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     }
 
     // End batching
-    BATCH_STATE.with(|state| state.borrow_mut().set_batching(currently_batching));
+    RUNTIME.with(|state| state.borrow_mut().set_batching(currently_batching));
 
     result
 }
@@ -404,7 +404,7 @@ pub fn batch_async<'a, R, F: core::future::Future<Output = R> + 'a>(
 }
 
 pub fn force_flush() {
-    let has_pending = BATCH_STATE.with(|state| !state.borrow().is_empty());
+    let has_pending = RUNTIME.with(|state| !state.borrow().is_empty());
     if has_pending {
         flush_and_return::<()>();
     }
