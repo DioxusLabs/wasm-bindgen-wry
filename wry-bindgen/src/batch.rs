@@ -319,20 +319,27 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
         state.extend_encoder(&encoded_during_op);
     });
 
-    // Get placeholder for types that don't need flush
+    // Try to get a placeholder for opaque types that don't need flush
     // This also increments opaque_count to keep heap IDs in sync
-    let result = if !R::needs_flush() {
-        if !is_batching() {
-            flush_and_then(|data| {
-                assert!(data.is_empty());
-            });
-        }
+    let get_placeholder = || {
         RUNTIME.with(|state| {
             let mut state = state.borrow_mut();
-            R::batched_placeholder(&mut state)
+            R::try_placeholder(&mut state)
+        })
+    };
+
+    let result = if !is_batching() {
+        flush_and_then(|mut data| {
+            let response = get_placeholder()
+                .unwrap_or_else(|| R::decode(&mut data).expect("Failed to decode return value"));
+            assert!(
+                data.is_empty(),
+                "Extra data remaining after decoding response"
+            );
+            response
         })
     } else {
-        flush_and_return::<R>()
+        get_placeholder().unwrap_or_else(|| flush_and_return::<R>())
     };
 
     // After running, free any queued IDs for this operation

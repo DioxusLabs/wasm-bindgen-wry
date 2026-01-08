@@ -32,12 +32,8 @@ impl EncodeTypeDef for ObjectHandle {
 }
 
 impl BatchableResult for ObjectHandle {
-    fn needs_flush() -> bool {
-        true
-    }
-
-    fn batched_placeholder(_: &mut crate::batch::Runtime) -> Self {
-        unreachable!()
+    fn try_placeholder(_: &mut crate::batch::Runtime) -> Option<Self> {
+        None
     }
 }
 
