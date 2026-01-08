@@ -3112,6 +3112,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "openstreetmap"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "wasm-bindgen 0.2.105",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wry-testing",
+]
+
+[[package]]
 name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
