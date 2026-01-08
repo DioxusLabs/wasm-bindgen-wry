@@ -17,10 +17,10 @@ use futures_util::{FutureExt, StreamExt};
 use spin::RwLock;
 
 use crate::BinaryDecode;
+use crate::batch::BATCH_STATE;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
-use crate::object_store::OBJECT_STORE;
 use crate::object_store::ObjectHandle;
 use crate::object_store::remove_object;
 use crate::wry::WryBindgen;
@@ -381,11 +381,11 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
         0 => {
             let key = data.take_u32().unwrap();
 
-            // Clone the Rc while briefly borrowing the object store, then release the borrow.
+            // Clone the Rc while briefly borrowing the batch state, then release the borrow.
             // This allows nested callbacks to access the object store during our callback execution.
-            let callback = OBJECT_STORE.with(|store| {
-                let encoder = store.borrow();
-                let rust_callback = encoder.get_object::<RustCallback>(key);
+            let callback = BATCH_STATE.with(|state| {
+                let state = state.borrow();
+                let rust_callback = state.get_object::<RustCallback>(key);
 
                 rust_callback.clone_rc()
             });

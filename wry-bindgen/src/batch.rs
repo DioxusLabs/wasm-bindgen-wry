@@ -5,7 +5,8 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::any::Any;
+use core::cell::{Ref, RefCell, RefMut};
 use std::boxed::Box;
 
 use crate::encode::{BatchableResult, BinaryDecode};
@@ -14,10 +15,11 @@ use crate::ipc::{EncodedData, IPCMessage, MessageType};
 use crate::runtime::get_runtime;
 use crate::value::{JSIDX_OFFSET, JSIDX_RESERVED};
 
-/// State for batching operations.
+/// State for batching operations and object storage.
 /// Every evaluation is a batch - it may just have one operation.
 ///
 /// Uses a free-list strategy for heap ID allocation to stay in sync with JS heap.
+/// Also stores exported Rust structs and callback functions.
 pub struct BatchState {
     /// The encoder accumulating batched operations
     encoder: EncodedData,
@@ -42,6 +44,10 @@ pub struct BatchState {
     type_cache: BTreeMap<Vec<u8>, u32>,
     /// Next type ID to assign
     next_type_id: u32,
+    /// Exported Rust structs stored by handle
+    objects: BTreeMap<u32, Box<dyn Any>>,
+    /// Next handle to assign for exported objects
+    next_object_handle: u32,
 }
 
 impl BatchState {
@@ -63,6 +69,10 @@ impl BatchState {
             type_cache: BTreeMap::new(),
             // Type IDs start at 0
             next_type_id: 0,
+            // Object store starts empty
+            objects: BTreeMap::new(),
+            // Object handles start at 0
+            next_object_handle: 0,
         }
     }
 
@@ -209,6 +219,40 @@ impl BatchState {
             self.type_cache.insert(type_bytes, id);
             (id, false)
         }
+    }
+
+    /// Insert an exported object and return its handle.
+    pub(crate) fn insert_object<T: 'static>(&mut self, obj: T) -> u32 {
+        let handle = self.next_object_handle;
+        self.next_object_handle = self.next_object_handle.wrapping_add(1);
+        self.objects.insert(handle, Box::new(RefCell::new(obj)));
+        handle
+    }
+
+    /// Get a reference to an exported object.
+    pub(crate) fn get_object<T: 'static>(&self, handle: u32) -> Ref<'_, T> {
+        let boxed = self.objects.get(&handle).expect("invalid handle");
+        let cell = boxed.downcast_ref::<RefCell<T>>().expect("type mismatch");
+        cell.borrow()
+    }
+
+    /// Get a mutable reference to an exported object.
+    pub(crate) fn get_object_mut<T: 'static>(&self, handle: u32) -> RefMut<'_, T> {
+        let boxed = self.objects.get(&handle).expect("invalid handle");
+        let cell = boxed.downcast_ref::<RefCell<T>>().expect("type mismatch");
+        cell.borrow_mut()
+    }
+
+    /// Remove an exported object and return it.
+    pub(crate) fn remove_object<T: 'static>(&mut self, handle: u32) -> T {
+        let boxed = self.objects.remove(&handle).expect("invalid handle");
+        let cell = boxed.downcast::<RefCell<T>>().expect("type mismatch");
+        cell.into_inner()
+    }
+
+    /// Remove an exported object without returning it.
+    pub(crate) fn remove_object_untyped(&mut self, handle: u32) -> bool {
+        self.objects.remove(&handle).is_some()
     }
 }
 

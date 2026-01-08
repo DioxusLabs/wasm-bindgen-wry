@@ -17,12 +17,17 @@ use crate::ipc::{DecodedData, EncodedData};
 #[derive(Clone, Copy)]
 pub struct JsFunctionSpec {
     /// Function that generates the JS code
-    pub js_code: fn() -> String,
+    js_code: fn() -> String,
 }
 
 impl JsFunctionSpec {
     pub const fn new(js_code: fn() -> String) -> Self {
         Self { js_code }
+    }
+
+    /// Get the JS code generator function
+    pub const fn js_code(&self) -> fn() -> String {
+        self.js_code
     }
 
     pub const fn resolve_as<F>(&self) -> LazyJsFunction<F> {
@@ -48,7 +53,7 @@ impl<F> Deref for LazyJsFunction<F> {
         self.inner.get_or_init(|| {
             FUNCTION_REGISTRY
                 .get_function(self.spec)
-                .unwrap_or_else(|| panic!("Function not found for code: {}", (self.spec.js_code)()))
+                .unwrap_or_else(|| panic!("Function not found for code: {}", (self.spec.js_code())()))
         })
     }
 }
@@ -57,12 +62,17 @@ impl<F> Deref for LazyJsFunction<F> {
 #[derive(Clone, Copy)]
 pub struct InlineJsModule {
     /// The JS module content
-    pub content: &'static str,
+    content: &'static str,
 }
 
 impl InlineJsModule {
     pub const fn new(content: &'static str) -> Self {
         Self { content }
+    }
+
+    /// Get the JS module content
+    pub const fn content(&self) -> &'static str {
+        self.content
     }
 
     /// Calculate the hash of the module content for use as a filename
@@ -112,15 +122,15 @@ pub enum JsClassMemberKind {
 #[derive(Clone, Copy)]
 pub struct JsClassMemberSpec {
     /// The class name this member belongs to (e.g., "Counter")
-    pub class_name: &'static str,
+    class_name: &'static str,
     /// The JavaScript member name (e.g., "increment", "count")
-    pub member_name: &'static str,
+    member_name: &'static str,
     /// The export name for IPC calls (e.g., "Counter::increment")
-    pub export_name: &'static str,
+    export_name: &'static str,
     /// Number of arguments (excluding self/handle)
-    pub arg_count: usize,
+    arg_count: usize,
     /// Type of member
-    pub kind: JsClassMemberKind,
+    kind: JsClassMemberKind,
 }
 
 impl JsClassMemberSpec {
@@ -138,6 +148,31 @@ impl JsClassMemberSpec {
             arg_count,
             kind,
         }
+    }
+
+    /// Get the class name this member belongs to
+    pub const fn class_name(&self) -> &'static str {
+        self.class_name
+    }
+
+    /// Get the JavaScript member name
+    pub const fn member_name(&self) -> &'static str {
+        self.member_name
+    }
+
+    /// Get the export name for IPC calls
+    pub const fn export_name(&self) -> &'static str {
+        self.export_name
+    }
+
+    /// Get the number of arguments (excluding self/handle)
+    pub const fn arg_count(&self) -> usize {
+        self.arg_count
+    }
+
+    /// Get the type of member
+    pub const fn kind(&self) -> JsClassMemberKind {
+        self.kind
     }
 }
 
@@ -194,7 +229,7 @@ impl FunctionRegistry {
             let hash = inline_js.hash();
             let module_path = format!("snippets/{hash}.js");
             // Only insert if we haven't seen this content before
-            modules.entry(module_path).or_insert(inline_js.content);
+            modules.entry(module_path).or_insert(inline_js.content());
         }
 
         // Collect all function specs
@@ -230,7 +265,7 @@ impl FunctionRegistry {
             if i > 0 {
                 script.push_str(",\n");
             }
-            let js_code = (spec.js_code)();
+            let js_code = (spec.js_code())();
             write!(&mut script, "{js_code}").unwrap();
         }
         script.push_str("]);\n");
@@ -239,7 +274,7 @@ impl FunctionRegistry {
         let mut class_members: BTreeMap<&str, Vec<&JsClassMemberSpec>> = BTreeMap::new();
         for member in inventory::iter::<JsClassMemberSpec>() {
             class_members
-                .entry(member.class_name)
+                .entry(member.class_name())
                 .or_default()
                 .push(member);
         }
@@ -276,11 +311,11 @@ impl FunctionRegistry {
 
             // Generate methods inside the class body
             for member in members {
-                match member.kind {
+                match member.kind() {
                     JsClassMemberKind::Method => {
                         // Instance method
-                        let args = generate_args(member.arg_count);
-                        let args_with_handle = if member.arg_count > 0 {
+                        let args = generate_args(member.arg_count());
+                        let args_with_handle = if member.arg_count() > 0 {
                             format!("this.__handle, {args}")
                         } else {
                             "this.__handle".to_string()
@@ -288,15 +323,15 @@ impl FunctionRegistry {
                         writeln!(
                             &mut script,
                             r#"    {}({}) {{ return window.__wryCallExport("{}", {}); }}"#,
-                            member.member_name, args, member.export_name, args_with_handle
+                            member.member_name(), args, member.export_name(), args_with_handle
                         )
                         .unwrap();
                     }
                     JsClassMemberKind::Getter => {
-                        getters.insert(member.member_name, member);
+                        getters.insert(member.member_name(), member);
                     }
                     JsClassMemberKind::Setter => {
-                        setters.insert(member.member_name, member);
+                        setters.insert(member.member_name(), member);
                     }
                     _ => {} // Constructor and static handled separately
                 }
@@ -317,7 +352,7 @@ impl FunctionRegistry {
                             &mut script,
                             r#"    get {}() {{ return window.__wryCallExport("{}", this.__handle); }}
     set {}(v) {{ window.__wryCallExport("{}", this.__handle, v); }}"#,
-                            prop_name, g.export_name, prop_name, s.export_name
+                            prop_name, g.export_name(), prop_name, s.export_name()
                         )
                         .unwrap();
                     }
@@ -325,7 +360,7 @@ impl FunctionRegistry {
                         writeln!(
                             &mut script,
                             r#"    get {}() {{ return window.__wryCallExport("{}", this.__handle); }}"#,
-                            prop_name, g.export_name
+                            prop_name, g.export_name()
                         )
                         .unwrap();
                     }
@@ -333,7 +368,7 @@ impl FunctionRegistry {
                         writeln!(
                             &mut script,
                             r#"    set {}(v) {{ window.__wryCallExport("{}", this.__handle, v); }}"#,
-                            prop_name, s.export_name
+                            prop_name, s.export_name()
                         )
                         .unwrap();
                     }
@@ -346,31 +381,31 @@ impl FunctionRegistry {
 
             // Add static methods and constructors outside the class
             for member in members {
-                match member.kind {
+                match member.kind() {
                     JsClassMemberKind::Constructor => {
-                        let args = generate_args(member.arg_count);
-                        let args_call = if member.arg_count > 0 { &args } else { "" };
+                        let args = generate_args(member.arg_count());
+                        let args_call = if member.arg_count() > 0 { &args } else { "" };
                         writeln!(
                             &mut script,
                             r#"  {class_name}.{method_name} = function({args}) {{ const handle = window.__wryCallExport("{export_name}", {args_call}); return {class_name}.__wrap(handle); }};"#,
                             class_name = class_name,
-                            method_name = member.member_name,
+                            method_name = member.member_name(),
                             args = args,
-                            export_name = member.export_name,
+                            export_name = member.export_name(),
                             args_call = args_call
                         )
                         .unwrap();
                     }
                     JsClassMemberKind::StaticMethod => {
-                        let args = generate_args(member.arg_count);
-                        let args_call = if member.arg_count > 0 { &args } else { "" };
+                        let args = generate_args(member.arg_count());
+                        let args_call = if member.arg_count() > 0 { &args } else { "" };
                         writeln!(
                             &mut script,
                             r#"  {class_name}.{method_name} = function({args}) {{ return window.__wryCallExport("{export_name}", {args_call}); }};"#,
                             class_name = class_name,
-                            method_name = member.member_name,
+                            method_name = member.member_name(),
                             args = args,
-                            export_name = member.export_name,
+                            export_name = member.export_name(),
                             args_call = args_call
                         )
                         .unwrap();
@@ -401,7 +436,7 @@ impl FunctionRegistry {
         let index = self
             .function_specs
             .iter()
-            .position(|s| s.js_code as usize == spec.js_code as usize)?;
+            .position(|s| s.js_code() as usize == spec.js_code() as usize)?;
         Some(JSFunction::new(index as _))
     }
 

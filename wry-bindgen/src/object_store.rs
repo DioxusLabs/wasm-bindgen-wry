@@ -4,12 +4,10 @@
 //! that are exported to JavaScript. Objects are stored by handle (u32) and
 //! can be retrieved, borrowed, and dropped. It also stores callback functions
 //! that can be called from JavaScript.
+//!
+//! The actual storage is now part of the unified BatchState.
 
-use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
-use core::any::Any;
-use core::cell::{Ref, RefCell, RefMut};
-
+use crate::batch::BATCH_STATE;
 use crate::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
 
 /// Handle to an exported object in the store.
@@ -45,97 +43,32 @@ impl BatchableResult for ObjectHandle {
     }
 }
 
-/// Encoder for storing Rust objects that can be called from JS.
-/// Also stores exported Rust structs for the object store.
-pub(crate) struct ObjEncoder {
-    /// Exported Rust structs stored by handle
-    objects: BTreeMap<u32, Box<dyn Any>>,
-    /// Next handle to assign for exported objects
-    next_handle: u32,
-}
-
-impl ObjEncoder {
-    pub(crate) fn new() -> Self {
-        Self {
-            objects: BTreeMap::new(),
-            next_handle: 1,
-        }
-    }
-
-    /// Insert an exported object and return its handle.
-    pub(crate) fn insert_object<T: 'static>(&mut self, obj: T) -> u32 {
-        let handle = self.next_handle;
-        self.next_handle = self.next_handle.wrapping_add(1);
-        if self.next_handle == 0 {
-            self.next_handle = 1;
-        }
-        self.objects.insert(handle, Box::new(RefCell::new(obj)));
-        handle
-    }
-
-    /// Get a reference to an exported object.
-    pub(crate) fn get_object<T: 'static>(&self, handle: u32) -> Ref<'_, T> {
-        let boxed = self.objects.get(&handle).expect("invalid handle");
-        let cell = boxed.downcast_ref::<RefCell<T>>().expect("type mismatch");
-        cell.borrow()
-    }
-
-    /// Get a mutable reference to an exported object.
-    pub(crate) fn get_object_mut<T: 'static>(&self, handle: u32) -> RefMut<'_, T> {
-        let boxed = self.objects.get(&handle).expect("invalid handle");
-        let cell = boxed.downcast_ref::<RefCell<T>>().expect("type mismatch");
-        cell.borrow_mut()
-    }
-
-    /// Remove an exported object and return it.
-    pub(crate) fn remove_object<T: 'static>(&mut self, handle: u32) -> T {
-        let boxed = self.objects.remove(&handle).expect("invalid handle");
-        let cell = boxed.downcast::<RefCell<T>>().expect("type mismatch");
-        cell.into_inner()
-    }
-
-    /// Remove an exported object without returning it.
-    pub(crate) fn remove_object_untyped(&mut self, handle: u32) -> bool {
-        self.objects.remove(&handle).is_some()
-    }
-}
-
-std::thread_local! {
-    pub(crate) static OBJECT_STORE: RefCell<ObjEncoder> = RefCell::new(ObjEncoder::new());
-}
-
 pub fn with_object<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&T) -> R) -> R {
-    OBJECT_STORE.with(|encoder| {
-        let encoder = encoder.borrow();
-        let obj: Ref<'_, T> = encoder.get_object(handle.0);
+    BATCH_STATE.with(|state| {
+        let state = state.borrow();
+        let obj = state.get_object::<T>(handle.0);
         f(&*obj)
     })
 }
 
 pub fn with_object_mut<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&mut T) -> R) -> R {
-    OBJECT_STORE.with(|encoder| {
-        let encoder = encoder.borrow();
-        let mut obj: RefMut<'_, T> = encoder.get_object_mut(handle.0);
+    BATCH_STATE.with(|state| {
+        let state = state.borrow();
+        let mut obj = state.get_object_mut::<T>(handle.0);
         f(&mut *obj)
     })
 }
 
 pub fn insert_object<T: 'static>(obj: T) -> ObjectHandle {
-    OBJECT_STORE.with(|encoder| {
-        ObjectHandle(encoder.borrow_mut().insert_object(obj))
-    })
+    BATCH_STATE.with(|state| ObjectHandle(state.borrow_mut().insert_object(obj)))
 }
 
 pub fn remove_object<T: 'static>(handle: ObjectHandle) -> T {
-    OBJECT_STORE.with(|encoder| {
-        encoder.borrow_mut().remove_object(handle.0)
-    })
+    BATCH_STATE.with(|state| state.borrow_mut().remove_object(handle.0))
 }
 
 pub fn drop_object(handle: ObjectHandle) -> bool {
-    OBJECT_STORE.with(|encoder| {
-        encoder.borrow_mut().remove_object_untyped(handle.0)
-    })
+    BATCH_STATE.with(|state| state.borrow_mut().remove_object_untyped(handle.0))
 }
 
 /// Create a JavaScript wrapper object for an exported Rust struct.
