@@ -14,16 +14,15 @@ use std::thread::ThreadId;
 use alloc::boxed::Box;
 use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt};
-use once_cell::sync::OnceCell;
 use spin::RwLock;
 
-use slotmap::{DefaultKey, KeyData};
-
-use crate::function::{
-    CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_OBJECT_ENCODER,
-};
+use crate::BinaryDecode;
+use crate::batch::RUNTIME;
+use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
+use crate::object_store::ObjectHandle;
+use crate::object_store::remove_object;
 use crate::wry::WryBindgen;
 
 /// A task to be executed on the main thread with completion signaling and return value.
@@ -211,14 +210,19 @@ impl WryRuntime {
     }
 }
 
-static RUNTIME: OnceCell<WryRuntime> = OnceCell::new();
-static MAIN_THREAD_ID: OnceLock<ThreadId> = OnceLock::new();
+/// Combined global state for the runtime and main thread ID.
+struct GlobalRuntimeState {
+    runtime: WryRuntime,
+    main_thread_id: ThreadId,
+}
+
+static GLOBAL_RUNTIME: OnceLock<GlobalRuntimeState> = OnceLock::new();
 
 /// Check if the current thread is the main thread.
 fn is_main_thread() -> bool {
-    MAIN_THREAD_ID
+    GLOBAL_RUNTIME
         .get()
-        .map(|id| *id == std::thread::current().id())
+        .map(|state| state.main_thread_id == std::thread::current().id())
         .unwrap_or(false)
 }
 
@@ -243,13 +247,12 @@ pub fn start_app<F>(
 where
     F: core::future::Future<Output = ()> + 'static,
 {
-    // Record the main thread ID before doing anything else
-    MAIN_THREAD_ID
-        .set(std::thread::current().id())
-        .unwrap_or_else(|_| panic!("Main thread ID already set"));
-
     let event_loop_proxy = Box::new(event_loop_proxy) as Box<dyn Fn(AppEvent) + Send + Sync>;
-    if RUNTIME.set(WryRuntime::new(event_loop_proxy)).is_err() {
+    let state = GlobalRuntimeState {
+        runtime: WryRuntime::new(event_loop_proxy),
+        main_thread_id: std::thread::current().id(),
+    };
+    if GLOBAL_RUNTIME.set(state).is_err() {
         eprintln!("start_app can only be called once per process. Exiting.");
         return Err(AlreadyStartedError);
     }
@@ -332,7 +335,10 @@ where
 ///
 /// Panics if the runtime has not been initialized.
 pub(crate) fn get_runtime() -> &'static WryRuntime {
-    RUNTIME.get().expect("Event loop proxy not set")
+    &GLOBAL_RUNTIME
+        .get()
+        .expect("Event loop proxy not set")
+        .runtime
 }
 
 pub(crate) fn progress_js_with<O>(
@@ -373,27 +379,19 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
     match fn_id {
         // Call a registered Rust callback
         0 => {
-            let key = KeyData::from_ffi(data.take_u64().unwrap()).into();
+            let key = data.take_u32().unwrap();
 
-            // Clone the Rc while briefly borrowing the SlotMap, then release the borrow.
-            // This allows nested callbacks to access the SlotMap during our callback execution.
-            let callback = THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
-                let encoder = fn_encoder.borrow();
-                let function = encoder
-                    .functions
-                    .get(key)
-                    .expect("Function not found for key");
-
-                let rust_callback = function
-                    .downcast_ref::<RustCallback>()
-                    .expect("Failed to downcast to RustCallback");
+            // Clone the Rc while briefly borrowing the batch state, then release the borrow.
+            // This allows nested callbacks to access the object store during our callback execution.
+            let callback = RUNTIME.with(|state| {
+                let state = state.borrow();
+                let rust_callback = state.get_object::<RustCallback>(key);
 
                 rust_callback.clone_rc()
             });
-            // SlotMap borrow is now released - nested callbacks can access it
 
             // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
-            crate::batch::BATCH_STATE.with(|state| state.borrow_mut().push_borrow_frame());
+            crate::batch::RUNTIME.with(|state| state.borrow_mut().push_borrow_frame());
 
             // Call through the cloned Rc (uniform Fn interface)
             let response = IPCMessage::new_respond(|encoder| {
@@ -401,19 +399,17 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             });
 
             // Pop the borrow frame after the callback completes
-            crate::batch::BATCH_STATE.with(|state| state.borrow_mut().pop_borrow_frame());
+            crate::batch::RUNTIME.with(|state| state.borrow_mut().pop_borrow_frame());
 
             // Send response to JS
             runtime.js_response(response);
         }
         // Drop a native Rust object when JS GC'd the wrapper
         DROP_NATIVE_REF_FN_ID => {
-            let key: DefaultKey = KeyData::from_ffi(data.take_u64().unwrap()).into();
+            let key = ObjectHandle::decode(data).expect("Failed to decode object handle");
 
             // Remove the object from the thread-local encoder
-            THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
-                fn_encoder.borrow_mut().functions.remove(key);
-            });
+            remove_object::<RustCallback>(key);
 
             // Send empty response
             let response = IPCMessage::new_respond(|_| {});

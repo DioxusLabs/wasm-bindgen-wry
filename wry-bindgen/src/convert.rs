@@ -145,8 +145,8 @@ impl<T: JsCast + 'static> RefFromBinaryDecode for T {
         // For borrowed refs, we use the borrow stack (indices 1-127) instead of heap IDs.
         // JS puts the value on its borrow stack without sending an ID, so we sync by
         // getting the next borrow ID from our batch state.
-        use crate::batch::BATCH_STATE;
-        let id = BATCH_STATE.with(|state| state.borrow_mut().get_next_borrow_id());
+        use crate::batch::RUNTIME;
+        let id = RUNTIME.with(|state| state.borrow_mut().get_next_borrow_id());
         let value = JsValue::from_id(id);
         Ok(JsCastAnchor {
             value,

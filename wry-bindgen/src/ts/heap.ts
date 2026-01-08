@@ -6,7 +6,7 @@ const JSIDX_TRUE = JSIDX_OFFSET + 2;
 const JSIDX_FALSE = JSIDX_OFFSET + 3;
 const JSIDX_RESERVED = JSIDX_OFFSET + 4;
 
-// SlotMap implementation for JS heap types
+// Object store implementation for JS heap types
 class JSHeap {
   private slots: (unknown | undefined)[];
   private freeIds: number[];

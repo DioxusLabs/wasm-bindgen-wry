@@ -3,6 +3,7 @@
 use alloc::string::String;
 
 use crate::JsValue;
+use crate::object_store::ObjectHandle;
 use crate::wasm_bindgen;
 
 #[wasm_bindgen(crate = crate, inline_js = include_str!("./js/convert.js"))]
@@ -141,18 +142,5 @@ extern "C" {
     // Extract the Rust object handle from a JavaScript wrapper object
     // Returns -1 if the object doesn't have a __handle property
     #[wasm_bindgen(js_name = "extract_rust_handle")]
-    fn js_extract_rust_handle(obj: &JsValue) -> i32;
-}
-
-/// Extract the Rust object handle from a JavaScript wrapper object.
-///
-/// This is used when decoding Rust structs that were passed to JavaScript.
-/// Returns `Some(handle)` if the object has a `__handle` property, `None` otherwise.
-pub fn extract_rust_handle(obj: &JsValue) -> Option<u32> {
-    let result = js_extract_rust_handle(obj);
-    if result >= 0 {
-        Some(result as u32)
-    } else {
-        None
-    }
+    pub fn js_extract_rust_handle(obj: &JsValue) -> Option<ObjectHandle>;
 }

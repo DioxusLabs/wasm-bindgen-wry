@@ -3,8 +3,10 @@
 //! This module provides the batching infrastructure that allows multiple
 //! JS operations to be grouped together for efficient execution.
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::any::Any;
+use core::cell::{Ref, RefCell, RefMut};
 use std::boxed::Box;
 
 use crate::encode::{BatchableResult, BinaryDecode};
@@ -13,11 +15,12 @@ use crate::ipc::{EncodedData, IPCMessage, MessageType};
 use crate::runtime::get_runtime;
 use crate::value::{JSIDX_OFFSET, JSIDX_RESERVED};
 
-/// State for batching operations.
+/// State for batching operations and object storage.
 /// Every evaluation is a batch - it may just have one operation.
 ///
 /// Uses a free-list strategy for heap ID allocation to stay in sync with JS heap.
-pub struct BatchState {
+/// Also stores exported Rust structs and callback functions.
+pub struct Runtime {
     /// The encoder accumulating batched operations
     encoder: EncodedData,
     /// Stack of freed IDs available for reuse
@@ -37,9 +40,17 @@ pub struct BatchState {
     /// Count of IDs reserved as placeholders during the current batch.
     /// This is sent to JS so it can skip these IDs during nested callback allocations.
     reserved_placeholder_count: u32,
+    /// Type cache for avoiding resending type definitions to JS
+    type_cache: BTreeMap<Vec<u8>, u32>,
+    /// Next type ID to assign
+    next_type_id: u32,
+    /// Exported Rust structs stored by handle
+    objects: BTreeMap<u32, Box<dyn Any>>,
+    /// Next handle to assign for exported objects
+    next_object_handle: u32,
 }
 
-impl BatchState {
+impl Runtime {
     pub(crate) fn new() -> Self {
         Self {
             encoder: Self::new_encoder_for_evaluate(),
@@ -54,6 +65,14 @@ impl BatchState {
             borrow_frame_stack: Vec::new(),
             // No reserved placeholders initially
             reserved_placeholder_count: 0,
+            // Type cache starts empty
+            type_cache: BTreeMap::new(),
+            // Type IDs start at 0
+            next_type_id: 0,
+            // Object store starts empty
+            objects: BTreeMap::new(),
+            // Object handles start at 0
+            next_object_handle: 0,
         }
     }
 
@@ -188,16 +207,63 @@ impl BatchState {
         self.encoder.u32_buf.extend_from_slice(&other.u32_buf);
         self.encoder.str_buf.extend_from_slice(&other.str_buf);
     }
+
+    /// Get or create a type ID for the given type definition bytes.
+    /// Returns (type_id, is_cached) where is_cached is true if the type was already in the cache.
+    pub(crate) fn get_or_create_type_id(&mut self, type_bytes: Vec<u8>) -> (u32, bool) {
+        if let Some(&id) = self.type_cache.get(&type_bytes) {
+            (id, true)
+        } else {
+            let id = self.next_type_id;
+            self.next_type_id += 1;
+            self.type_cache.insert(type_bytes, id);
+            (id, false)
+        }
+    }
+
+    /// Insert an exported object and return its handle.
+    pub(crate) fn insert_object<T: 'static>(&mut self, obj: T) -> u32 {
+        let handle = self.next_object_handle;
+        self.next_object_handle = self.next_object_handle.wrapping_add(1);
+        self.objects.insert(handle, Box::new(RefCell::new(obj)));
+        handle
+    }
+
+    /// Get a reference to an exported object.
+    pub(crate) fn get_object<T: 'static>(&self, handle: u32) -> Ref<'_, T> {
+        let boxed = self.objects.get(&handle).expect("invalid handle");
+        let cell = boxed.downcast_ref::<RefCell<T>>().expect("type mismatch");
+        cell.borrow()
+    }
+
+    /// Get a mutable reference to an exported object.
+    pub(crate) fn get_object_mut<T: 'static>(&self, handle: u32) -> RefMut<'_, T> {
+        let boxed = self.objects.get(&handle).expect("invalid handle");
+        let cell = boxed.downcast_ref::<RefCell<T>>().expect("type mismatch");
+        cell.borrow_mut()
+    }
+
+    /// Remove an exported object and return it.
+    pub(crate) fn remove_object<T: 'static>(&mut self, handle: u32) -> T {
+        let boxed = self.objects.remove(&handle).expect("invalid handle");
+        let cell = boxed.downcast::<RefCell<T>>().expect("type mismatch");
+        cell.into_inner()
+    }
+
+    /// Remove an exported object without returning it.
+    pub(crate) fn remove_object_untyped(&mut self, handle: u32) -> bool {
+        self.objects.remove(&handle).is_some()
+    }
 }
 
 thread_local! {
-    /// Thread-local batch state - always exists, reset after each flush
-    pub(crate) static BATCH_STATE: RefCell<BatchState> = RefCell::new(BatchState::new());
+    /// Thread-local runtime state - always exists, reset after each flush
+    pub(crate) static RUNTIME: RefCell<Runtime> = RefCell::new(Runtime::new());
 }
 
 /// Check if we're currently inside a batch() call
 pub fn is_batching() -> bool {
-    BATCH_STATE.with(|state| state.borrow().is_batching())
+    RUNTIME.with(|state| state.borrow().is_batching())
 }
 
 /// Queue a JS drop operation for a heap ID.
@@ -207,7 +273,7 @@ pub(crate) fn queue_js_drop(id: u64) {
         id >= JSIDX_RESERVED,
         "Attempted to drop reserved JS heap ID {id}"
     );
-    BATCH_STATE.with(|state| {
+    RUNTIME.with(|state| {
         let id = { state.borrow_mut().release_heap_id(id) };
         if let Some(id) = id {
             crate::js_helpers::js_drop_heap_ref(id);
@@ -239,7 +305,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     // We take the current encoder out of the thread-local state to avoid borrowing issues
     // and then put it back after adding the operation. Drops or other calls may happen while
     // we are encoding, but they should be queued after this operation.
-    let mut batch = BATCH_STATE.with(|state| {
+    let mut batch = RUNTIME.with(|state| {
         let mut state = state.borrow_mut();
         // Push a new operation into the batch
         state.push_ids_to_free();
@@ -247,7 +313,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     });
     add_operation(&mut batch, fn_id, add_args);
 
-    BATCH_STATE.with(|state| {
+    RUNTIME.with(|state| {
         let mut state = state.borrow_mut();
         let encoded_during_op = core::mem::replace(&mut state.encoder, batch);
         state.extend_encoder(&encoded_during_op);
@@ -261,7 +327,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
                 assert!(data.is_empty());
             });
         }
-        BATCH_STATE.with(|state| {
+        RUNTIME.with(|state| {
             let mut state = state.borrow_mut();
             R::batched_placeholder(&mut state)
         })
@@ -270,7 +336,7 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     };
 
     // After running, free any queued IDs for this operation
-    BATCH_STATE.with(|state| {
+    RUNTIME.with(|state| {
         let ids = { state.borrow_mut().pop_and_release_ids() };
         for id in ids {
             crate::js_helpers::js_drop_heap_ref(id);
@@ -295,7 +361,7 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> R {
     use crate::runtime::AppEvent;
 
-    let batch_msg = BATCH_STATE.with(|state| state.borrow_mut().take_message());
+    let batch_msg = RUNTIME.with(|state| state.borrow_mut().take_message());
 
     // Send and wait for result
     let runtime = get_runtime();
@@ -313,7 +379,7 @@ pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> 
 pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     let currently_batching = is_batching();
     // Start batching
-    BATCH_STATE.with(|state| state.borrow_mut().set_batching(true));
+    RUNTIME.with(|state| state.borrow_mut().set_batching(true));
 
     // Execute the closure
     let result = f();
@@ -324,7 +390,7 @@ pub fn batch<R, F: FnOnce() -> R>(f: F) -> R {
     }
 
     // End batching
-    BATCH_STATE.with(|state| state.borrow_mut().set_batching(currently_batching));
+    RUNTIME.with(|state| state.borrow_mut().set_batching(currently_batching));
 
     result
 }
@@ -338,7 +404,7 @@ pub fn batch_async<'a, R, F: core::future::Future<Output = R> + 'a>(
 }
 
 pub fn force_flush() {
-    let has_pending = BATCH_STATE.with(|state| !state.borrow().is_empty());
+    let has_pending = RUNTIME.with(|state| !state.borrow().is_empty());
     if has_pending {
         flush_and_return::<()>();
     }

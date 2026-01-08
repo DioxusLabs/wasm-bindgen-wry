@@ -11,7 +11,7 @@ const nativeRefRegistry = new FinalizationRegistry<number>((fnId: number) => {
   const encoder = new DataEncoder();
   encoder.pushU8(MessageType.Evaluate);
   encoder.pushU32(DROP_NATIVE_REF_FN_ID);
-  encoder.pushU64(fnId);
+  encoder.pushU32(fnId);
 
   const response = sync_request_binary("wry://handler", encoder.finalize());
   handleBinaryResponse(response);
@@ -42,7 +42,7 @@ class RustFunction {
     const encoder = new DataEncoder();
     encoder.pushU8(MessageType.Evaluate);
     encoder.pushU32(0); // Call argument function
-    encoder.pushU64(this.fnId);
+    encoder.pushU32(this.fnId);
     // Encode arguments (may put borrowed refs on the borrow stack)
     for (let i = 0; i < this.paramTypes.length; i++) {
       this.paramTypes[i].encode(encoder, args[i]);
