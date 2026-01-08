@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "wry-bindgen", "wry-bindgen-macro", "wry-bindgen-macro-support", "examples/gloo", "examples/dioxus-web", "examples/yew", "examples/piet", "examples/tiptap"]
+members = [".", "wry-bindgen", "wry-bindgen-macro", "wry-bindgen-macro-support", "examples/gloo", "examples/dioxus-web", "examples/yew", "examples/piet", "examples/tiptap",  "examples/openstreetmap"]
 exclude = ["wasm-bindgen"]
 resolver = "2"
 
