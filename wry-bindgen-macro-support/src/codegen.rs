@@ -918,14 +918,16 @@ fn generate_static(
                 __SPEC
             }
 
-            fn __init() -> #ty {
+            // This can't be named __init for compat with older rustc versions
+            // https://github.com/rust-lang/rust/issues/147006
+            fn __init_wbg() -> #ty {
                 static __FUNC: #krate::LazyJsFunction<fn() -> #ty> =
                     __SPEC.resolve_as();
 
                 // Call the accessor to get the value
                 __FUNC.call()
             }
-            #krate::__wry_bindgen_thread_local!(#ty = __init())
+            #krate::__wry_bindgen_thread_local!(#ty = __init_wbg())
         };
     })
 }
