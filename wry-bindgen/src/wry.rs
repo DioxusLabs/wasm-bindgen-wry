@@ -102,11 +102,14 @@ impl SharedWebviewState {
     fn respond_to_request(&mut self, response: IPCMessage) {
         if let Some(responder) = self.take_ongoing_request() {
             let body = response.into_data();
+            // Encode as base64 - sync XMLHttpRequest cannot use responseType="arraybuffer"
+            let engine = base64::engine::general_purpose::STANDARD;
+            let body_base64 = engine.encode(&body);
             responder.respond(
                 http::Response::builder()
                     .status(200)
-                    .header("Content-Type", "application/octet-stream")
-                    .body(body)
+                    .header("Content-Type", "text/plain")
+                    .body(body_base64.into_bytes())
                     .expect("Failed to build response"),
             );
         } else {
