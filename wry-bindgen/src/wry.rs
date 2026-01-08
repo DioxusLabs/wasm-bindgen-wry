@@ -17,6 +17,15 @@ use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
 use crate::runtime::{AppEvent, AppEventVariant, get_runtime};
 
+
+/// The base URL for the webview.
+/// On Windows, custom URL schemes can cause hangs with WebView2,
+/// so we use http://wry.localhost/ instead.
+#[cfg(target_os = "windows")]
+pub const BASE_URL: &str = "http://wry.localhost/index";
+#[cfg(not(target_os = "windows"))]
+pub const BASE_URL: &str = "wry://index";
+
 /// Responder for wry-bindgen protocol requests.
 pub struct WryBindgenResponder {
     respond: Box<dyn FnOnce(Response<Vec<u8>>)>,
@@ -167,14 +176,13 @@ impl WryBindgen {
     /// Create a protocol handler closure suitable for `WebViewBuilder::with_asynchronous_custom_protocol`.
     ///
     /// The returned closure handles all "wry://" protocol requests:
-    /// - "wry://index" - serves root HTML (uses provided root_response)
-    /// - "wry://ready" - signals webview loaded
-    /// - "wry://snippets/{path}" - serves inline JS modules
-    /// - "wry://handler" - main IPC endpoint
+    /// - "/index" - serves root HTML (uses provided root_response)
+    /// - "/ready" - signals webview loaded
+    /// - "/snippets/{path}" - serves inline JS modules
+    /// - "/handler" - main IPC endpoint
     ///
     /// # Arguments
     /// * `proxy` - Function to send events to the event loop
-    /// * `root_response` - Function that returns the HTML response to serve at "wry://index"
     pub fn create_protocol_handler<F, R: Into<WryBindgenResponder>>(
         &self,
         proxy: F,
@@ -185,10 +193,14 @@ impl WryBindgen {
         let shared = self.shared.clone();
 
         move |request: &http::Request<Vec<u8>>, responder: R| {
-            let real_path = request.uri().to_string().replace("wry://", "");
-            let real_path = real_path.as_str().trim_matches('/');
+            // Handle both wry:// (unix) and http://wry.localhost/ (windows) schemes
+            let uri = request.uri().to_string();
+            let real_path = uri
+                .strip_prefix(BASE_URL)
+                .unwrap_or(&uri);
+            let real_path = real_path.trim_matches('/');
 
-            if real_path == "init" {
+            if real_path == "init.js" {
                 let responder = responder.into();
                 responder.respond(module_response(&Self::init_script()));
                 return None;

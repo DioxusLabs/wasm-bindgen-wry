@@ -6,9 +6,12 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
-use wasm_bindgen::{runtime::AppEvent, wry::WryBindgen};
+use wasm_bindgen::{runtime::AppEvent, wry::{BASE_URL, WryBindgen}};
 
 use crate::home::root_response;
+
+
+const PROTOCOL_SCHEME: &str = "wry";
 
 pub(crate) fn run_event_loop(
     event_loop: EventLoop<AppEvent>,
@@ -28,7 +31,7 @@ pub(crate) fn run_event_loop(
 
     let builder = WebViewBuilder::new()
         .with_devtools(true)
-        .with_asynchronous_custom_protocol("wry".into(), move |_, request, responder| {
+        .with_asynchronous_custom_protocol(PROTOCOL_SCHEME.into(), move |_, request, responder| {
             let responder = |response| responder.respond(response);
             let Some(responder) = protocol_handler(&request, responder) else {
                 return;
@@ -36,7 +39,7 @@ pub(crate) fn run_event_loop(
 
             responder(root_response())
         })
-        .with_url("wry://index");
+        .with_url(BASE_URL);
 
     // On Linux, use build_gtk for X11 and Wayland support
     #[cfg(target_os = "linux")]

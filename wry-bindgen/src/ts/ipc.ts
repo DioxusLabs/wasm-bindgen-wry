@@ -190,7 +190,7 @@ function handleBinaryResponse(
     window.jsHeap.popReservationScope();
 
     const nextResponse = sync_request_binary(
-      "wry://handler",
+      "/handler",
       encoder.finalize()
     );
     return handleBinaryResponse(nextResponse);

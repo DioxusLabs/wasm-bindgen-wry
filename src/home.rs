@@ -3,12 +3,11 @@ pub fn root_response() -> wry::http::Response<Vec<u8>> {
 <html>
 <head>
     <title>Wry Test</title>
-    <script src="wry://init"></script>
+    <script src="/init.js"></script>
 </head>
 <body>
 </body>
-</html>"#
-        .to_string();
+</html>"#;
 
     wry::http::Response::builder()
         .header("Content-Type", "text/html")

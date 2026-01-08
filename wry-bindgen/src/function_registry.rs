@@ -251,10 +251,10 @@ impl FunctionRegistry {
             let hash = inline_js.hash();
             // Only import each unique module once
             if imported_modules.insert(hash.clone()) {
-                // Dynamically import the module from wry://snippets/{hash}.js
+                // Dynamically import the module from /snippets/{hash}.js
                 writeln!(
                     &mut script,
-                    "  const module_{hash} = await import('wry://snippets/{hash}.js');"
+                    "  const module_{hash} = await import('/snippets/{hash}.js');"
                 )
                 .unwrap();
             }
@@ -424,7 +424,7 @@ impl FunctionRegistry {
         }
 
         // Send a request to wry to notify that the function registry is ready
-        script.push_str("  fetch('wry://ready', { method: 'POST', body: [] });\n");
+        script.push_str("  fetch('/ready', { method: 'POST', body: [] });\n");
 
         // Close the async IIFE
         script.push_str("})();\n");

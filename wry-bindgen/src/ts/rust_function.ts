@@ -13,7 +13,7 @@ const nativeRefRegistry = new FinalizationRegistry<number>((fnId: number) => {
   encoder.pushU32(DROP_NATIVE_REF_FN_ID);
   encoder.pushU32(fnId);
 
-  const response = sync_request_binary("wry://handler", encoder.finalize());
+  const response = sync_request_binary("/handler", encoder.finalize());
   handleBinaryResponse(response);
 });
 
@@ -49,7 +49,7 @@ class RustFunction {
     }
 
     // Send to Rust and get response (Rust may call back to JS during this)
-    const response = sync_request_binary("wry://handler", encoder.finalize());
+    const response = sync_request_binary("/handler", encoder.finalize());
     const result = handleBinaryResponse(response)!;
 
     // Pop the borrow frame - clears borrowed refs from this call
