@@ -3,7 +3,7 @@
 //! This library provides the infrastructure for launching a webview with
 //! Rust-JavaScript bindings via the wry-bindgen macro system.
 
-use winit::event_loop::EventLoop;
+use tao::event_loop::EventLoopBuilder;
 
 use wasm_bindgen::{Closure, start_app};
 
@@ -11,7 +11,7 @@ pub mod bindings;
 mod home;
 mod webview;
 
-use webview::State;
+use webview::run_event_loop;
 
 // Re-export bindings for convenience
 pub use bindings::set_on_log;
@@ -86,27 +86,6 @@ where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: std::future::Future<Output = ()>,
 {
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "openbsd",
-    ))]
-    {
-        use gtk::prelude::DisplayExtManual;
-
-        gtk::init().unwrap();
-        if gtk::gdk::Display::default().unwrap().backend().is_wayland() {
-            panic!("This example doesn't support wayland!");
-        }
-
-        winit::platform::x11::register_xlib_error_hook(Box::new(|_display, error| {
-            let error = error as *mut x11_dl::xlib::XErrorEvent;
-            (unsafe { (*error).error_code }) == 170
-        }));
-    }
-
     let app = || async move {
         set_on_error(Closure::new(|err: String, stack: String| {
             println!("[ERROR IN JS CONSOLE] {err}\nStack trace:\n{stack}");
@@ -118,7 +97,7 @@ where
         app().await
     };
 
-    let event_loop = EventLoop::with_user_event().build().unwrap();
+    let event_loop = EventLoopBuilder::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
     let event_loop_proxy = {
@@ -137,8 +116,7 @@ where
     })
     .unwrap();
 
-    let mut state = State::new(wry_bindgen, proxy, headless);
-    event_loop.run_app(&mut state).unwrap();
+    run_event_loop(event_loop, wry_bindgen, headless);
 
     Ok(())
 }
