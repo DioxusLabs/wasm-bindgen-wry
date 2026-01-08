@@ -1138,9 +1138,9 @@ fn generate_export_struct(s: &ExportStruct, krate: &TokenStream) -> syn::Result<
             static __DROP_SPEC: #krate::JsExportSpec = #krate::JsExportSpec::new(
                 #drop_fn_name,
                 |decoder| {
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(
+                        decoder
+                    )?;
                     #krate::object_store::drop_object(handle);
                     Ok(#krate::EncodedData::new())
                 }
@@ -1203,9 +1203,7 @@ fn generate_export_struct(s: &ExportStruct, krate: &TokenStream) -> syn::Result<
                         #krate::alloc::string::String::from("expected Rust object wrapper")
                     ))?;
                 // Remove from object store and return owned value
-                Ok(#krate::object_store::remove_object::<#rust_name>(
-                    #krate::object_store::ObjectHandle::from_raw(handle)
-                ))
+                Ok(#krate::object_store::remove_object::<#rust_name>(handle))
             }
         }
     };
@@ -1283,9 +1281,7 @@ fn generate_field_accessor(
             static __GETTER_SPEC: #krate::JsExportSpec = #krate::JsExportSpec::new(
                 #getter_name,
                 |decoder| {
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #getter_body
                 }
             );
@@ -1304,9 +1300,7 @@ fn generate_field_accessor(
                 static __SETTER_SPEC: #krate::JsExportSpec = #krate::JsExportSpec::new(
                     #setter_name,
                     |decoder| {
-                        let handle = #krate::object_store::ObjectHandle::from_raw(
-                            <u32 as #krate::BinaryDecode>::decode(decoder)?
-                        );
+                        let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                         let val = <#field_ty as #krate::BinaryDecode>::decode(decoder)?;
                         #krate::object_store::with_object_mut::<#struct_name, _>(handle, |obj| {
                             obj.#field_name = val;
@@ -1406,9 +1400,7 @@ fn generate_inspectable(
             static __TO_JSON_SPEC: #krate::JsExportSpec = #krate::JsExportSpec::new(
                 #to_json_name,
                 |decoder| {
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #krate::object_store::with_object::<#struct_name, _>(handle, |obj| {
                         // Create a simple JSON-like representation
                         let mut json = ::alloc::string::String::from("{");
@@ -1452,9 +1444,7 @@ fn generate_inspectable(
             static __TO_STRING_SPEC: #krate::JsExportSpec = #krate::JsExportSpec::new(
                 #to_string_name,
                 |decoder| {
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #krate::object_store::with_object::<#struct_name, _>(handle, |obj| {
                         let s = ::alloc::format!("[object {}]", #struct_name_str);
                         let mut encoder = #krate::EncodedData::new();
@@ -1516,7 +1506,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
                 let result = #class::#rust_name(#(#arg_names),*);
                 let handle = #krate::object_store::insert_object(result);
                 let mut encoder = #krate::EncodedData::new();
-                <u32 as #krate::BinaryEncode>::encode(handle.as_raw(), &mut encoder);
+                <#krate::object_store::ObjectHandle as #krate::BinaryEncode>::encode(handle, &mut encoder);
                 Ok(encoder)
             }
         }
@@ -1551,9 +1541,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
             if method.ret.is_some() {
                 let ret_ty = method.ret.as_ref().unwrap();
                 quote_spanned! {span=>
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #decode_args
                     let result = #call;
                     let mut encoder = #krate::EncodedData::new();
@@ -1562,9 +1550,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
                 }
             } else {
                 quote_spanned! {span=>
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #decode_args
                     #call;
                     Ok(#krate::EncodedData::new())
@@ -1593,9 +1579,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
             // Property getter: call the getter method
             if let Some(ret_ty) = &method.ret {
                 quote_spanned! {span=>
-                    let handle = #krate::object_store::ObjectHandle::from_raw(
-                        <u32 as #krate::BinaryDecode>::decode(decoder)?
-                    );
+                    let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #krate::object_store::with_object::<#class, _>(handle, |obj| {
                         let result = obj.#rust_name();
                         let mut encoder = #krate::EncodedData::new();
@@ -1617,9 +1601,7 @@ fn generate_export_method(method: &ExportMethod, krate: &TokenStream) -> syn::Re
             let arg_name = method.arguments.first().map(|a| &a.name).unwrap();
 
             quote_spanned! {span=>
-                let handle = #krate::object_store::ObjectHandle::from_raw(
-                    <u32 as #krate::BinaryDecode>::decode(decoder)?
-                );
+                let handle = <#krate::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                 let #arg_name = <#arg_ty as #krate::BinaryDecode>::decode(decoder)?;
                 #krate::object_store::with_object_mut::<#class, _>(handle, |obj| {
                     obj.#rust_name(#arg_name);

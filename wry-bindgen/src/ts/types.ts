@@ -137,11 +137,11 @@ class CallbackType implements TypeClass {
   }
 
   encode(encoder: DataEncoder, fnId: number): void {
-    encoder.pushU64(fnId);
+    encoder.pushU32(fnId);
   }
 
   decode(decoder: DataDecoder): (...args: any[]) => any {
-    const fnId = decoder.takeU64();
+    const fnId = decoder.takeU32();
     const f = new RustFunction(fnId, this.paramTypes, this.returnType);
     return (...args: any[]) => f.call(...args);
   }

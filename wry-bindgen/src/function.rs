@@ -7,13 +7,9 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use alloc::boxed::Box;
 use alloc::vec::Vec;
-use core::any::Any;
 use core::cell::RefCell;
 use core::marker::PhantomData;
-
-use slotmap::{DefaultKey, SlotMap};
 
 use crate::batch::{force_flush, run_js_sync};
 use crate::encode::{BatchableResult, BinaryEncode, EncodeTypeDef, TYPE_CACHED, TYPE_FULL};
@@ -192,30 +188,4 @@ impl RustCallback {
     pub fn clone_rc(&self) -> alloc::rc::Rc<dyn Fn(&mut DecodedData, &mut EncodedData)> {
         self.f.clone()
     }
-}
-
-/// Encoder for storing Rust objects that can be called from JS.
-pub(crate) struct ObjEncoder {
-    pub(crate) functions: SlotMap<DefaultKey, Box<dyn Any>>,
-}
-
-impl ObjEncoder {
-    pub(crate) fn new() -> Self {
-        Self {
-            functions: SlotMap::new(),
-        }
-    }
-
-    pub(crate) fn register_value<T: 'static>(&mut self, value: T) -> DefaultKey {
-        self.functions.insert(Box::new(value))
-    }
-}
-
-thread_local! {
-    pub(crate) static THREAD_LOCAL_OBJECT_ENCODER: RefCell<ObjEncoder> = RefCell::new(ObjEncoder::new());
-}
-
-/// Register a callback with the thread-local encoder using a short borrow
-pub(crate) fn register_value(callback: RustCallback) -> DefaultKey {
-    THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| fn_encoder.borrow_mut().register_value(callback))
 }

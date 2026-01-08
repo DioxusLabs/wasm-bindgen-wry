@@ -16,13 +16,13 @@ use async_channel::{Receiver, Sender};
 use futures_util::{FutureExt, StreamExt};
 use spin::RwLock;
 
-use slotmap::{DefaultKey, KeyData};
-
-use crate::function::{
-    CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback, THREAD_LOCAL_OBJECT_ENCODER,
-};
+use crate::BinaryDecode;
+use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
+use crate::object_store::OBJECT_STORE;
+use crate::object_store::ObjectHandle;
+use crate::object_store::remove_object;
 use crate::wry::WryBindgen;
 
 /// A task to be executed on the main thread with completion signaling and return value.
@@ -379,24 +379,16 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
     match fn_id {
         // Call a registered Rust callback
         0 => {
-            let key = KeyData::from_ffi(data.take_u64().unwrap()).into();
+            let key = data.take_u32().unwrap();
 
-            // Clone the Rc while briefly borrowing the SlotMap, then release the borrow.
-            // This allows nested callbacks to access the SlotMap during our callback execution.
-            let callback = THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
-                let encoder = fn_encoder.borrow();
-                let function = encoder
-                    .functions
-                    .get(key)
-                    .expect("Function not found for key");
-
-                let rust_callback = function
-                    .downcast_ref::<RustCallback>()
-                    .expect("Failed to downcast to RustCallback");
+            // Clone the Rc while briefly borrowing the object store, then release the borrow.
+            // This allows nested callbacks to access the object store during our callback execution.
+            let callback = OBJECT_STORE.with(|store| {
+                let encoder = store.borrow();
+                let rust_callback = encoder.get_object::<RustCallback>(key);
 
                 rust_callback.clone_rc()
             });
-            // SlotMap borrow is now released - nested callbacks can access it
 
             // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
             crate::batch::BATCH_STATE.with(|state| state.borrow_mut().push_borrow_frame());
@@ -414,12 +406,10 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
         }
         // Drop a native Rust object when JS GC'd the wrapper
         DROP_NATIVE_REF_FN_ID => {
-            let key: DefaultKey = KeyData::from_ffi(data.take_u64().unwrap()).into();
+            let key = ObjectHandle::decode(data).expect("Failed to decode object handle");
 
             // Remove the object from the thread-local encoder
-            THREAD_LOCAL_OBJECT_ENCODER.with(|fn_encoder| {
-                fn_encoder.borrow_mut().functions.remove(key);
-            });
+            remove_object::<RustCallback>(key);
 
             // Send empty response
             let response = IPCMessage::new_respond(|_| {});

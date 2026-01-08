@@ -271,6 +271,32 @@ impl<T: ?Sized> Closure<T> {
     pub fn forget(self) {
         core::mem::forget(self);
     }
+
+    /// Wrap a raw closure. Only for use by generated code.
+    pub(crate) fn wrap_encode_decode<FnPtr>(
+        encode_decode: impl Fn(&mut DecodedData, &mut EncodedData) + 'static,
+    ) -> Self
+    where
+        CallbackKey<FnPtr>: BinaryEncode + EncodeTypeDef,
+    {
+        let key = insert_object(RustCallback::new_fn(encode_decode));
+        // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
+        // Return type is Closure which encodes as HeapRef (JS inserts into heap)
+        crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::Closure<T>>(CallbackKey::new(key))
+    }
+
+    /// Wrap a raw closure. Only for use by generated code.
+    pub(crate) fn wrap_encode_decode_mut<FnPtr>(
+        encode_decode: impl FnMut(&mut DecodedData, &mut EncodedData) + 'static,
+    ) -> Self
+    where
+        CallbackKey<FnPtr>: BinaryEncode + EncodeTypeDef,
+    {
+        let key = insert_object(RustCallback::new_fn_mut(encode_decode));
+        // Use wbg_cast with CallbackKey so param encodes as Callback type (JS creates RustFunction)
+        // Return type is Closure which encodes as HeapRef (JS inserts into heap)
+        crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::Closure<T>>(CallbackKey::new(key))
+    }
 }
 
 /// A trait for converting an `FnOnce(A...) -> R` into a `Closure<dyn FnMut(A...) -> R>`.
@@ -447,7 +473,9 @@ pub use wry_bindgen_macro::wasm_bindgen;
 // Re-export inventory for macro use
 pub use inventory;
 
-use crate::encode::IntoClosure;
+use crate::encode::{CallbackKey, IntoClosure};
+use crate::function::RustCallback;
+use crate::object_store::insert_object;
 
 // Re-export function registry types
 pub use function_registry::{
@@ -560,7 +588,7 @@ pub fn function_table() -> JsValue {
 }
 
 // Re-export extract_rust_handle from js_helpers
-pub use js_helpers::extract_rust_handle;
+pub use js_helpers::js_extract_rust_handle as extract_rust_handle;
 
 /// Prelude module for common imports
 pub mod prelude {

@@ -12,7 +12,6 @@ enable-interning = []
 base64 = "0.22"
 bytemuck = "1.14"
 inventory = "0.3.21"
-slotmap = { version = "1.0" }
 wry-bindgen-macro = { path = "../wry-bindgen-macro" }
 # We use this instead of std because wasm bindgen supports no_std environments
 once_cell = { version = "1.21.3", features = ["critical-section"] }

@@ -146,6 +146,6 @@ export function create_rust_object_wrapper(handle: number, className: string): u
 
 // Extract the Rust object handle from a JavaScript wrapper object
 // Returns the handle if present, -1 otherwise
-export function extract_rust_handle(obj: any): number {
-  return (obj && typeof obj.__handle === 'number') ? obj.__handle : -1;
+export function extract_rust_handle(obj: any): number | null {
+  return (obj && typeof obj.__handle === 'number') ? obj.__handle : null;
 }
