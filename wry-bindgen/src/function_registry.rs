@@ -53,7 +53,9 @@ impl<F> Deref for LazyJsFunction<F> {
         self.inner.get_or_init(|| {
             FUNCTION_REGISTRY
                 .get_function(self.spec)
-                .unwrap_or_else(|| panic!("Function not found for code: {}", (self.spec.js_code())()))
+                .unwrap_or_else(|| {
+                    panic!("Function not found for code: {}", (self.spec.js_code())())
+                })
         })
     }
 }
@@ -323,7 +325,10 @@ impl FunctionRegistry {
                         writeln!(
                             &mut script,
                             r#"    {}({}) {{ return window.__wryCallExport("{}", {}); }}"#,
-                            member.member_name(), args, member.export_name(), args_with_handle
+                            member.member_name(),
+                            args,
+                            member.export_name(),
+                            args_with_handle
                         )
                         .unwrap();
                     }
