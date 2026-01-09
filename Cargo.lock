@@ -5049,7 +5049,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.56"
+version = "0.4.55"
 dependencies = [
  "cfg-if",
  "futures-core",
