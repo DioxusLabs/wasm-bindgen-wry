@@ -94,7 +94,7 @@ jobs:
         with:
           cache-all-crates: "true"
       # Only document workspace members, not submodule packages
-      - run: cargo doc --no-deps --all-features -p wry-testing -p wasm-bindgen -p wry-bindgen-macro -p wry-bindgen-macro-support
+      - run: cargo doc --no-deps --all-features -p wry-testing -p wasm-bindgen@0.2.105 -p wry-bindgen-macro -p wry-bindgen-macro-support
         env:
           RUSTDOCFLAGS: -Dwarnings
 

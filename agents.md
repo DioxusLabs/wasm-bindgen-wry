@@ -26,7 +26,7 @@ CI runs the following checks with rust 1.88. When running these checks locally, 
 - `cargo +1.88 fmt --all -- --check` - Format check
 - `cargo +1.88 check --workspace --all-features` - Compile check
 - `cargo +1.88 clippy --workspace --all-features` - Lint check
-- `cargo +nightly doc --no-deps --all-features -p wry-testing -p wasm-bindgen -p wry-bindgen-macro -p wry-bindgen-macro-support` - Documentation check (uses nightly, with `RUSTDOCFLAGS=-Dwarnings`)
+- `cargo +nightly doc --no-deps --all-features -p wry-testing -p wasm-bindgen@0.2.105 -p wry-bindgen-macro -p wry-bindgen-macro-support` - Documentation check (uses nightly, with `RUSTDOCFLAGS=-Dwarnings`)
 - `cargo +1.88 test --workspace --all-features -- --test-threads=1` - Test check
 
 To automatically fix issues, you can run the following commands:
