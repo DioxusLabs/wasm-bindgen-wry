@@ -17,9 +17,13 @@ use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
 use crate::runtime::{AppEvent, AppEventVariant, get_runtime};
 
+pub trait ImplWryBindgenResponder {
+    fn respond(self: Box<Self>, response: Response<Vec<u8>>);
+}
+
 /// Responder for wry-bindgen protocol requests.
 pub struct WryBindgenResponder {
-    respond: Box<dyn FnOnce(Response<Vec<u8>>)>,
+    respond: Box<dyn ImplWryBindgenResponder>,
 }
 
 impl<F> From<F> for WryBindgenResponder
@@ -27,15 +31,34 @@ where
     F: FnOnce(Response<Vec<u8>>) + 'static,
 {
     fn from(respond: F) -> Self {
+        struct FnOnceWrapper<F> {
+            f: F,
+        }
+
+        impl<F> ImplWryBindgenResponder for FnOnceWrapper<F>
+        where
+            F: FnOnce(Response<Vec<u8>>) + 'static,
+        {
+            fn respond(self: Box<Self>, response: Response<Vec<u8>>) {
+                (self.f)(response)
+            }
+        }
+
         Self {
-            respond: Box::new(respond),
+            respond: Box::new(FnOnceWrapper { f: respond }),
         }
     }
 }
 
 impl WryBindgenResponder {
+    pub fn new(f: impl ImplWryBindgenResponder + 'static) -> Self {
+        Self {
+            respond: Box::new(f),
+        }
+    }
+
     fn respond(self, response: Response<Vec<u8>>) {
-        (self.respond)(response);
+        self.respond.respond(response);
     }
 }
 
@@ -168,7 +191,7 @@ impl WryBindgen {
     ///
     /// The returned closure handles all "wry://" protocol requests:
     /// - "/index" - serves root HTML (uses provided root_response)
-    /// - "/ready" - signals webview loaded
+    /// - "/initialized" - signals webview loaded
     /// - "/snippets/{path}" - serves inline JS modules
     /// - "/handler" - main IPC endpoint
     ///
@@ -203,7 +226,7 @@ impl WryBindgen {
                 return None;
             }
 
-            if real_path == "ready" {
+            if real_path == "initialized" {
                 proxy(AppEvent::webview_loaded());
                 let responder = responder.into();
                 responder.respond(blank_response());

@@ -423,8 +423,8 @@ impl FunctionRegistry {
             writeln!(&mut script, "  window.{class_name} = {class_name};").unwrap();
         }
 
-        // Send a request to wry to notify that the function registry is ready
-        script.push_str("  fetch('/ready', { method: 'POST', body: [] });\n");
+        // Send a request to wry to notify that the function registry is initialized
+        script.push_str("  fetch('/initialized', { method: 'POST', body: [] });\n");
 
         // Close the async IIFE
         script.push_str("})();\n");
