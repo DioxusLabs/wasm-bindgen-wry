@@ -233,7 +233,7 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
     // All JS types use HeapRef since they're references to JS heap objects
     let encode_type_def_impl = quote_spanned! {span=>
         impl #krate::EncodeTypeDef for #rust_name {
-            fn encode_type_def(buf: &mut Vec<u8>) {
+            fn encode_type_def(buf: &mut #krate::alloc::vec::Vec<u8>) {
                 <#krate::JsValue as #krate::EncodeTypeDef>::encode_type_def(buf);
             }
         }
@@ -966,7 +966,7 @@ fn generate_string_enum(string_enum: &StringEnum, krate: &TokenStream) -> syn::R
     let variant_count_u8 = variant_count as u8;
     let encode_type_def_impl = quote! {
         impl #krate::EncodeTypeDef for #enum_name {
-            fn encode_type_def(buf: &mut Vec<u8>) {
+            fn encode_type_def(buf: &mut #krate::alloc::vec::Vec<u8>) {
                 // Push StringEnum tag
                 buf.push(#krate::encode::TypeTag::StringEnum as u8);
                 // Push variant count
