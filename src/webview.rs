@@ -6,10 +6,19 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
-use wasm_bindgen::{runtime::AppEvent, wry::{BASE_URL, WryBindgen}};
+use wasm_bindgen::{runtime::AppEvent, wry::WryBindgen};
 
 use crate::home::root_response;
 
+// Each platform has a different custom protocol scheme
+#[cfg(target_os = "android")]
+pub const BASE_URL: &str = "https://wry.index.html";
+
+#[cfg(target_os = "windows")]
+pub const BASE_URL: &str = "http://wry.index.html";
+
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
+pub const BASE_URL: &str = "wry://index.html";
 
 const PROTOCOL_SCHEME: &str = "wry";
 
@@ -25,7 +34,7 @@ pub(crate) fn run_event_loop(
         .unwrap();
 
     let proxy = event_loop.create_proxy();
-    let protocol_handler = wry_bindgen.create_protocol_handler(move |event| {
+    let protocol_handler = wry_bindgen.create_protocol_handler(PROTOCOL_SCHEME, move |event| {
         proxy.send_event(event).unwrap();
     });
 

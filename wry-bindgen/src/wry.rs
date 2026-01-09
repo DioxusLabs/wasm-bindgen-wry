@@ -17,16 +17,6 @@ use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
 use crate::runtime::{AppEvent, AppEventVariant, get_runtime};
 
-// Each platform has a different custom protocol scheme
-#[cfg(target_os = "android")]
-pub const BASE_URL: &str = "https://wry.index.html";
-
-#[cfg(target_os = "windows")]
-pub const BASE_URL: &str = "http://wry.index.html";
-
-#[cfg(not(any(target_os = "android", target_os = "windows")))]
-pub const BASE_URL: &str = "wry://index.html";
-
 /// Responder for wry-bindgen protocol requests.
 pub struct WryBindgenResponder {
     respond: Box<dyn FnOnce(Response<Vec<u8>>)>,
@@ -186,6 +176,7 @@ impl WryBindgen {
     /// * `proxy` - Function to send events to the event loop
     pub fn create_protocol_handler<F, R: Into<WryBindgenResponder>>(
         &self,
+        protocol: &str,
         proxy: F,
     ) -> impl Fn(&http::Request<Vec<u8>>, R) -> Option<R> + 'static
     where
@@ -193,12 +184,16 @@ impl WryBindgen {
     {
         let shared = self.shared.clone();
 
+        let protocol_prefix = format!("{protocol}://index.html");
+        let android_prefix = format!("https://{protocol}.index.html");
+        let windows_prefix = format!("http://{protocol}.index.html");
+
         move |request: &http::Request<Vec<u8>>, responder: R| {
             let uri = request.uri().to_string();
             let real_path = uri
-                .strip_prefix("wry://index.html")
-                .or_else(|| uri.strip_prefix("http://wry.index.html"))
-                .or_else(|| uri.strip_prefix("https://wry.index.html"))
+                .strip_prefix(&protocol_prefix)
+                .or_else(|| uri.strip_prefix(&windows_prefix))
+                .or_else(|| uri.strip_prefix(&android_prefix))
                 .unwrap_or(&uri);
             let real_path = real_path.trim_matches('/');
 

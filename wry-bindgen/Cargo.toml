@@ -1,12 +1,13 @@
 [package]
 name = "wasm-bindgen"
-version = "0.2.105"
+version = "0.2.106"
 edition = "2024"
 
 [features]
 default = ["std"]
 std = []
 enable-interning = []
+msrv = []
 
 [dependencies]
 base64 = "0.22"
