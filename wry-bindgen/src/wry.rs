@@ -191,9 +191,9 @@ impl WryBindgen {
     ///
     /// The returned closure handles all "wry://" protocol requests:
     /// - "/index" - serves root HTML (uses provided root_response)
-    /// - "/initialized" - signals webview loaded
-    /// - "/snippets/{path}" - serves inline JS modules
-    /// - "/handler" - main IPC endpoint
+    /// - "/__wbg__/initialized" - signals webview loaded
+    /// - "/__wbg__/snippets/{path}" - serves inline JS modules
+    /// - "/__wbg__/handler" - main IPC endpoint
     ///
     /// # Arguments
     /// * `proxy` - Function to send events to the event loop
@@ -220,21 +220,21 @@ impl WryBindgen {
                 .unwrap_or(&uri);
             let real_path = real_path.trim_matches('/');
 
-            if real_path == "init.js" {
+            if real_path == "__wbg__/init.js" {
                 let responder = responder.into();
                 responder.respond(module_response(&Self::init_script()));
                 return None;
             }
 
-            if real_path == "initialized" {
+            if real_path == "__wbg__/initialized" {
                 proxy(AppEvent::webview_loaded());
                 let responder = responder.into();
                 responder.respond(blank_response());
                 return None;
             }
 
-            // Serve inline_js modules from snippets/
-            if real_path.starts_with("snippets/") {
+            // Serve inline_js modules from __wbg__/snippets/
+            if real_path.starts_with("__wbg__/snippets/") {
                 let responder = responder.into();
                 if let Some(content) = FUNCTION_REGISTRY.get_module(real_path) {
                     responder.respond(module_response(content));
@@ -245,7 +245,7 @@ impl WryBindgen {
             }
 
             // Js sent us either an Evaluate or Respond message
-            if real_path == "handler" {
+            if real_path == "__wbg__/handler" {
                 let responder = responder.into();
                 let mut shared = shared.borrow_mut();
                 let Some(msg) = decode_request_data(request) else {

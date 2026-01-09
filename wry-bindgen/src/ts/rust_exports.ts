@@ -16,7 +16,7 @@ const exportRegistry = new FinalizationRegistry<{ handle: number; className: str
   // Encode the handle as u32
   encoder.pushU32(info.handle);
 
-  const response = sync_request_binary("/handler", encoder.finalize());
+  const response = sync_request_binary("/__wbg__/handler", encoder.finalize());
   handleBinaryResponse(response);
 });
 
@@ -41,7 +41,7 @@ function callExport(exportName: string, ...args: any[]): any {
     }
   }
 
-  const response = sync_request_binary("/handler", encoder.finalize());
+  const response = sync_request_binary("/__wbg__/handler", encoder.finalize());
   const decoder = handleBinaryResponse(response);
 
   window.jsHeap.popBorrowFrame();

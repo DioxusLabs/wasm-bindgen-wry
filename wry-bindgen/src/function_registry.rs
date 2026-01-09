@@ -229,7 +229,7 @@ impl FunctionRegistry {
         // Collect all inline JS modules and deduplicate by content hash
         for inline_js in inventory::iter::<InlineJsModule>() {
             let hash = inline_js.hash();
-            let module_path = format!("snippets/{hash}.js");
+            let module_path = format!("__wbg__/snippets/{hash}.js");
             // Only insert if we haven't seen this content before
             modules.entry(module_path).or_insert(inline_js.content());
         }
@@ -251,10 +251,10 @@ impl FunctionRegistry {
             let hash = inline_js.hash();
             // Only import each unique module once
             if imported_modules.insert(hash.clone()) {
-                // Dynamically import the module from /snippets/{hash}.js
+                // Dynamically import the module from /__wbg__/snippets/{hash}.js
                 writeln!(
                     &mut script,
-                    "  const module_{hash} = await import('/snippets/{hash}.js');"
+                    "  const module_{hash} = await import('/__wbg__/snippets/{hash}.js');"
                 )
                 .unwrap();
             }
@@ -424,7 +424,7 @@ impl FunctionRegistry {
         }
 
         // Send a request to wry to notify that the function registry is initialized
-        script.push_str("  fetch('/initialized', { method: 'POST', body: [] });\n");
+        script.push_str("  fetch('/__wbg__/initialized', { method: 'POST', body: [] });\n");
 
         // Close the async IIFE
         script.push_str("})();\n");

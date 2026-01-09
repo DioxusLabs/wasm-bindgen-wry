@@ -3,7 +3,7 @@ pub fn root_response() -> wry::http::Response<Vec<u8>> {
 <html>
 <head>
     <title>Wry Test</title>
-    <script src="/init.js"></script>
+    <script src="/__wbg__/init.js"></script>
 </head>
 <body>
 </body>
