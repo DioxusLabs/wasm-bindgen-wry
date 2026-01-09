@@ -1,0 +1,21 @@
+[package]
+name = "tiptap-example"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+web-sys = { version = "0.3.83", path = "../../wasm-bindgen/crates/web-sys", features = [
+    "Document",
+    "HtmlElement",
+    "Element",
+    "Node",
+    "Window",
+    "HtmlHeadElement",
+    "DomTokenList",
+] }
+wry-testing = { version = "0.1.0", path = "../.." }
+wasm-bindgen = { path = "../../wry-bindgen" }
+leptos-tiptap-build = "0.2.8"
+
+[lints]
+workspace = true

@@ -41,7 +41,7 @@ function sync_request_binary(
 ): ArrayBuffer | null {
   const xhr = new XMLHttpRequest();
   xhr.open("POST", endpoint, false);
-  xhr.responseType = "arraybuffer";
+  // Note: Cannot set responseType on sync requests - response comes as base64 text
 
   // Encode as base64 for header (Android workaround)
   const bytes = new Uint8Array(data);
@@ -53,8 +53,14 @@ function sync_request_binary(
   xhr.setRequestHeader("dioxus-data", base64);
   xhr.send();
 
-  if (xhr.status === 200 && xhr.response) {
-    return xhr.response as ArrayBuffer;
+  if (xhr.status === 200 && xhr.responseText) {
+    // Decode base64 response to ArrayBuffer
+    const responseBinary = atob(xhr.responseText);
+    const responseBytes = new Uint8Array(responseBinary.length);
+    for (let i = 0; i < responseBinary.length; i++) {
+      responseBytes[i] = responseBinary.charCodeAt(i);
+    }
+    return responseBytes.buffer;
   }
   return null;
 }

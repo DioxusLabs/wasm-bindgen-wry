@@ -2548,6 +2548,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
+name = "leptos-tiptap-build"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc4989e17a7192c79dd447315eeb3b2efed02a0c13059544dc7d53ab6f6cf3a8"
+
+[[package]]
 name = "libc"
 version = "0.2.180"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3109,6 +3115,18 @@ checksum = "42f5e15c9953c5e4ccceeb2e7382a716482c34515315f7b03532b8b4e8393d2d"
 dependencies = [
  "critical-section",
  "portable-atomic",
+]
+
+[[package]]
+name = "openstreetmap"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "js-sys",
+ "wasm-bindgen 0.2.105",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "wry-testing",
 ]
 
 [[package]]
@@ -4523,6 +4541,16 @@ name = "tinyvec_macros"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
+
+[[package]]
+name = "tiptap-example"
+version = "0.1.0"
+dependencies = [
+ "leptos-tiptap-build",
+ "wasm-bindgen 0.2.106",
+ "web-sys",
+ "wry-testing",
+]
 
 [[package]]
 name = "tokio"
