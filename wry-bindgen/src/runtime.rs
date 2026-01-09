@@ -258,6 +258,14 @@ where
     }
     // Spawn the app thread with panic handling - if the app panics, shut down the webview
     std::thread::spawn(move || {
+        struct ShutdownOnDrop(i32);
+        impl Drop for ShutdownOnDrop {
+            fn drop(&mut self) {
+                shutdown(self.0);
+            }
+        }
+        let mut shutdown = ShutdownOnDrop(1);
+
         let run = || {
             let run_app = app();
             let wait_for_events = poll_callbacks();
@@ -282,7 +290,7 @@ where
         } else {
             0 // Exit with success status on normal completion
         };
-        shutdown(status);
+        shutdown.0 = status;
     });
 
     Ok(WryBindgen::new())
