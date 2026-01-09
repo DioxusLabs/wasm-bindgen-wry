@@ -317,20 +317,7 @@ fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStrea
     let jscast_impl = quote_spanned! {span=>
         impl #krate::JsCast for #rust_name {
             fn instanceof(__val: &#krate::JsValue) -> bool {
-                static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
-                    || #krate::alloc::format!(#instanceof_js_code),
-                );
-
-                #krate::inventory::submit! {
-                    __SPEC
-                }
-
-                // Look up the instanceof check function at runtime
-                static __FUNC: #krate::LazyJsFunction<fn(&#krate::JsValue) -> bool> =
-                    __SPEC.resolve_as();
-
-                // Call the function
-                __FUNC.call(__val)
+                #krate::__wry_call_js_function!(#instanceof_js_code, fn(&#krate::JsValue) -> bool, (__val))
             }
 
             #is_type_of_impl
@@ -398,20 +385,7 @@ fn generate_function(
 
     // Generate the function body
     let func_body = quote_spanned! {span=>
-        static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
-            || #krate::alloc::format!(#js_code_str),
-        );
-
-        #krate::inventory::submit! {
-            __SPEC
-        }
-
-        // Look up the function at runtime
-        static __FUNC: #krate::LazyJsFunction<fn(#fn_types) -> #ret_type> =
-            __SPEC.resolve_as();
-
-        // Call the function
-        __FUNC.call(#call_values)
+        #krate::__wry_call_js_function!(#js_code_str, fn(#fn_types) -> #ret_type, (#call_values))
     };
 
     // Get the rust attributes to forward (like #[cfg(...)] and #[doc = "..."])
@@ -522,20 +496,8 @@ fn generate_async_function(
     // - Cast to js_sys::Promise
     // - Wrap in JsFuture and await
     let async_body = quote_spanned! {span=>
-        static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
-            || #krate::alloc::format!(#js_code_str),
-        );
-
-        #krate::inventory::submit! {
-            __SPEC
-        }
-
-        // Look up the function at runtime
-        static __FUNC: #krate::LazyJsFunction<fn(#fn_types) -> #krate::JsValue> =
-            __SPEC.resolve_as();
-
         // Call the function, get Promise as JsValue
-        let __promise_val = __FUNC.call(#call_values);
+        let __promise_val = #krate::__wry_call_js_function!(#js_code_str, fn(#fn_types) -> #krate::JsValue, (#call_values));
 
         // Cast to js_sys::Promise and wrap in JsFuture
         let __promise: ::wasm_bindgen_futures::js_sys::Promise =
@@ -906,22 +868,10 @@ fn generate_static(
     // Type information is now passed at call time via JSFunction::call
     Ok(quote_spanned! {span=>
         #vis static #rust_name: #krate::JsThreadLocal<#ty> = {
-            static __SPEC: #krate::JsFunctionSpec = #krate::JsFunctionSpec::new(
-                || #krate::alloc::format!(#js_code),
-            );
-
-            #krate::inventory::submit! {
-                __SPEC
-            }
-
             // This can't be named __init for compat with older rustc versions
             // https://github.com/rust-lang/rust/issues/147006
             fn __init_wbg() -> #ty {
-                static __FUNC: #krate::LazyJsFunction<fn() -> #ty> =
-                    __SPEC.resolve_as();
-
-                // Call the accessor to get the value
-                __FUNC.call()
+                #krate::__wry_call_js_function!(#js_code, fn() -> #ty, ())
             }
             #krate::__wry_bindgen_thread_local!(#ty = __init_wbg())
         };

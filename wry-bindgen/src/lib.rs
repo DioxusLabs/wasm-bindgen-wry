@@ -46,7 +46,7 @@ pub mod closure {
 /// This module provides the wbg_cast function used for type casting.
 pub mod __rt {
     use crate::{
-        JsFunctionSpec, LazyJsFunction,
+        __wry_submit_js_function, LazyJsFunction,
         encode::{BatchableResult, BinaryEncode, EncodeTypeDef},
     };
 
@@ -61,17 +61,7 @@ pub mod __rt {
         From: BinaryEncode + EncodeTypeDef,
         To: BatchableResult + EncodeTypeDef,
     {
-        /// The identity cast function spec - registered once and reused by wbg_cast.
-        /// This is the JS function `(a0) => a0` that passes values through unchanged.
-        /// Type conversion is handled by Rust's encode/decode based on the type parameters.
-        static IDENTITY_CAST_SPEC: JsFunctionSpec =
-            JsFunctionSpec::new(|| alloc::string::String::from("(a0) => a0"));
-
-        inventory::submit! {
-            IDENTITY_CAST_SPEC
-        }
-
-        let func: LazyJsFunction<fn(From) -> To> = IDENTITY_CAST_SPEC.resolve_as();
+        let func: LazyJsFunction<fn(From) -> To> = __wry_submit_js_function!("(a0) => a0");
         func.call(value)
     }
 }
@@ -399,15 +389,12 @@ pub struct JsError {
 impl JsError {
     /// Create a new JavaScript Error with the given message.
     pub fn new(message: &str) -> Self {
-        // Create JS Error via helper function
-        static __SPEC: JsFunctionSpec =
-            JsFunctionSpec::new(|| "(msg) => new Error(msg)".to_string());
-        inventory::submit! {
-            __SPEC
-        }
-        static __FUNC: LazyJsFunction<fn(&str) -> JsValue> = __SPEC.resolve_as();
         JsError {
-            value: __FUNC.call(message),
+            value: __wry_call_js_function!(
+                "(msg) => new Error(msg)",
+                fn(&str) -> JsValue,
+                (message)
+            ),
         }
     }
 }
@@ -495,6 +482,54 @@ macro_rules! __wry_bindgen_thread_local {
             pub static __INNER: $actual_ty = $value;
         }
         $crate::prelude::JsThreadLocal::new(&__INNER)
+    }};
+}
+
+/// Macro to register and call a JavaScript function.
+///
+/// This macro encapsulates the common pattern of:
+/// 1. Creating a static JsFunctionSpec
+/// 2. Submitting it to inventory
+/// 3. Creating a LazyJsFunction with the given signature
+/// 4. Calling the function with the provided arguments
+///
+/// # Usage
+/// ```ignore
+/// __wry_call_js_function!("(a, b) => a + b", fn(i32, i32) -> i32, (x, y))
+/// ```
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wry_call_js_function {
+    ($js_code:expr, $fn_type:ty, ($($args:expr),*)) => {{
+        static __FUNC: $crate::LazyJsFunction<$fn_type> = $crate::__wry_submit_js_function!($js_code);
+
+        __FUNC.call($($args),*)
+    }};
+}
+
+/// Macro to register and call a JavaScript function.
+///
+/// This macro encapsulates the common pattern of:
+/// 1. Creating a static JsFunctionSpec
+/// 2. Submitting it to inventory
+/// 3. Creating a LazyJsFunction with the given signature
+///
+/// # Usage
+/// ```ignore
+/// __wry_submit_js_function!("(a, b) => a + b")
+/// ```
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __wry_submit_js_function {
+    ($js_code:expr) => {{
+        static __SPEC: $crate::JsFunctionSpec =
+            $crate::JsFunctionSpec::new(|| $crate::alloc::format!($js_code));
+
+        $crate::inventory::submit! {
+            __SPEC
+        }
+
+        __SPEC.resolve_as()
     }};
 }
 
