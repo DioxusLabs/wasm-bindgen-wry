@@ -250,7 +250,7 @@ where
 
         let run = || {
             let run_app = app();
-            let wait_for_events = poll_callbacks();
+            let wait_for_events = handle_callbacks();
 
             start_async_runtime(Box::pin(async move {
                 futures_util::select! {
@@ -335,7 +335,7 @@ pub(crate) fn progress_js_with<O>(
     }
 }
 
-pub async fn poll_callbacks() {
+pub async fn handle_callbacks() {
     let receiver = with_runtime(|runtime| runtime.ipc().receivers.read().eval_receiver.clone());
 
     while let Ok(response) = receiver.recv().await {

@@ -1,4 +1,3 @@
-use std::thread::ThreadId;
 use wry_testing::run_on_main_thread;
 
 /// Test basic execution: closure runs, blocks until complete, and returns value.
