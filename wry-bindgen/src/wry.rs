@@ -12,9 +12,9 @@ use base64::Engine;
 use core::cell::RefCell;
 use core::future::poll_fn;
 use core::pin::{Pin, pin};
-use std::sync::Arc;
 use futures_util::FutureExt;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use http::Response;
 
@@ -154,8 +154,8 @@ impl WebviewState {
 fn unique_id() -> u64 {
     use core::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    id
+    
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 /// A webview future that has a reserved id for use with wry-bindgen.
@@ -208,7 +208,7 @@ pub struct WryBindgen {
 
 impl WryBindgen {
     /// Create a new WryBindgen instance.
-    pub fn new(event_loop_proxy: impl Fn(AppEvent) + Send + Sync + 'static,) -> Self {
+    pub fn new(event_loop_proxy: impl Fn(AppEvent) + Send + Sync + 'static) -> Self {
         Self {
             event_loop_proxy: Arc::new(event_loop_proxy),
             webview: Rc::new(RefCell::new(HashMap::new())),
@@ -216,10 +216,7 @@ impl WryBindgen {
     }
 
     /// Start the application thread with the given event loop proxy
-    pub fn in_runtime<F>(
-        &self,
-        app: impl FnOnce() -> F + Send + 'static,
-    ) -> PreparedApp
+    pub fn in_runtime<F>(&self, app: impl FnOnce() -> F + Send + 'static) -> PreparedApp
     where
         F: core::future::Future<Output = ()> + 'static,
     {

@@ -1,5 +1,6 @@
 pub fn root_response(webview_id: u64) -> wry::http::Response<Vec<u8>> {
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Wry Test</title>
@@ -7,7 +8,8 @@ pub fn root_response(webview_id: u64) -> wry::http::Response<Vec<u8>> {
 </head>
 <body>
 </body>
-</html>"#);
+</html>"#
+    );
 
     wry::http::Response::builder()
         .header("Content-Type", "text/html")

@@ -426,7 +426,9 @@ impl FunctionRegistry {
         }
 
         // Send a request to wry to notify that the function registry is initialized
-        script.push_str("  fetch(`/__wbg__/${window.webview_id}/initialized`, { method: 'POST', body: [] });\n");
+        script.push_str(
+            "  fetch(`/__wbg__/${window.webview_id}/initialized`, { method: 'POST', body: [] });\n",
+        );
 
         // Close the async IIFE
         script.push_str("})();\n");
