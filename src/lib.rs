@@ -11,7 +11,7 @@ pub mod bindings;
 mod home;
 mod webview;
 
-use webview::{run_event_loop, WryEvent};
+use webview::{WryEvent, run_event_loop};
 
 // Re-export bindings for convenience
 pub use bindings::set_on_log;

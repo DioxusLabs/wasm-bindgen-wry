@@ -105,7 +105,6 @@ pub(crate) enum AppEventVariant {
     WebviewLoaded,
     /// Execute a closure on the main thread
     RunOnMainThread(MainThreadTask),
-
 }
 
 #[derive(Clone)]
@@ -250,7 +249,8 @@ where
                 });
                 maybe_runtime = Some(new_runtime);
                 poll_result
-            }).await
+            })
+            .await
         };
 
         Box::pin(poll_in_runtime) as Pin<Box<dyn Future<Output = ()> + 'static>>
