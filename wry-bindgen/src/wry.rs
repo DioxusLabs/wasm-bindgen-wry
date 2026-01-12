@@ -300,7 +300,6 @@ impl WryBindgen {
                     std::mem::replace(&mut *state, WebviewLoadingState::Loaded)
                 {
                     for msg in queued {
-                        println!("Sending queued message to JS");
                         self.immediately_handle_ipc_message(msg, &mut evaluate_script);
                     }
                 }
