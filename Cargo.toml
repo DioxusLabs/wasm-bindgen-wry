@@ -61,11 +61,7 @@ wasm-bindgen-futures = { path = "wasm-bindgen/crates/futures" }
 js-sys = { path = "wasm-bindgen/crates/js-sys" }
 web-sys = { path = "wasm-bindgen/crates/web-sys" }
 
-[workspace.lints.clippy]
-all = { level = "deny", priority = -1 }
-
-[workspace.lints.rust]
-warnings = "deny"
+[workspace.lints]
 
 [lints]
 workspace = true

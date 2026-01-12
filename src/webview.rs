@@ -10,6 +10,16 @@ use wasm_bindgen::{runtime::AppEvent, wry::WryBindgen};
 
 use crate::home::root_response;
 
+/// Event type for the wry-testing event loop.
+/// Wraps wry-bindgen's AppEvent and adds application-level events.
+#[derive(Debug)]
+pub(crate) enum WryEvent {
+    /// An event from wry-bindgen runtime
+    App(AppEvent),
+    /// Shutdown the event loop
+    Shutdown,
+}
+
 // Each platform has a different custom protocol scheme
 #[cfg(target_os = "android")]
 pub const BASE_URL: &str = "https://wry.index.html";
@@ -23,7 +33,7 @@ pub const BASE_URL: &str = "wry://index.html";
 const PROTOCOL_SCHEME: &str = "wry";
 
 pub(crate) fn run_event_loop(
-    event_loop: EventLoop<AppEvent>,
+    event_loop: EventLoop<WryEvent>,
     wry_bindgen: WryBindgen,
     headless: bool,
 ) {
@@ -35,7 +45,7 @@ pub(crate) fn run_event_loop(
 
     let proxy = event_loop.create_proxy();
     let protocol_handler = wry_bindgen.create_protocol_handler(PROTOCOL_SCHEME, move |event| {
-        proxy.send_event(event).unwrap();
+        proxy.send_event(WryEvent::App(event)).unwrap();
     });
 
     let builder = WebViewBuilder::new()
@@ -73,15 +83,18 @@ pub(crate) fn run_event_loop(
             } => {
                 std::process::exit(0);
             }
-            Event::UserEvent(app_event) => {
-                if let Some(status) = wry_bindgen.handle_user_event(app_event, |script| {
-                    if let Err(err) = webview.evaluate_script(script) {
-                        eprintln!("Error evaluating script: {err}");
-                    }
-                }) {
-                    std::process::exit(status);
+            Event::UserEvent(wry_event) => match wry_event {
+                WryEvent::Shutdown => {
+                    *control_flow = ControlFlow::Exit;
                 }
-            }
+                WryEvent::App(app_event) => {
+                    wry_bindgen.handle_user_event(app_event, |script| {
+                        if let Err(err) = webview.evaluate_script(script) {
+                            eprintln!("Error evaluating script: {err}");
+                        }
+                    });
+                }
+            },
             _ => {}
         }
     });

@@ -6,8 +6,8 @@
 use core::any::Any;
 use core::error::Error;
 use core::fmt::Display;
-use core::pin::Pin;
-use std::sync::OnceLock;
+use core::future::poll_fn;
+use core::pin::{Pin, pin};
 use std::sync::mpsc;
 use std::thread::ThreadId;
 
@@ -17,7 +17,7 @@ use futures_util::{FutureExt, StreamExt};
 use spin::RwLock;
 
 use crate::BinaryDecode;
-use crate::batch::RUNTIME;
+use crate::batch::{Runtime, in_runtime, with_runtime};
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
@@ -84,13 +84,6 @@ impl AppEvent {
         }
     }
 
-    /// Create a new shutdown event with the given status code.
-    pub(crate) fn shutdown(status: i32) -> Self {
-        Self {
-            event: AppEventVariant::Shutdown(status),
-        }
-    }
-
     /// Create a new run-on-main-thread event.
     fn run_on_main_thread(task: MainThreadTask) -> Self {
         Self {
@@ -110,13 +103,12 @@ pub(crate) enum AppEventVariant {
     Ipc(IPCMessage),
     /// The webview has finished loading
     WebviewLoaded,
-    /// Request to shut down the application with a status code
-    Shutdown(i32),
     /// Execute a closure on the main thread
     RunOnMainThread(MainThreadTask),
 }
 
-pub struct IPCSenders {
+#[derive(Clone)]
+pub(crate) struct IPCSenders {
     eval_sender: Sender<IPCMessage>,
     respond_sender: futures_channel::mpsc::UnboundedSender<IPCMessage>,
 }
@@ -168,15 +160,18 @@ impl IPCReceivers {
 ///
 /// This struct holds the event loop proxy for sending messages to the
 /// WebView and manages queued Rust calls.
-pub struct WryRuntime {
+pub(crate) struct WryIPC {
     pub proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
-    pub(crate) senders: IPCSenders,
     receivers: RwLock<IPCReceivers>,
+    main_thread_id: ThreadId,
 }
 
-impl WryRuntime {
+impl WryIPC {
     /// Create a new runtime with the given event loop proxy.
-    pub(crate) fn new(proxy: Box<dyn Fn(AppEvent) + Send + Sync>) -> Self {
+    pub(crate) fn new(
+        proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
+        main_thread_id: ThreadId,
+    ) -> (Self, IPCSenders) {
         let (eval_sender, eval_receiver) = async_channel::unbounded();
         let (respond_sender, respond_receiver) = futures_channel::mpsc::unbounded();
         let senders = IPCSenders {
@@ -187,43 +182,23 @@ impl WryRuntime {
             eval_receiver: Box::pin(eval_receiver),
             respond_receiver,
         });
-        Self {
+        let ipc = Self {
             proxy,
-            senders,
             receivers,
-        }
+            main_thread_id,
+        };
+        (ipc, senders)
     }
 
     /// Send a response back to JavaScript.
     pub(crate) fn js_response(&self, responder: IPCMessage) {
         (self.proxy)(AppEvent::ipc(responder));
     }
-
-    /// Request the application to shut down with a status code.
-    pub fn shutdown(&self, status: i32) {
-        (self.proxy)(AppEvent::shutdown(status));
-    }
-
-    /// Queue a Rust call from JavaScript.
-    pub(crate) fn queue_rust_call(&self, responder: IPCMessage) {
-        self.senders.start_send(responder);
-    }
 }
-
-/// Combined global state for the runtime and main thread ID.
-struct GlobalRuntimeState {
-    runtime: WryRuntime,
-    main_thread_id: ThreadId,
-}
-
-static GLOBAL_RUNTIME: OnceLock<GlobalRuntimeState> = OnceLock::new();
 
 /// Check if the current thread is the main thread.
 fn is_main_thread() -> bool {
-    GLOBAL_RUNTIME
-        .get()
-        .map(|state| state.main_thread_id == std::thread::current().id())
-        .unwrap_or(false)
+    with_runtime(|runtime| runtime.ipc().main_thread_id == std::thread::current().id())
 }
 
 /// Error indicating that the runtime has already been started.
@@ -242,66 +217,46 @@ impl Error for AlreadyStartedError {}
 pub fn start_app<F>(
     event_loop_proxy: impl Fn(AppEvent) + Send + Sync + 'static,
     app: impl FnOnce() -> F + Send + 'static,
-    start_async_runtime: impl FnOnce(Pin<Box<dyn Future<Output = ()>>>) + Send + 'static,
-) -> Result<WryBindgen, AlreadyStartedError>
+) -> (
+    WryBindgen,
+    impl FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> + Send + 'static,
+)
 where
     F: core::future::Future<Output = ()> + 'static,
 {
     let event_loop_proxy = Box::new(event_loop_proxy) as Box<dyn Fn(AppEvent) + Send + Sync>;
-    let state = GlobalRuntimeState {
-        runtime: WryRuntime::new(event_loop_proxy),
-        main_thread_id: std::thread::current().id(),
-    };
-    if GLOBAL_RUNTIME.set(state).is_err() {
-        eprintln!("start_app can only be called once per process. Exiting.");
-        return Err(AlreadyStartedError);
-    }
+    let (ipc, senders) = WryIPC::new(event_loop_proxy, std::thread::current().id());
+    let bindgen = WryBindgen::new(senders);
     // Spawn the app thread with panic handling - if the app panics, shut down the webview
-    std::thread::spawn(move || {
-        struct ShutdownOnDrop(i32);
-        impl Drop for ShutdownOnDrop {
-            fn drop(&mut self) {
-                shutdown(self.0);
-            }
-        }
-        let mut shutdown = ShutdownOnDrop(1);
-
-        let run = || {
+    let start_future = move || {
+        let run_app_in_runtime = async move {
             let run_app = app();
-            let wait_for_events = poll_callbacks();
+            let wait_for_events = handle_callbacks();
 
-            start_async_runtime(Box::pin(async move {
-                futures_util::select! {
-                    _ = run_app.fuse() => {},
-                    _ = wait_for_events.fuse() => {},
-                }
-            }));
-        };
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(run));
-        let status = if let Err(panic_info) = result {
-            eprintln!("App thread panicked, shutting down webview");
-            // Try to print panic info
-            if let Some(s) = panic_info.downcast_ref::<&str>() {
-                eprintln!("Panic message: {s}");
-            } else if let Some(s) = panic_info.downcast_ref::<alloc::string::String>() {
-                eprintln!("Panic message: {s}");
+            futures_util::select! {
+                _ = run_app.fuse() => {},
+                _ = wait_for_events.fuse() => {},
             }
-            1 // Exit with error status on panic
-        } else {
-            0 // Exit with success status on normal completion
         };
-        shutdown.0 = status;
-    });
 
-    Ok(WryBindgen::new())
-}
+        let runtime = Runtime::new(ipc);
+        let mut maybe_runtime = Some(runtime);
+        let poll_in_runtime = async move {
+            let mut run_app_in_runtime = pin!(run_app_in_runtime);
+            poll_fn(move |ctx| {
+                let (new_runtime, poll_result) = in_runtime(maybe_runtime.take().unwrap(), || {
+                    run_app_in_runtime.as_mut().poll(ctx)
+                });
+                maybe_runtime = Some(new_runtime);
+                poll_result
+            })
+            .await
+        };
 
-/// Request the application to shut down with a status code.
-///
-/// This sends a shutdown event through the event loop, which will cause
-/// the webview to close and the application to exit with the given status code.
-pub(crate) fn shutdown(status: i32) {
-    get_runtime().shutdown(status);
+        Box::pin(poll_in_runtime) as Pin<Box<dyn Future<Output = ()> + 'static>>
+    };
+
+    (bindgen, start_future)
 }
 
 /// Execute a closure on the main thread (winit event loop thread) and block until it completes,
@@ -331,75 +286,60 @@ where
         Box::new(move || Box::new(f()) as Box<dyn Any + Send + 'static>),
         tx,
     );
-    let runtime = get_runtime();
-    (runtime.proxy)(AppEvent::run_on_main_thread(task));
+    with_runtime(|runtime| (runtime.ipc().proxy)(AppEvent::run_on_main_thread(task)));
     let result = rx.recv().expect("Main thread did not complete the task");
     *result
         .downcast::<T>()
         .expect("Failed to downcast return value")
 }
 
-/// Get the runtime environment.
-///
-/// Panics if the runtime has not been initialized.
-pub(crate) fn get_runtime() -> &'static WryRuntime {
-    &GLOBAL_RUNTIME
-        .get()
-        .expect("Event loop proxy not set")
-        .runtime
-}
-
 pub(crate) fn progress_js_with<O>(
     with_respond: impl for<'a> Fn(DecodedData<'a>) -> O,
 ) -> Option<O> {
-    let runtime = get_runtime();
-
-    let response = get_runtime().receivers.write().recv_blocking();
+    let response = with_runtime(|runtime| runtime.ipc().receivers.write().recv_blocking());
 
     let decoder = response.decoded().expect("Failed to decode response");
     match decoder {
         DecodedVariant::Respond { data } => Some(with_respond(data)),
         DecodedVariant::Evaluate { mut data } => {
-            handle_rust_callback(runtime, &mut data);
+            handle_rust_callback(&mut data);
             None
         }
     }
 }
 
-pub async fn poll_callbacks() {
-    let runtime = get_runtime();
-    let receiver = get_runtime().receivers.read().eval_receiver.clone();
+pub async fn handle_callbacks() {
+    let receiver = with_runtime(|runtime| runtime.ipc().receivers.read().eval_receiver.clone());
 
     while let Ok(response) = receiver.recv().await {
         let decoder = response.decoded().expect("Failed to decode response");
         match decoder {
             DecodedVariant::Respond { .. } => unreachable!(),
             DecodedVariant::Evaluate { mut data } => {
-                handle_rust_callback(runtime, &mut data);
+                handle_rust_callback(&mut data);
             }
         }
     }
 }
 
 /// Handle a Rust callback invocation from JavaScript.
-fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
+fn handle_rust_callback(data: &mut DecodedData) {
     let fn_id = data.take_u32().expect("Failed to read fn_id");
-    match fn_id {
+    let response = match fn_id {
         // Call a registered Rust callback
         0 => {
             let key = data.take_u32().unwrap();
 
             // Clone the Rc while briefly borrowing the batch state, then release the borrow.
             // This allows nested callbacks to access the object store during our callback execution.
-            let callback = RUNTIME.with(|state| {
-                let state = state.borrow();
+            let callback = with_runtime(|state| {
                 let rust_callback = state.get_object::<RustCallback>(key);
 
                 rust_callback.clone_rc()
             });
 
             // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
-            crate::batch::RUNTIME.with(|state| state.borrow_mut().push_borrow_frame());
+            with_runtime(|state| state.push_borrow_frame());
 
             // Call through the cloned Rc (uniform Fn interface)
             let response = IPCMessage::new_respond(|encoder| {
@@ -407,10 +347,9 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             });
 
             // Pop the borrow frame after the callback completes
-            crate::batch::RUNTIME.with(|state| state.borrow_mut().pop_borrow_frame());
+            with_runtime(|state| state.pop_borrow_frame());
 
-            // Send response to JS
-            runtime.js_response(response);
+            response
         }
         // Drop a native Rust object when JS GC'd the wrapper
         DROP_NATIVE_REF_FN_ID => {
@@ -420,8 +359,7 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             remove_object::<RustCallback>(key);
 
             // Send empty response
-            let response = IPCMessage::new_respond(|_| {});
-            runtime.js_response(response);
+            IPCMessage::new_respond(|_| {})
         }
         // Call an exported Rust struct method
         CALL_EXPORT_FN_ID => {
@@ -440,16 +378,16 @@ fn handle_rust_callback(runtime: &WryRuntime, data: &mut DecodedData) {
             assert!(data.is_empty(), "Extra data remaining after export call");
 
             // Send response
-            let response = match result {
+            match result {
                 Ok(encoded) => IPCMessage::new_respond(|encoder| {
                     encoder.extend(&encoded);
                 }),
                 Err(err) => {
                     panic!("Export call failed: {err}");
                 }
-            };
-            runtime.js_response(response);
+            }
         }
         _ => todo!(),
-    }
+    };
+    with_runtime(|runtime| runtime.ipc().js_response(response));
 }

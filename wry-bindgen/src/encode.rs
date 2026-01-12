@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 
 use crate::Closure;
 use crate::WasmClosureFnOnce;
-use crate::batch::{RUNTIME, Runtime};
+use crate::batch::{Runtime, with_runtime};
 use crate::convert::RefFromBinaryDecode;
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::object_store::ObjectHandle;
@@ -537,10 +537,7 @@ impl BinaryDecode for JsValue {
         // JS value is always in sync with the dom. We should never need to decode it.
         // Use get_next_heap_id() (NOT get_next_placeholder_id()) because decode() is
         // called for callback parameters from JS, not for return value placeholders.
-        RUNTIME.with(|state| {
-            let mut batch = state.borrow_mut();
-            Ok(JsValue::from_id(batch.get_next_heap_id()))
-        })
+        with_runtime(|runtime| Ok(JsValue::from_id(runtime.get_next_heap_id())))
     }
 }
 

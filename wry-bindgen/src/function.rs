@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::marker::PhantomData;
 
-use crate::batch::{force_flush, run_js_sync};
+use crate::batch::{force_flush, run_js_sync, with_runtime};
 use crate::encode::{BatchableResult, BinaryEncode, EncodeTypeDef, TYPE_CACHED, TYPE_FULL};
 use crate::ipc::DecodedData;
 use crate::ipc::EncodedData;
@@ -32,8 +32,8 @@ fn encode_function_types(encoder: &mut EncodedData, encode_types: impl FnOnce(&m
     let mut type_buf = Vec::new();
     encode_types(&mut type_buf);
 
-    crate::batch::RUNTIME.with(|state| {
-        let (id, is_cached) = state.borrow_mut().get_or_create_type_id(type_buf.clone());
+    with_runtime(|state| {
+        let (id, is_cached) = state.get_or_create_type_id(type_buf.clone());
         if is_cached {
             // Cached - just send marker + ID
             encoder.push_u8(TYPE_CACHED);

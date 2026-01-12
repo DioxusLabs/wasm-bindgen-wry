@@ -28,6 +28,7 @@ mod intern;
 pub(crate) mod ipc;
 mod js_helpers;
 mod lazy;
+#[doc(hidden)]
 pub mod object_store;
 pub mod runtime;
 mod value;
@@ -451,7 +452,7 @@ pub use batch::batch;
 pub use encode::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
 pub use function::JSFunction;
 pub use ipc::{DecodeError, DecodedData, EncodedData};
-pub use runtime::{WryRuntime, run_on_main_thread, start_app};
+pub use runtime::{run_on_main_thread, start_app};
 
 // Re-export the macros
 pub use wry_bindgen_macro::link_to;
@@ -479,7 +480,7 @@ pub use function_registry::{
 macro_rules! __wry_bindgen_thread_local {
     ($actual_ty:ty = $value:expr) => {{
         std::thread_local! {
-            pub static __INNER: $actual_ty = $value;
+            pub static __INNER: core::mem::ManuallyDrop<$actual_ty> = core::mem::ManuallyDrop::new($value);
         }
         $crate::prelude::JsThreadLocal::new(&__INNER)
     }};

@@ -211,6 +211,8 @@ pub(crate) struct FunctionRegistry {
     modules: BTreeMap<String, &'static str>,
 }
 
+/// The registry of javascript functions registered via inventory. This
+/// is shared between all webviews.
 pub(crate) static FUNCTION_REGISTRY: Lazy<FunctionRegistry> =
     Lazy::new(FunctionRegistry::collect_from_inventory);
 

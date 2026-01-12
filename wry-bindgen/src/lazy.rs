@@ -3,6 +3,7 @@
 //! This module provides types for lazily initializing and caching JavaScript
 //! global values, similar to wasm-bindgen's thread_local_v2 support.
 
+use core::mem::ManuallyDrop;
 use std::thread::LocalKey;
 
 /// A thread-local accessor for lazily initialized JavaScript values.
@@ -24,13 +25,17 @@ use std::thread::LocalKey;
 /// let doc = WINDOW.document();
 /// ```
 pub struct JsThreadLocal<T: 'static> {
-    inner: &'static LocalKey<T>,
+    // We never drop js thread locals because:
+    // 1. The destructor only has an effect when the webview still exists and it should now be gone
+    // 2. It would rely on the thread local being dropped before the runtime is dropped, which relies on the drop order of
+    // different thread locals
+    inner: &'static LocalKey<ManuallyDrop<T>>,
 }
 
 impl<T> JsThreadLocal<T> {
     /// Create a new `JsThreadLocal` from a `LocalKey`.
     #[doc(hidden)]
-    pub const fn new(inner: &'static LocalKey<T>) -> Self {
+    pub const fn new(inner: &'static LocalKey<ManuallyDrop<T>>) -> Self {
         Self { inner }
     }
 
@@ -39,6 +44,6 @@ impl<T> JsThreadLocal<T> {
     where
         F: FnOnce(&T) -> R,
     {
-        self.inner.with(f)
+        self.inner.with(|val| f(val))
     }
 }

@@ -5,7 +5,7 @@
 //! can be retrieved, borrowed, and dropped. It also stores callback functions
 //! that can be called from JavaScript.
 
-use crate::batch::RUNTIME;
+use crate::batch::with_runtime;
 use crate::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
 
 /// Handle to an exported object in the store.
@@ -34,31 +34,29 @@ impl EncodeTypeDef for ObjectHandle {
 impl BatchableResult for ObjectHandle {}
 
 pub fn with_object<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&T) -> R) -> R {
-    RUNTIME.with(|state| {
-        let state = state.borrow();
+    with_runtime(|state| {
         let obj = state.get_object::<T>(handle.0);
         f(&*obj)
     })
 }
 
 pub fn with_object_mut<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&mut T) -> R) -> R {
-    RUNTIME.with(|state| {
-        let state = state.borrow();
+    with_runtime(|state| {
         let mut obj = state.get_object_mut::<T>(handle.0);
         f(&mut *obj)
     })
 }
 
 pub fn insert_object<T: 'static>(obj: T) -> ObjectHandle {
-    RUNTIME.with(|state| ObjectHandle(state.borrow_mut().insert_object(obj)))
+    with_runtime(|state| ObjectHandle(state.insert_object(obj)))
 }
 
 pub fn remove_object<T: 'static>(handle: ObjectHandle) -> T {
-    RUNTIME.with(|state| state.borrow_mut().remove_object(handle.0))
+    with_runtime(|state| state.remove_object(handle.0))
 }
 
 pub fn drop_object(handle: ObjectHandle) -> bool {
-    RUNTIME.with(|state| state.borrow_mut().remove_object_untyped(handle.0))
+    with_runtime(|state| state.remove_object_untyped(handle.0))
 }
 
 /// Create a JavaScript wrapper object for an exported Rust struct.

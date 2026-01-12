@@ -58,7 +58,7 @@ fn setup_clicker(document: &Document) {
     let mut clicks = 0;
     let a = Closure::<dyn FnMut()>::new(move || {
         clicks += 1;
-        println!("Green square clicked {} times", clicks);
+        println!("Green square clicked {clicks} times");
         num_clicks.set_inner_html(&clicks.to_string());
     });
     document

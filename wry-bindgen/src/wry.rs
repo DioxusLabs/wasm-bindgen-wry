@@ -15,7 +15,7 @@ use http::Response;
 
 use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
-use crate::runtime::{AppEvent, AppEventVariant, get_runtime};
+use crate::runtime::{AppEvent, AppEventVariant, IPCSenders};
 
 pub trait ImplWryBindgenResponder {
     fn respond(self: Box<Self>, response: Response<Vec<u8>>);
@@ -160,12 +160,7 @@ pub struct WryBindgen {
     shared: Rc<RefCell<SharedWebviewState>>,
     // The state of the webview. Either loading (with queued messages) or loaded.
     state: RefCell<WebviewLoadingState>,
-}
-
-impl Default for WryBindgen {
-    fn default() -> Self {
-        Self::new()
-    }
+    sender: IPCSenders,
 }
 
 impl WryBindgen {
@@ -173,10 +168,11 @@ impl WryBindgen {
     ///
     /// # Arguments
     /// * `function_registry` - Reference to the collected JS function specifications
-    pub fn new() -> Self {
+    pub(crate) fn new(sender: IPCSenders) -> Self {
         Self {
             shared: Rc::new(RefCell::new(SharedWebviewState::default())),
             state: RefCell::new(WebviewLoadingState::default()),
+            sender,
         }
     }
 
@@ -209,6 +205,7 @@ impl WryBindgen {
         F: Fn(AppEvent) + 'static,
     {
         let shared = self.shared.clone();
+        let sender = self.sender.clone();
 
         let protocol_prefix = format!("{protocol}://index.html");
         let android_prefix = format!("https://{protocol}.index.html");
@@ -274,7 +271,7 @@ impl WryBindgen {
                         }
                     }
                 }
-                get_runtime().queue_rust_call(msg);
+                sender.start_send(msg);
                 return None;
             }
 
@@ -290,74 +287,75 @@ impl WryBindgen {
     /// # Arguments
     /// * `event` - The AppEvent to handle
     /// * `webview` - Reference to the webview for script evaluation
-    pub fn handle_user_event(
-        &self,
-        event: AppEvent,
-        evaluate_script: impl FnOnce(&str),
-    ) -> Option<i32> {
+    pub fn handle_user_event(&self, event: AppEvent, mut evaluate_script: impl FnMut(&str)) {
         match event.into_variant() {
-            AppEventVariant::Shutdown(status) => {
-                return Some(status);
-            }
             AppEventVariant::RunOnMainThread(task) => {
                 task.execute();
-                return None;
             }
             // The rust thread sent us an IPCMessage to send to JS
-            AppEventVariant::Ipc(ipc_msg) => {
-                {
-                    let mut state = self.state.borrow_mut();
-                    if let WebviewLoadingState::Pending { queued } = &mut *state {
-                        queued.push(ipc_msg);
-                        return None;
-                    }
-                }
-
-                let mut shared = self.shared.borrow_mut();
-
-                let ty = ipc_msg.ty().unwrap();
-                match ty {
-                    // Rust wants to evaluate something in js
-                    MessageType::Evaluate => {
-                        shared.pending_js_evaluates += 1;
-                    }
-                    // Rust is responding to a previous js evaluate
-                    MessageType::Respond => {
-                        shared.pending_rust_evaluates =
-                            shared.pending_rust_evaluates.saturating_sub(1);
-                    }
-                }
-
-                // If there is an ongoing request, respond to immediately
-                if shared.has_pending_request() {
-                    shared.respond_to_request(ipc_msg);
-                    return None;
-                }
-
-                // Otherwise call into js through evaluate_script
-                let decoded = ipc_msg.decoded().unwrap();
-
-                if let DecodedVariant::Evaluate { .. } = decoded {
-                    // Encode the binary data as base64 and pass to JS
-                    // JS will iterate over operations in the buffer
-                    let engine = base64::engine::general_purpose::STANDARD;
-                    let data_base64 = engine.encode(ipc_msg.data());
-                    let code = format!("window.evaluate_from_rust_binary(\"{data_base64}\")");
-                    evaluate_script(&code);
-                }
-            }
+            AppEventVariant::Ipc(ipc_msg) => self.handle_ipc_message(ipc_msg, evaluate_script),
             AppEventVariant::WebviewLoaded => {
                 let mut state = self.state.borrow_mut();
                 if let WebviewLoadingState::Pending { queued } =
                     std::mem::replace(&mut *state, WebviewLoadingState::Loaded)
                 {
                     for msg in queued {
-                        get_runtime().js_response(msg);
+                        println!("Sending queued message to JS");
+                        self.immediately_handle_ipc_message(msg, &mut evaluate_script);
                     }
                 }
             }
         }
-        None
+    }
+
+    fn handle_ipc_message(&self, ipc_msg: IPCMessage, evaluate_script: impl FnOnce(&str)) {
+        {
+            let mut state = self.state.borrow_mut();
+            if let WebviewLoadingState::Pending { queued } = &mut *state {
+                queued.push(ipc_msg);
+                return;
+            }
+        }
+
+        self.immediately_handle_ipc_message(ipc_msg, evaluate_script)
+    }
+
+    fn immediately_handle_ipc_message(
+        &self,
+        ipc_msg: IPCMessage,
+        evaluate_script: impl FnOnce(&str),
+    ) {
+        let mut shared = self.shared.borrow_mut();
+
+        let ty = ipc_msg.ty().unwrap();
+        match ty {
+            // Rust wants to evaluate something in js
+            MessageType::Evaluate => {
+                shared.pending_js_evaluates += 1;
+            }
+            // Rust is responding to a previous js evaluate
+            MessageType::Respond => {
+                shared.pending_rust_evaluates = shared.pending_rust_evaluates.saturating_sub(1);
+            }
+        }
+
+        // If there is an ongoing request, respond to immediately
+        if shared.has_pending_request() {
+            shared.respond_to_request(ipc_msg);
+            return;
+        }
+
+        // Otherwise call into js through evaluate_script
+        let decoded = ipc_msg.decoded().unwrap();
+
+        if let DecodedVariant::Evaluate { .. } = decoded {
+            // Encode the binary data as base64 and pass to JS
+            // JS will iterate over operations in the buffer
+            let engine = base64::engine::general_purpose::STANDARD;
+            let data_base64 = engine.encode(ipc_msg.data());
+            let code = format!("window.evaluate_from_rust_binary(\"{data_base64}\")");
+            evaluate_script(&code);
+        }
     }
 }
 
