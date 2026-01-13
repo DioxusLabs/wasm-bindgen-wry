@@ -6,10 +6,7 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
-use wasm_bindgen::{
-    runtime::AppEvent,
-    wry::{ProtocolHandler, WryBindgen},
-};
+use wasm_bindgen::{runtime::WryBindgenEvent, wry::WryBindgen};
 
 use crate::home::root_response;
 
@@ -18,7 +15,7 @@ use crate::home::root_response;
 #[derive(Debug)]
 pub(crate) enum WryEvent {
     /// An event from wry-bindgen runtime
-    App(AppEvent),
+    App(WryBindgenEvent),
     /// Shutdown the event loop
     Shutdown,
 }
@@ -35,10 +32,10 @@ pub const BASE_URL: &str = "wry://index.html";
 
 const PROTOCOL_SCHEME: &str = "wry";
 
-pub(crate) fn run_event_loop(
+pub(crate) fn run_event_loop<F: Future<Output = ()> + 'static>(
     event_loop: EventLoop<WryEvent>,
     wry_bindgen: WryBindgen,
-    protocol_handler: ProtocolHandler,
+    app: impl FnOnce() -> F + Send + 'static,
     headless: bool,
 ) {
     let window = WindowBuilder::new()
@@ -48,13 +45,17 @@ pub(crate) fn run_event_loop(
         .unwrap();
 
     let proxy = event_loop.create_proxy();
+    let proxy_clone = proxy.clone();
+
+    let app_builder = wry_bindgen.app_builder();
+    let protocol_handler = app_builder.protocol_handler();
 
     let builder = WebViewBuilder::new()
         .with_devtools(true)
         .with_asynchronous_custom_protocol(PROTOCOL_SCHEME.into(), move |_, request, responder| {
             let responder = |response| responder.respond(response);
             let send_app_event = |event| {
-                proxy.send_event(WryEvent::App(event)).unwrap();
+                proxy_clone.send_event(WryEvent::App(event)).unwrap();
             };
             let responder = protocol_handler.handle_request(
                 PROTOCOL_SCHEME,
@@ -81,7 +82,20 @@ pub(crate) fn run_event_loop(
     #[cfg(not(target_os = "linux"))]
     let webview = builder.build(&window).unwrap();
 
-    webview.open_devtools();
+    let evaluate_script = move |script: &str| {
+        _ = webview.evaluate_script(script);
+    };
+    let run_app = app_builder.build(app, evaluate_script);
+
+    std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(run_app.into_future());
+        // Signal the event loop to exit after app completes
+        let _ = proxy.send_event(WryEvent::Shutdown);
+    });
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -98,11 +112,7 @@ pub(crate) fn run_event_loop(
                     *control_flow = ControlFlow::Exit;
                 }
                 WryEvent::App(app_event) => {
-                    wry_bindgen.handle_user_event(app_event, |script| {
-                        if let Err(err) = webview.evaluate_script(script) {
-                            eprintln!("Error evaluating script: {err}");
-                        }
-                    });
+                    wry_bindgen.handle_user_event(app_event);
                 }
             },
             _ => {}

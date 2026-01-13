@@ -20,7 +20,6 @@ pub use bindings::set_on_log;
 // Re-export prelude items that apps need
 pub use wasm_bindgen::JsValue;
 pub use wasm_bindgen::prelude::batch;
-pub use wasm_bindgen::run_on_main_thread;
 
 use crate::bindings::set_on_error;
 
@@ -110,19 +109,7 @@ where
 
     let wry_bindgen = WryBindgen::new(event_loop_proxy);
 
-    let (run_app, protocol_handler) = wry_bindgen.in_runtime(app);
-
-    std::thread::spawn(move || {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(run_app.into_future());
-        // Signal the event loop to exit after app completes
-        let _ = proxy.send_event(WryEvent::Shutdown);
-    });
-
-    run_event_loop(event_loop, wry_bindgen, protocol_handler, headless);
+    run_event_loop(event_loop, wry_bindgen, app, headless);
 
     Ok(())
 }

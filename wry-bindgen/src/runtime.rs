@@ -4,11 +4,8 @@
 //! JavaScript environment via winit's event loop.
 
 use core::any::Any;
-use core::error::Error;
-use core::fmt::Display;
 use core::pin::Pin;
 use std::sync::{Arc, mpsc};
-use std::thread::ThreadId;
 
 use alloc::boxed::Box;
 use async_channel::{Receiver, Sender};
@@ -63,12 +60,12 @@ impl std::fmt::Debug for MainThreadTask {
 /// This enum wraps both IPC messages from JavaScript and control messages
 /// from the application (like shutdown requests).
 #[derive(Debug)]
-pub struct AppEvent {
+pub struct WryBindgenEvent {
     id: u64,
     event: AppEventVariant,
 }
 
-impl AppEvent {
+impl WryBindgenEvent {
     /// Get the id of the event
     pub(crate) fn id(&self) -> u64 {
         self.id
@@ -90,14 +87,6 @@ impl AppEvent {
         }
     }
 
-    /// Create a new run-on-main-thread event.
-    fn run_on_main_thread(id: u64, task: MainThreadTask) -> Self {
-        Self {
-            id,
-            event: AppEventVariant::RunOnMainThread(task),
-        }
-    }
-
     /// Consume the event and return the inner variant.
     pub(crate) fn into_variant(self) -> AppEventVariant {
         self.event
@@ -110,8 +99,6 @@ pub(crate) enum AppEventVariant {
     Ipc(IPCMessage),
     /// The webview has finished loading
     WebviewLoaded,
-    /// Execute a closure on the main thread
-    RunOnMainThread(MainThreadTask),
 }
 
 #[derive(Clone)]
@@ -168,17 +155,13 @@ impl IPCReceivers {
 /// This struct holds the event loop proxy for sending messages to the
 /// WebView and manages queued Rust calls.
 pub(crate) struct WryIPC {
-    pub(crate) proxy: Arc<dyn Fn(AppEvent) + Send + Sync>,
+    pub(crate) proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
     receivers: RwLock<IPCReceivers>,
-    main_thread_id: ThreadId,
 }
 
 impl WryIPC {
     /// Create a new runtime with the given event loop proxy.
-    pub(crate) fn new(
-        proxy: Arc<dyn Fn(AppEvent) + Send + Sync>,
-        main_thread_id: ThreadId,
-    ) -> (Self, IPCSenders) {
+    pub(crate) fn new(proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>) -> (Self, IPCSenders) {
         let (eval_sender, eval_receiver) = async_channel::unbounded();
         let (respond_sender, respond_receiver) = futures_channel::mpsc::unbounded();
         let senders = IPCSenders {
@@ -189,71 +172,14 @@ impl WryIPC {
             eval_receiver: Box::pin(eval_receiver),
             respond_receiver,
         });
-        let ipc = Self {
-            proxy,
-            receivers,
-            main_thread_id,
-        };
+        let ipc = Self { proxy, receivers };
         (ipc, senders)
     }
 
     /// Send a response back to JavaScript.
     pub(crate) fn js_response(&self, id: u64, responder: IPCMessage) {
-        (self.proxy)(AppEvent::ipc(id, responder));
+        (self.proxy)(WryBindgenEvent::ipc(id, responder));
     }
-}
-
-/// Check if the current thread is the main thread.
-fn is_main_thread() -> bool {
-    with_runtime(|runtime| runtime.ipc().main_thread_id == std::thread::current().id())
-}
-
-/// Error indicating that the runtime has already been started.
-#[derive(Debug)]
-pub struct AlreadyStartedError;
-
-impl Display for AlreadyStartedError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "The runtime has already been started")
-    }
-}
-
-impl Error for AlreadyStartedError {}
-
-/// Execute a closure on the main thread (winit event loop thread) and block until it completes,
-/// returning the closure's result.
-///
-/// This function is useful for operations that must be performed on the main thread,
-/// such as certain GUI operations or accessing thread-local state on the main thread.
-///
-/// # Panics
-/// - Panics if called before the runtime is initialized (before `start_app` is called)
-/// - If the main thread exits before completing the task
-///
-/// # Note
-/// If called from the main thread, the closure is executed immediately to avoid deadlock.
-pub fn run_on_main_thread<T, F>(f: F) -> T
-where
-    T: Send + 'static,
-    F: FnOnce() -> T + Send + 'static,
-{
-    // If we're already on the main thread, execute immediately to avoid deadlock
-    if is_main_thread() {
-        return f();
-    }
-
-    let (tx, rx) = mpsc::sync_channel::<Box<dyn Any + Send + 'static>>(1);
-    let task = MainThreadTask::new(
-        Box::new(move || Box::new(f()) as Box<dyn Any + Send + 'static>),
-        tx,
-    );
-    with_runtime(|runtime| {
-        (runtime.ipc().proxy)(AppEvent::run_on_main_thread(runtime.webview_id(), task))
-    });
-    let result = rx.recv().expect("Main thread did not complete the task");
-    *result
-        .downcast::<T>()
-        .expect("Failed to downcast return value")
 }
 
 pub(crate) fn progress_js_with<O>(

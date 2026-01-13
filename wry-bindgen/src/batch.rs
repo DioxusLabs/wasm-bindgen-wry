@@ -401,12 +401,14 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 }
 
 pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> R {
-    use crate::runtime::AppEvent;
+    use crate::runtime::WryBindgenEvent;
 
     let batch_msg = with_runtime(|state| state.take_message());
 
     // Send and wait for result
-    with_runtime(|runtime| (runtime.ipc().proxy)(AppEvent::ipc(runtime.webview_id(), batch_msg)));
+    with_runtime(|runtime| {
+        (runtime.ipc().proxy)(WryBindgenEvent::ipc(runtime.webview_id(), batch_msg))
+    });
     loop {
         if let Some(result) = crate::runtime::progress_js_with(&then) {
             return result;

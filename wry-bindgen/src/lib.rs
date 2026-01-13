@@ -452,7 +452,6 @@ pub use batch::batch;
 pub use encode::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
 pub use function::JSFunction;
 pub use ipc::{DecodeError, DecodedData, EncodedData};
-pub use runtime::run_on_main_thread;
 
 // Re-export the macros
 pub use wry_bindgen_macro::link_to;
@@ -638,7 +637,6 @@ pub mod prelude {
     pub use crate::encode::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
     pub use crate::function::JSFunction;
     pub use crate::lazy::JsThreadLocal;
-    pub use crate::runtime::run_on_main_thread;
     pub use crate::value::JsValue;
     pub use crate::wasm_bindgen;
 }
