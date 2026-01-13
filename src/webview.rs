@@ -6,7 +6,10 @@ use tao::{
 };
 use wry::WebViewBuilder;
 
-use wasm_bindgen::{runtime::AppEvent, wry::WryBindgen};
+use wasm_bindgen::{
+    runtime::AppEvent,
+    wry::{ProtocolHandler, WryBindgen},
+};
 
 use crate::home::root_response;
 
@@ -35,6 +38,7 @@ const PROTOCOL_SCHEME: &str = "wry";
 pub(crate) fn run_event_loop(
     event_loop: EventLoop<WryEvent>,
     wry_bindgen: WryBindgen,
+    protocol_handler: ProtocolHandler,
     headless: bool,
 ) {
     let window = WindowBuilder::new()
@@ -44,15 +48,21 @@ pub(crate) fn run_event_loop(
         .unwrap();
 
     let proxy = event_loop.create_proxy();
-    let protocol_handler = wry_bindgen.create_protocol_handler(PROTOCOL_SCHEME, move |event| {
-        proxy.send_event(WryEvent::App(event)).unwrap();
-    });
 
     let builder = WebViewBuilder::new()
         .with_devtools(true)
         .with_asynchronous_custom_protocol(PROTOCOL_SCHEME.into(), move |_, request, responder| {
             let responder = |response| responder.respond(response);
-            let Some(responder) = protocol_handler(&request, responder) else {
+            let send_app_event = |event| {
+                proxy.send_event(WryEvent::App(event)).unwrap();
+            };
+            let responder = protocol_handler.handle_request(
+                PROTOCOL_SCHEME,
+                send_app_event,
+                &request,
+                responder,
+            );
+            let Some(responder) = responder else {
                 return;
             };
 

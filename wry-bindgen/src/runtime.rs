@@ -6,9 +6,8 @@
 use core::any::Any;
 use core::error::Error;
 use core::fmt::Display;
-use core::future::poll_fn;
-use core::pin::{Pin, pin};
-use std::sync::mpsc;
+use core::pin::Pin;
+use std::sync::{Arc, mpsc};
 use std::thread::ThreadId;
 
 use alloc::boxed::Box;
@@ -17,13 +16,12 @@ use futures_util::{FutureExt, StreamExt};
 use spin::RwLock;
 
 use crate::BinaryDecode;
-use crate::batch::{Runtime, in_runtime, with_runtime};
+use crate::batch::with_runtime;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 use crate::object_store::ObjectHandle;
 use crate::object_store::remove_object;
-use crate::wry::WryBindgen;
 
 /// A task to be executed on the main thread with completion signaling and return value.
 pub struct MainThreadTask {
@@ -66,27 +64,36 @@ impl std::fmt::Debug for MainThreadTask {
 /// from the application (like shutdown requests).
 #[derive(Debug)]
 pub struct AppEvent {
+    id: u64,
     event: AppEventVariant,
 }
 
 impl AppEvent {
+    /// Get the id of the event
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
     /// Create a new IPC event.
-    pub(crate) fn ipc(msg: IPCMessage) -> Self {
+    pub(crate) fn ipc(id: u64, msg: IPCMessage) -> Self {
         Self {
+            id,
             event: AppEventVariant::Ipc(msg),
         }
     }
 
     /// Create a new webview loaded event.
-    pub(crate) fn webview_loaded() -> Self {
+    pub(crate) fn webview_loaded(id: u64) -> Self {
         Self {
+            id,
             event: AppEventVariant::WebviewLoaded,
         }
     }
 
     /// Create a new run-on-main-thread event.
-    fn run_on_main_thread(task: MainThreadTask) -> Self {
+    fn run_on_main_thread(id: u64, task: MainThreadTask) -> Self {
         Self {
+            id,
             event: AppEventVariant::RunOnMainThread(task),
         }
     }
@@ -161,7 +168,7 @@ impl IPCReceivers {
 /// This struct holds the event loop proxy for sending messages to the
 /// WebView and manages queued Rust calls.
 pub(crate) struct WryIPC {
-    pub proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
+    pub(crate) proxy: Arc<dyn Fn(AppEvent) + Send + Sync>,
     receivers: RwLock<IPCReceivers>,
     main_thread_id: ThreadId,
 }
@@ -169,7 +176,7 @@ pub(crate) struct WryIPC {
 impl WryIPC {
     /// Create a new runtime with the given event loop proxy.
     pub(crate) fn new(
-        proxy: Box<dyn Fn(AppEvent) + Send + Sync>,
+        proxy: Arc<dyn Fn(AppEvent) + Send + Sync>,
         main_thread_id: ThreadId,
     ) -> (Self, IPCSenders) {
         let (eval_sender, eval_receiver) = async_channel::unbounded();
@@ -191,8 +198,8 @@ impl WryIPC {
     }
 
     /// Send a response back to JavaScript.
-    pub(crate) fn js_response(&self, responder: IPCMessage) {
-        (self.proxy)(AppEvent::ipc(responder));
+    pub(crate) fn js_response(&self, id: u64, responder: IPCMessage) {
+        (self.proxy)(AppEvent::ipc(id, responder));
     }
 }
 
@@ -212,52 +219,6 @@ impl Display for AlreadyStartedError {
 }
 
 impl Error for AlreadyStartedError {}
-
-/// Start the application thread with the given event loop proxy
-pub fn start_app<F>(
-    event_loop_proxy: impl Fn(AppEvent) + Send + Sync + 'static,
-    app: impl FnOnce() -> F + Send + 'static,
-) -> (
-    WryBindgen,
-    impl FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> + Send + 'static,
-)
-where
-    F: core::future::Future<Output = ()> + 'static,
-{
-    let event_loop_proxy = Box::new(event_loop_proxy) as Box<dyn Fn(AppEvent) + Send + Sync>;
-    let (ipc, senders) = WryIPC::new(event_loop_proxy, std::thread::current().id());
-    let bindgen = WryBindgen::new(senders);
-    // Spawn the app thread with panic handling - if the app panics, shut down the webview
-    let start_future = move || {
-        let run_app_in_runtime = async move {
-            let run_app = app();
-            let wait_for_events = handle_callbacks();
-
-            futures_util::select! {
-                _ = run_app.fuse() => {},
-                _ = wait_for_events.fuse() => {},
-            }
-        };
-
-        let runtime = Runtime::new(ipc);
-        let mut maybe_runtime = Some(runtime);
-        let poll_in_runtime = async move {
-            let mut run_app_in_runtime = pin!(run_app_in_runtime);
-            poll_fn(move |ctx| {
-                let (new_runtime, poll_result) = in_runtime(maybe_runtime.take().unwrap(), || {
-                    run_app_in_runtime.as_mut().poll(ctx)
-                });
-                maybe_runtime = Some(new_runtime);
-                poll_result
-            })
-            .await
-        };
-
-        Box::pin(poll_in_runtime) as Pin<Box<dyn Future<Output = ()> + 'static>>
-    };
-
-    (bindgen, start_future)
-}
 
 /// Execute a closure on the main thread (winit event loop thread) and block until it completes,
 /// returning the closure's result.
@@ -286,7 +247,9 @@ where
         Box::new(move || Box::new(f()) as Box<dyn Any + Send + 'static>),
         tx,
     );
-    with_runtime(|runtime| (runtime.ipc().proxy)(AppEvent::run_on_main_thread(task)));
+    with_runtime(|runtime| {
+        (runtime.ipc().proxy)(AppEvent::run_on_main_thread(runtime.webview_id(), task))
+    });
     let result = rx.recv().expect("Main thread did not complete the task");
     *result
         .downcast::<T>()
@@ -389,5 +352,5 @@ fn handle_rust_callback(data: &mut DecodedData) {
         }
         _ => todo!(),
     };
-    with_runtime(|runtime| runtime.ipc().js_response(response));
+    with_runtime(|runtime| runtime.ipc().js_response(runtime.webview_id(), response));
 }

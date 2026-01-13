@@ -50,10 +50,12 @@ pub struct Runtime {
     next_object_handle: u32,
     /// The ipc layer used to communicate with the JS runtime
     ipc: WryIPC,
+    /// The id of the webview this is associated with
+    webview_id: u64,
 }
 
 impl Runtime {
-    pub(crate) fn new(ipc: WryIPC) -> Self {
+    pub(crate) fn new(ipc: WryIPC, webview_id: u64) -> Self {
         Self {
             encoder: Self::new_encoder_for_evaluate(),
             free_ids: Vec::new(),
@@ -76,6 +78,7 @@ impl Runtime {
             // Object handles start at 0
             next_object_handle: 0,
             ipc,
+            webview_id,
         }
     }
 
@@ -262,6 +265,11 @@ impl Runtime {
     pub(crate) fn ipc(&self) -> &WryIPC {
         &self.ipc
     }
+
+    /// Get the webview ID associated with this runtime.
+    pub(crate) fn webview_id(&self) -> u64 {
+        self.webview_id
+    }
 }
 
 thread_local! {
@@ -398,7 +406,7 @@ pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> 
     let batch_msg = with_runtime(|state| state.take_message());
 
     // Send and wait for result
-    with_runtime(|runtime| (runtime.ipc().proxy)(AppEvent::ipc(batch_msg)));
+    with_runtime(|runtime| (runtime.ipc().proxy)(AppEvent::ipc(runtime.webview_id(), batch_msg)));
     loop {
         if let Some(result) = crate::runtime::progress_js_with(&then) {
             return result;

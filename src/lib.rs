@@ -5,7 +5,8 @@
 
 use tao::event_loop::EventLoopBuilder;
 
-use wasm_bindgen::{Closure, start_app};
+use wasm_bindgen::Closure;
+use wasm_bindgen::wry::WryBindgen;
 
 pub mod bindings;
 mod home;
@@ -107,19 +108,21 @@ where
         }
     };
 
-    let (wry_bindgen, run_app) = start_app(event_loop_proxy, app);
+    let wry_bindgen = WryBindgen::new(event_loop_proxy);
+
+    let (run_app, protocol_handler) = wry_bindgen.in_runtime(app);
 
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap()
-            .block_on(run_app());
+            .block_on(run_app.into_future());
         // Signal the event loop to exit after app completes
         let _ = proxy.send_event(WryEvent::Shutdown);
     });
 
-    run_event_loop(event_loop, wry_bindgen, headless);
+    run_event_loop(event_loop, wry_bindgen, protocol_handler, headless);
 
     Ok(())
 }

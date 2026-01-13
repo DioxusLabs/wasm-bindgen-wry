@@ -10,12 +10,18 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use base64::Engine;
 use core::cell::RefCell;
+use core::future::poll_fn;
+use core::pin::{Pin, pin};
+use futures_util::FutureExt;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use http::Response;
 
+use crate::batch::{Runtime, in_runtime};
 use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
-use crate::runtime::{AppEvent, AppEventVariant, IPCSenders};
+use crate::runtime::{AppEvent, AppEventVariant, IPCSenders, WryIPC, handle_callbacks};
 
 pub trait ImplWryBindgenResponder {
     fn respond(self: Box<Self>, response: Response<Vec<u8>>);
@@ -85,16 +91,30 @@ impl Default for WebviewLoadingState {
 }
 
 /// Shared state for managing async protocol responses.
-#[derive(Default)]
-struct SharedWebviewState {
+struct WebviewState {
     ongoing_request: Option<WryBindgenResponder>,
     /// How many responses we are waiting for from JS
     pending_js_evaluates: usize,
     /// How many responses JS is waiting for from us
     pending_rust_evaluates: usize,
+    /// The sender used to send IPC messages to the webview
+    sender: IPCSenders,
+    // The state of the webview. Either loading (with queued messages) or loaded.
+    loading_state: WebviewLoadingState,
 }
 
-impl SharedWebviewState {
+impl WebviewState {
+    /// Create a new webview state.
+    fn new(sender: IPCSenders) -> Self {
+        Self {
+            ongoing_request: None,
+            pending_js_evaluates: 0,
+            pending_rust_evaluates: 0,
+            sender,
+            loading_state: WebviewLoadingState::default(),
+        }
+    }
+
     fn set_ongoing_request(&mut self, responder: WryBindgenResponder) {
         if self.ongoing_request.is_some() {
             panic!(
@@ -131,6 +151,161 @@ impl SharedWebviewState {
     }
 }
 
+fn unique_id() -> u64 {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+/// A webview future that has a reserved id for use with wry-bindgen.
+///
+/// This struct is `Send` and can be moved to a spawned thread.
+/// Use `into_future()` to get the actual future to poll.
+pub struct PreparedApp {
+    id: u64,
+    future: Box<dyn FnOnce() -> Pin<Box<dyn core::future::Future<Output = ()> + 'static>> + Send>,
+}
+
+impl PreparedApp {
+    /// Get the unique id of this PreparedApp.
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Get the inner future of this PreparedApp.
+    pub fn into_future(self) -> Pin<Box<dyn core::future::Future<Output = ()> + 'static>> {
+        (self.future)()
+    }
+}
+
+/// Factory for creating a protocol handler for a specific webview.
+///
+/// This struct is NOT `Send` because it holds a reference to shared webview state.
+/// Create the protocol handler on the main thread before spawning the app thread.
+pub struct ProtocolHandler {
+    id: u64,
+    webview: Rc<RefCell<HashMap<u64, WebviewState>>>,
+}
+
+impl ProtocolHandler {
+    /// Create a protocol handler closure suitable for `WebViewBuilder::with_asynchronous_custom_protocol`.
+    ///
+    /// The returned closure handles this subset of "{protocol}://" requests:
+    /// - "/__wbg__/initialized" - signals webview loaded
+    /// - "/__wbg__/snippets/{path}" - serves inline JS modules
+    /// - "/__wbg__/init.js" - serves the initialization script
+    /// - "/__wbg__/handler" - main IPC endpoint
+    ///
+    /// # Arguments
+    /// * `protocol` - The protocol scheme (e.g., "wry")
+    /// * `proxy` - Function to send events to the event loop
+    pub fn handle_request<F, R: Into<WryBindgenResponder>>(
+        &self,
+        protocol: &str,
+        proxy: F,
+        request: &http::Request<Vec<u8>>,
+        responder: R,
+    ) -> Option<R>
+    where
+        F: Fn(AppEvent),
+    {
+        let webviews = &self.webview;
+        let webview_id = self.id;
+
+        let protocol_prefix = format!("{protocol}://index.html");
+        let android_prefix = format!("https://{protocol}.index.html");
+        let windows_prefix = format!("http://{protocol}.index.html");
+
+        let uri = request.uri().to_string();
+        let real_path = uri
+            .strip_prefix(&protocol_prefix)
+            .or_else(|| uri.strip_prefix(&windows_prefix))
+            .or_else(|| uri.strip_prefix(&android_prefix))
+            .unwrap_or(&uri);
+        let real_path = real_path.trim_matches('/');
+
+        let Some(path_without_wbg) = real_path.strip_prefix("__wbg__/") else {
+            // Not a wry-bindgen request - let the caller handle it
+            return Some(responder);
+        };
+
+        // Serve inline_js modules from __wbg__/snippets/
+        if let Some(path_without_snippets) = path_without_wbg.strip_prefix("snippets/") {
+            let responder = responder.into();
+            if let Some(content) = FUNCTION_REGISTRY.get_module(path_without_snippets) {
+                responder.respond(module_response(content));
+                return None;
+            }
+            responder.respond(not_found_response());
+            return None;
+        }
+
+        if path_without_wbg == "init.js" {
+            let responder = responder.into();
+            responder.respond(module_response(&init_script()));
+            return None;
+        }
+
+        if path_without_wbg == "initialized" {
+            proxy(AppEvent::webview_loaded(webview_id));
+            let responder = responder.into();
+            responder.respond(blank_response());
+            return None;
+        }
+
+        // Js sent us either an Evaluate or Respond message
+        if path_without_wbg == "handler" {
+            let responder = responder.into();
+            let mut webviews = webviews.borrow_mut();
+            let Some(webview_state) = webviews.get_mut(&webview_id) else {
+                responder.respond(error_response());
+                return None;
+            };
+            let Some(msg) = decode_request_data(request) else {
+                responder.respond(error_response());
+                return None;
+            };
+            let msg_type = msg.ty().unwrap();
+            match msg_type {
+                // New call from JS - save responder and wait for the js application thread to respond
+                MessageType::Evaluate => {
+                    webview_state.pending_rust_evaluates += 1;
+                    webview_state.set_ongoing_request(responder);
+                }
+                // Response from JS to a previous Evaluate - decrement pending count and respond accordingly
+                MessageType::Respond => {
+                    webview_state.pending_js_evaluates =
+                        webview_state.pending_js_evaluates.saturating_sub(1);
+                    if webview_state.pending_rust_evaluates > 0
+                        || webview_state.pending_js_evaluates > 0
+                    {
+                        // Still more round-trips expected
+                        webview_state.set_ongoing_request(responder);
+                    } else {
+                        // Conversation is over
+                        responder.respond(blank_response());
+                    }
+                }
+            }
+            webview_state.sender.start_send(msg);
+            return None;
+        }
+
+        Some(responder)
+    }
+}
+
+/// Get the initialization script that must be evaluated in the webview.
+///
+/// This script sets up the JavaScript function registry and IPC infrastructure.
+fn init_script() -> String {
+    /// The script you need to include in the initialization of your webview.
+    const INITIALIZATION_SCRIPT: &str = include_str!("./js/main.js");
+    let collect_functions = FUNCTION_REGISTRY.script();
+    format!("{INITIALIZATION_SCRIPT}\n{collect_functions}")
+}
+
 /// Reusable wry-bindgen state for integrating with existing wry applications.
 ///
 /// This struct manages the IPC protocol between Rust and JavaScript,
@@ -139,12 +314,16 @@ impl SharedWebviewState {
 /// # Example
 ///
 /// ```ignore
-/// let wry_bindgen = WryBindgen::new(&FUNCTION_REGISTRY);
+/// let wry_bindgen = WryBindgen::new(move |event| { proxy.send_event(event).ok(); });
 ///
-/// let protocol_handler = wry_bindgen.create_protocol_handler(
-///     move |event| { proxy.send_event(event).ok(); },
-///     || my_custom_root_html(),
-/// );
+/// let (prepared_app, protocol_factory) = wry_bindgen.in_runtime(|| async { my_app().await });
+/// let protocol_handler = protocol_factory.create("wry", move |event| {
+///     proxy.send_event(event).ok();
+/// });
+///
+/// std::thread::spawn(move || {
+///     // Run prepared_app.into_future() in a tokio runtime
+/// });
 ///
 /// let webview = WebViewBuilder::new()
 ///     .with_asynchronous_custom_protocol("wry".into(), move |_, req, resp| {
@@ -152,131 +331,81 @@ impl SharedWebviewState {
 ///     })
 ///     .with_url("wry://index")
 ///     .build(&window)?;
-///
-/// webview.evaluate_script(wry_bindgen.init_script())?;
 /// ```
 pub struct WryBindgen {
-    // State that is shared with the protocol handler closure
-    shared: Rc<RefCell<SharedWebviewState>>,
-    // The state of the webview. Either loading (with queued messages) or loaded.
-    state: RefCell<WebviewLoadingState>,
-    sender: IPCSenders,
+    event_loop_proxy: Arc<dyn Fn(AppEvent) + Send + Sync>,
+    // State that is unique to each webview
+    webview: Rc<RefCell<HashMap<u64, WebviewState>>>,
 }
 
 impl WryBindgen {
     /// Create a new WryBindgen instance.
-    ///
-    /// # Arguments
-    /// * `function_registry` - Reference to the collected JS function specifications
-    pub(crate) fn new(sender: IPCSenders) -> Self {
+    pub fn new(event_loop_proxy: impl Fn(AppEvent) + Send + Sync + 'static) -> Self {
         Self {
-            shared: Rc::new(RefCell::new(SharedWebviewState::default())),
-            state: RefCell::new(WebviewLoadingState::default()),
-            sender,
+            event_loop_proxy: Arc::new(event_loop_proxy),
+            webview: Rc::new(RefCell::new(HashMap::new())),
         }
     }
 
-    /// Get the initialization script that must be evaluated in the webview.
+    /// Start the application thread with the given event loop proxy.
     ///
-    /// This script sets up the JavaScript function registry and IPC infrastructure.
-    fn init_script() -> String {
-        /// The script you need to include in the initialization of your webview.
-        const INITIALIZATION_SCRIPT: &str = include_str!("./js/main.js");
-        let collect_functions = FUNCTION_REGISTRY.script();
-        format!("{INITIALIZATION_SCRIPT}\n{collect_functions}")
-    }
-
-    /// Create a protocol handler closure suitable for `WebViewBuilder::with_asynchronous_custom_protocol`.
-    ///
-    /// The returned closure handles all "wry://" protocol requests:
-    /// - "/index" - serves root HTML (uses provided root_response)
-    /// - "/__wbg__/initialized" - signals webview loaded
-    /// - "/__wbg__/snippets/{path}" - serves inline JS modules
-    /// - "/__wbg__/handler" - main IPC endpoint
-    ///
-    /// # Arguments
-    /// * `proxy` - Function to send events to the event loop
-    pub fn create_protocol_handler<F, R: Into<WryBindgenResponder>>(
+    /// Returns a tuple of:
+    /// - `PreparedApp`: The app future, which is `Send` and can be moved to a spawned thread
+    /// - `ProtocolHandlerFactory`: Factory for creating the protocol handler (not `Send`, use on main thread)
+    pub fn in_runtime<F>(
         &self,
-        protocol: &str,
-        proxy: F,
-    ) -> impl Fn(&http::Request<Vec<u8>>, R) -> Option<R> + 'static
+        app: impl FnOnce() -> F + Send + 'static,
+    ) -> (PreparedApp, ProtocolHandler)
     where
-        F: Fn(AppEvent) + 'static,
+        F: core::future::Future<Output = ()> + 'static,
     {
-        let shared = self.shared.clone();
-        let sender = self.sender.clone();
+        let event_loop_proxy = self.event_loop_proxy.clone();
+        let webview_id = unique_id();
+        let (ipc, senders) = WryIPC::new(event_loop_proxy, std::thread::current().id());
+        self.webview
+            .borrow_mut()
+            .insert(webview_id, WebviewState::new(senders));
 
-        let protocol_prefix = format!("{protocol}://index.html");
-        let android_prefix = format!("https://{protocol}.index.html");
-        let windows_prefix = format!("http://{protocol}.index.html");
+        let start_future = move || {
+            let run_app_in_runtime = async move {
+                let run_app = app();
+                let wait_for_events = handle_callbacks();
 
-        move |request: &http::Request<Vec<u8>>, responder: R| {
-            let uri = request.uri().to_string();
-            let real_path = uri
-                .strip_prefix(&protocol_prefix)
-                .or_else(|| uri.strip_prefix(&windows_prefix))
-                .or_else(|| uri.strip_prefix(&android_prefix))
-                .unwrap_or(&uri);
-            let real_path = real_path.trim_matches('/');
-
-            if real_path == "__wbg__/init.js" {
-                let responder = responder.into();
-                responder.respond(module_response(&Self::init_script()));
-                return None;
-            }
-
-            if real_path == "__wbg__/initialized" {
-                proxy(AppEvent::webview_loaded());
-                let responder = responder.into();
-                responder.respond(blank_response());
-                return None;
-            }
-
-            // Serve inline_js modules from __wbg__/snippets/
-            if real_path.starts_with("__wbg__/snippets/") {
-                let responder = responder.into();
-                if let Some(content) = FUNCTION_REGISTRY.get_module(real_path) {
-                    responder.respond(module_response(content));
-                    return None;
+                futures_util::select! {
+                    _ = run_app.fuse() => {},
+                    _ = wait_for_events.fuse() => {},
                 }
-                responder.respond(not_found_response());
-                return None;
-            }
+            };
 
-            // Js sent us either an Evaluate or Respond message
-            if real_path == "__wbg__/handler" {
-                let responder = responder.into();
-                let mut shared = shared.borrow_mut();
-                let Some(msg) = decode_request_data(request) else {
-                    responder.respond(error_response());
-                    return None;
-                };
-                let msg_type = msg.ty().unwrap();
-                match msg_type {
-                    // New call from JS - save responder and wait for the js application thread to respond
-                    MessageType::Evaluate => {
-                        shared.pending_rust_evaluates += 1;
-                        shared.set_ongoing_request(responder);
-                    }
-                    // Response from JS to a previous Evaluate - decrement pending count and respond accordingly
-                    MessageType::Respond => {
-                        shared.pending_js_evaluates = shared.pending_js_evaluates.saturating_sub(1);
-                        if shared.pending_rust_evaluates > 0 || shared.pending_js_evaluates > 0 {
-                            // Still more round-trips expected
-                            shared.set_ongoing_request(responder);
-                        } else {
-                            // Conversation is over
-                            responder.respond(blank_response());
-                        }
-                    }
-                }
-                sender.start_send(msg);
-                return None;
-            }
+            let runtime = Runtime::new(ipc, webview_id);
+            let mut maybe_runtime = Some(runtime);
+            let poll_in_runtime = async move {
+                let mut run_app_in_runtime = pin!(run_app_in_runtime);
+                poll_fn(move |ctx| {
+                    let (new_runtime, poll_result) =
+                        in_runtime(maybe_runtime.take().unwrap(), || {
+                            run_app_in_runtime.as_mut().poll(ctx)
+                        });
+                    maybe_runtime = Some(new_runtime);
+                    poll_result
+                })
+                .await
+            };
 
-            Some(responder)
-        }
+            Box::pin(poll_in_runtime) as Pin<Box<dyn Future<Output = ()> + 'static>>
+        };
+
+        let prepared_app = PreparedApp {
+            id: webview_id,
+            future: Box::new(start_future),
+        };
+
+        let protocol_handler = ProtocolHandler {
+            id: webview_id,
+            webview: self.webview.clone(),
+        };
+
+        (prepared_app, protocol_handler)
     }
 
     /// Handle a user event from the event loop.
@@ -288,59 +417,69 @@ impl WryBindgen {
     /// * `event` - The AppEvent to handle
     /// * `webview` - Reference to the webview for script evaluation
     pub fn handle_user_event(&self, event: AppEvent, mut evaluate_script: impl FnMut(&str)) {
+        let id = event.id();
         match event.into_variant() {
             AppEventVariant::RunOnMainThread(task) => {
                 task.execute();
             }
             // The rust thread sent us an IPCMessage to send to JS
-            AppEventVariant::Ipc(ipc_msg) => self.handle_ipc_message(ipc_msg, evaluate_script),
+            AppEventVariant::Ipc(ipc_msg) => self.handle_ipc_message(id, ipc_msg, evaluate_script),
             AppEventVariant::WebviewLoaded => {
-                let mut state = self.state.borrow_mut();
-                if let WebviewLoadingState::Pending { queued } =
-                    std::mem::replace(&mut *state, WebviewLoadingState::Loaded)
-                {
+                let mut state = self.webview.borrow_mut();
+                let Some(webview_state) = state.get_mut(&id) else {
+                    return;
+                };
+                if let WebviewLoadingState::Pending { queued } = std::mem::replace(
+                    &mut webview_state.loading_state,
+                    WebviewLoadingState::Loaded,
+                ) {
                     for msg in queued {
-                        self.immediately_handle_ipc_message(msg, &mut evaluate_script);
+                        self.immediately_handle_ipc_message(
+                            webview_state,
+                            msg,
+                            &mut evaluate_script,
+                        );
                     }
                 }
             }
         }
     }
 
-    fn handle_ipc_message(&self, ipc_msg: IPCMessage, evaluate_script: impl FnOnce(&str)) {
-        {
-            let mut state = self.state.borrow_mut();
-            if let WebviewLoadingState::Pending { queued } = &mut *state {
-                queued.push(ipc_msg);
-                return;
-            }
+    fn handle_ipc_message(&self, id: u64, ipc_msg: IPCMessage, evaluate_script: impl FnOnce(&str)) {
+        let mut state = self.webview.borrow_mut();
+        let Some(webview_state) = state.get_mut(&id) else {
+            return;
+        };
+        if let WebviewLoadingState::Pending { queued } = &mut webview_state.loading_state {
+            queued.push(ipc_msg);
+            return;
         }
 
-        self.immediately_handle_ipc_message(ipc_msg, evaluate_script)
+        self.immediately_handle_ipc_message(webview_state, ipc_msg, evaluate_script)
     }
 
     fn immediately_handle_ipc_message(
         &self,
+        webview_state: &mut WebviewState,
         ipc_msg: IPCMessage,
         evaluate_script: impl FnOnce(&str),
     ) {
-        let mut shared = self.shared.borrow_mut();
-
         let ty = ipc_msg.ty().unwrap();
         match ty {
             // Rust wants to evaluate something in js
             MessageType::Evaluate => {
-                shared.pending_js_evaluates += 1;
+                webview_state.pending_js_evaluates += 1;
             }
             // Rust is responding to a previous js evaluate
             MessageType::Respond => {
-                shared.pending_rust_evaluates = shared.pending_rust_evaluates.saturating_sub(1);
+                webview_state.pending_rust_evaluates =
+                    webview_state.pending_rust_evaluates.saturating_sub(1);
             }
         }
 
         // If there is an ongoing request, respond to immediately
-        if shared.has_pending_request() {
-            shared.respond_to_request(ipc_msg);
+        if webview_state.has_pending_request() {
+            webview_state.respond_to_request(ipc_msg);
             return;
         }
 
