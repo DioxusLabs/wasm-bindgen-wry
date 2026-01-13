@@ -390,6 +390,9 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     });
     add_operation(&mut batch, fn_id, add_args);
 
+    // Check if any encoded argument requires immediate flush (e.g., stack-allocated callbacks)
+    let needs_flush = batch.needs_flush;
+
     with_runtime(|state| {
         let encoded_during_op = core::mem::replace(&mut state.encoder, batch);
         state.extend_encoder(&encoded_during_op);
@@ -399,7 +402,9 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     // This also increments opaque_count to keep heap IDs in sync
     let get_placeholder = || with_runtime(|state| R::try_placeholder(state));
 
-    let result = if !is_batching() {
+    // Must flush if: not batching, or if the operation requires immediate execution
+    // (e.g., stack-allocated callbacks that must be invoked before returning)
+    let result = if !is_batching() || needs_flush {
         flush_and_then(|mut data| {
             let response = get_placeholder()
                 .unwrap_or_else(|| R::decode(&mut data).expect("Failed to decode return value"));

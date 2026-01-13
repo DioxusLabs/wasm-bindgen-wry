@@ -84,6 +84,12 @@ fn main() {
         async_test_with_js_context(callbacks::test_call_callback_async).await;
         async_test_with_js_context(callbacks::test_join_many_callbacks_async).await;
 
+        // &mut dyn Fn and &mut dyn FnMut tests
+        test_with_js_context(callbacks::test_mut_dyn_fn).await;
+        test_with_js_context(callbacks::test_mut_dyn_fnmut).await;
+        test_with_js_context(callbacks::test_mut_dyn_fn_many_arity).await;
+        test_with_js_context(callbacks::test_mut_dyn_fnmut_many_arity).await;
+
         // Reentrant callbacks (dyn Fn)
         test_with_js_context(reentrant_callbacks::test_reentrant_fn_closure).await;
         test_with_js_context(reentrant_callbacks::test_interleaved_fn_closures).await;

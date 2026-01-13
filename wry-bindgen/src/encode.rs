@@ -793,16 +793,19 @@ macro_rules! impl_closure_ref_encode {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn encode(self, encoder: &mut EncodedData) {
-                eprintln!("Encoding &mut dyn FnMut callback. This may not be sound");
+                // Mark that this batch needs to be flushed synchronously.
+                // Stack-allocated callbacks must be invoked before this function returns,
+                // otherwise the pointer becomes invalid when the closure goes out of scope.
+                encoder.mark_needs_flush();
+
                 // Decompose fat pointer to (data_ptr, vtable_ptr) to erase the lifetime.
                 // SAFETY: The closure reference must remain valid for the duration of the JS call.
                 // This is safe because JS callbacks are invoked synchronously during the call.
                 let ptr = self as *mut dyn FnMut($($arg),*) -> R;
                 let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
 
-                // Register a temporary callback that calls through the pointer
-                // let key = register_value(RustCallback::new_fn_mut(
-                let closure: Closure<dyn FnMut($($arg),*) -> R> = crate::Closure::wrap_encode_decode_mut::<fn($($arg),*) -> R>(
+                // Register the callback directly (without wbg_cast which would make a nested JS call)
+                let callback = crate::function::RustCallback::new_fn_mut(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // SAFETY: The pointer is valid for the duration of the JS call.
                         // Reconstruct the fat pointer from the stored components.
@@ -816,7 +819,8 @@ macro_rules! impl_closure_ref_encode {
                         result.encode(encoder);
                     },
                 );
-                closure.encode(encoder);
+                let key: CallbackKey<fn($($arg),*) -> R> = CallbackKey::new(crate::object_store::insert_object(callback));
+                key.encode(encoder);
             }
         }
 
@@ -852,15 +856,19 @@ macro_rules! impl_closure_ref_encode {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn encode(self, encoder: &mut EncodedData) {
-                eprintln!("Encoding &mut dyn Fn callback. This may not be sound");
+                // Mark that this batch needs to be flushed synchronously.
+                // Stack-allocated callbacks must be invoked before this function returns,
+                // otherwise the pointer becomes invalid when the closure goes out of scope.
+                encoder.mark_needs_flush();
+
                 // Decompose fat pointer to (data_ptr, vtable_ptr) to erase the lifetime.
                 // SAFETY: The closure reference must remain valid for the duration of the JS call.
                 // This is safe because JS callbacks are invoked synchronously during the call.
                 let ptr = self as *const dyn Fn($($arg),*) -> R;
                 let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
 
-                // Register a temporary callback that calls through the pointer
-                let closure: Closure<dyn Fn($($arg),*) -> R> = crate::Closure::wrap_encode_decode::<fn($($arg),*) -> R>(
+                // Register the callback directly (without wbg_cast which would make a nested JS call)
+                let callback = crate::function::RustCallback::new_fn(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // SAFETY: The pointer is valid for the duration of the JS call.
                         // Reconstruct the fat pointer from the stored components.
@@ -874,7 +882,8 @@ macro_rules! impl_closure_ref_encode {
                         result.encode(encoder);
                     },
                 );
-                closure.encode(encoder);
+                let key: CallbackKey<fn($($arg),*) -> R> = CallbackKey::new(crate::object_store::insert_object(callback));
+                key.encode(encoder);
             }
         }
 
@@ -910,7 +919,11 @@ macro_rules! impl_closure_ref_encode {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn encode(self, encoder: &mut EncodedData) {
-                eprintln!("Encoding &mut dyn Fn callback. This may not be sound");
+                // Mark that this batch needs to be flushed synchronously.
+                // Stack-allocated callbacks must be invoked before this function returns,
+                // otherwise the pointer becomes invalid when the closure goes out of scope.
+                encoder.mark_needs_flush();
+
                 // Decompose fat pointer to (data_ptr, vtable_ptr) to erase the lifetime.
                 // SAFETY: The closure reference must remain valid for the duration of the JS call.
                 // This is safe because JS callbacks are invoked synchronously during the call.
@@ -918,8 +931,8 @@ macro_rules! impl_closure_ref_encode {
                 let ptr = self as *const dyn Fn($($arg),*) -> R;
                 let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
 
-                // Register a temporary callback that calls through the pointer
-                let closure: Closure<dyn Fn($($arg),*) -> R> = crate::Closure::wrap_encode_decode::<fn($($arg),*) -> R>(
+                // Register the callback directly (without wbg_cast which would make a nested JS call)
+                let callback = crate::function::RustCallback::new_fn(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         // SAFETY: The pointer is valid for the duration of the JS call.
                         // Reconstruct the fat pointer from the stored components.
@@ -933,7 +946,8 @@ macro_rules! impl_closure_ref_encode {
                         result.encode(encoder);
                     },
                 );
-                closure.encode(encoder);
+                let key: CallbackKey<fn($($arg),*) -> R> = CallbackKey::new(crate::object_store::insert_object(callback));
+                key.encode(encoder);
             }
         }
     };

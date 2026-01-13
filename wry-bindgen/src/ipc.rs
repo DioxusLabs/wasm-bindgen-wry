@@ -306,6 +306,9 @@ pub struct EncodedData {
     pub(crate) u16_buf: Vec<u16>,
     pub(crate) u32_buf: Vec<u32>,
     pub(crate) str_buf: Vec<u8>,
+    /// Flag indicating that this batch must be flushed before returning.
+    /// Used for stack-allocated callbacks that need synchronous invocation.
+    pub(crate) needs_flush: bool,
 }
 
 impl EncodedData {
@@ -316,7 +319,14 @@ impl EncodedData {
             u16_buf: Vec::new(),
             u32_buf: Vec::new(),
             str_buf: Vec::new(),
+            needs_flush: false,
         }
+    }
+
+    /// Mark that this batch needs to be flushed before returning.
+    /// Used for stack-allocated callbacks that require synchronous invocation.
+    pub fn mark_needs_flush(&mut self) {
+        self.needs_flush = true;
     }
 
     /// Get the total byte length of the encoded data.
