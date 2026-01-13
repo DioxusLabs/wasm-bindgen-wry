@@ -56,11 +56,9 @@ impl<T> JsThreadLocal<T> {
         let init = self.init;
         // Check if it exists in the runtime
         let initialized = with_runtime(|runtime| runtime.has_thread_local(self.key));
-        println!("Thread local initialized: {}", initialized);
         if !initialized {
             // Initialize it before we open the runtime borrow
             let value = init();
-            println!("Initializing thread local at key: {:?}", self.key);
             with_runtime(|runtime| {
                 // We never drop js thread locals because:
                 // 1. The destructor only has an effect when the webview still exists and it should now be gone
