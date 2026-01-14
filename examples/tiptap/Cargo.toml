@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-web-sys = { version = "0.3.83", package = "web-sys-x", path = "../../wasm-bindgen/crates/web-sys", features = [
+web-sys = { version = "0.3.83-alpha.0", package = "web-sys-x", path = "../../wasm-bindgen/crates/web-sys", features = [
     "Document",
     "HtmlElement",
     "Element",
@@ -14,7 +14,7 @@ web-sys = { version = "0.3.83", package = "web-sys-x", path = "../../wasm-bindge
     "DomTokenList",
 ] }
 wry-testing = { version = "0.1.0", path = "../.." }
-wasm-bindgen = { version = "0.2", package = "wasm-bindgen-x" }
+wasm-bindgen = { version = "0.2.106-alpha.0", package = "wasm-bindgen-x" }
 leptos-tiptap-build = "0.2.8"
 
 [lints]

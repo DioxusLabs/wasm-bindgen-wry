@@ -1,6 +1,6 @@
 [package]
 name = "wry-bindgen"
-version = "0.2.106"
+version = "0.2.106-alpha.0"
 edition = "2024"
 
 [features]
