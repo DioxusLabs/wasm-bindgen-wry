@@ -1,6 +1,6 @@
 [package]
 name = "wry-bindgen-macro"
-version = "0.2.106-alpha.0"
+version = "0.2.106"
 edition = "2024"
 description = "Procedural macro for wry-bindgen"
 license = "MIT OR Apache-2.0"
@@ -10,7 +10,7 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 proc-macro = true
 
 [dependencies]
-wry-bindgen-macro-support = { path = "../wry-bindgen-macro-support", version = "=0.2.106-alpha.0" }
+wry-bindgen-macro-support = { path = "../wry-bindgen-macro-support", version = "=0.2.106" }
 quote = "1"
 
 [lints]
