@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "js-sys-x"
-version = "0.3.83"
+version = "0.3.83-alpha.0"
 dependencies = [
  "once_cell",
  "wasm-bindgen-x",
@@ -5152,7 +5152,7 @@ dependencies = [
 
 [[package]]
 name = "web-sys-x"
-version = "0.3.83"
+version = "0.3.83-alpha.0"
 dependencies = [
  "js-sys-x",
  "wasm-bindgen-x",
