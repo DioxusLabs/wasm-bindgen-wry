@@ -2,6 +2,9 @@
 name = "wry-bindgen"
 version = "0.2.106-alpha.0"
 edition = "2024"
+description = "Native desktop implementation of wasm-bindgen APIs using wry"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 
 [features]
 default = ["std"]

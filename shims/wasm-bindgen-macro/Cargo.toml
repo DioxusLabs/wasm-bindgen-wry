@@ -3,6 +3,8 @@ name = "wasm-bindgen-macro-x"
 version = "0.2.106-alpha.0"
 edition = "2024"
 description = "Shim macro that expands to both wasm-bindgen and wry-bindgen implementations"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 
 [lib]
 proc-macro = true

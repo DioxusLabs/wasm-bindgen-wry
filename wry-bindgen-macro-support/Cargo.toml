@@ -2,6 +2,9 @@
 name = "wry-bindgen-macro-support"
 version = "0.2.106-alpha.0"
 edition = "2024"
+description = "Internal macro support for wry-bindgen"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 
 [dependencies]
 proc-macro2 = "1.0"
