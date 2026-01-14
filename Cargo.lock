@@ -2544,6 +2544,12 @@ dependencies = [
 [[package]]
 name = "lazy-js-bundle"
 version = "0.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21972afec4627b7ba0de60b5269585b5ac2f56d559b0696f57eee6daf8a51b68"
+
+[[package]]
+name = "lazy-js-bundle"
+version = "0.7.2"
 source = "git+https://github.com/ealmloff/dioxus?branch=web-desktop#896bdca73da138987d7f21ffe7675e9470353799"
 
 [[package]]
@@ -5754,7 +5760,7 @@ dependencies = [
  "futures-util",
  "http 1.4.0",
  "inventory",
- "lazy-js-bundle 0.7.2 (git+https://github.com/DioxusLabs/dioxus)",
+ "lazy-js-bundle 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "once_cell",
  "pollster",
  "spin 0.10.0",

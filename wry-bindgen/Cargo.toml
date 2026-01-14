@@ -28,7 +28,7 @@ async-channel = "2.5.0"
 http = "1.4.0"
 
 [build-dependencies]
-lazy-js-bundle = { git = "https://github.com/DioxusLabs/dioxus" }
+lazy-js-bundle = "0.7.2"
 
 [lints]
 workspace = true
