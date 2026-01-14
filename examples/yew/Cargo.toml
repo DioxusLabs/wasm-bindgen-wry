@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 wry-testing = { version = "0.1.0", path = "../.." }
-wasm-bindgen-futures = { path = "../../wasm-bindgen/crates/futures" }
+wasm-bindgen-futures = { path = "../../wasm-bindgen/crates/futures", package = "wasm-bindgen-futures-x" }
 tokio = { version = "1.28.2", features = ["full"] }
 yew = { version = "0.22.0", features = ["csr"] }
 strum = "0.27"
