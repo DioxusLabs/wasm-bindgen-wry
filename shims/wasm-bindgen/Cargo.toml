@@ -17,7 +17,7 @@ wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-m
 
 # Desktop implementation
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wry-bindgen = { path = "../../wry-bindgen", version = "=0.2.106" }
+wry-bindgen = { path = "../../wry-bindgen", version = "=0.2.106-alpha.0" }
 
 # wasm32 implementation
 [target.'cfg(target_arch = "wasm32")'.dependencies]
