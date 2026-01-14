@@ -13,7 +13,7 @@ msrv = []
 base64 = "0.22"
 bytemuck = "1.14"
 inventory = "0.3.21"
-wry-bindgen-macro = { path = "../wry-bindgen-macro" }
+wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.0" }
 # We use this instead of std because wasm bindgen supports no_std environments
 once_cell = { version = "1.21.3", features = ["critical-section"] }
 spin = "0.10.0"

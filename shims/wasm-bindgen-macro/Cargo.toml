@@ -8,7 +8,7 @@ description = "Shim macro that expands to both wasm-bindgen and wry-bindgen impl
 proc-macro = true
 
 [dependencies]
-wry-bindgen-macro-support = { path = "../../wry-bindgen-macro-support" }
+wry-bindgen-macro-support = { path = "../../wry-bindgen-macro-support", version = "=0.2.106-alpha.0" }
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
