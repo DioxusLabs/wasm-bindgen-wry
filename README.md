@@ -8,6 +8,33 @@ Wasm-bindgen is a fundamental tool for interacting with javascript and the dom, 
 - Use wasm-bindgen compatible libraries like [web-sys](https://crates.io/crates/web-sys), [js-sys](https://crates.io/crates/js-sys), and [gloo](https://crates.io/crates/gloo)!
 - Use native apis like threads, file system, and networking!
 
+## Usage
+Add this to your Cargo.toml:
+
+```toml
+[dependencies]
+wry-launch = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry" }
+
+[patch.crates-io]
+wasm-bindgen = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
+wasm-bindgen-futures = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
+js-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
+web-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
+wry-bindgen = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
+```
+
+Then in your main.rs:
+
+```rust
+fn main() {
+    // Start the wry app with a wasm bindgen context
+    wry_launch::run(|| async {
+        // Your code here
+        std::future::pending::<()>().await;
+    })
+}
+```
+
 ## Demos
 
 The paint example from web-sys running unmodified from a native thread:
