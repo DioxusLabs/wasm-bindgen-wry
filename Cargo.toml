@@ -16,6 +16,9 @@ exclude = ["wasm-bindgen"]
 resolver = "2"
 
 [patch.crates-io]
-wasm-bindgen = { path = "shims/wasm-bindgen", package = "wasm-bindgen-x" }
+wasm-bindgen = { path = "shims/wasm-bindgen", package = "wasm-bindgen" }
+web-sys = { path = "wasm-bindgen/crates/web-sys", package = "web-sys" }
+js-sys = { path = "wasm-bindgen/crates/js-sys", package = "js-sys" }
+wasm-bindgen-futures = { path = "wasm-bindgen/crates/futures", package = "wasm-bindgen-futures" }
 
 [workspace.lints]

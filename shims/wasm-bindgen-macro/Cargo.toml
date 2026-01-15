@@ -1,6 +1,6 @@
 [package]
 name = "wasm-bindgen-macro"
-version = "0.2.106-alpha.0"
+version = "0.2.106"
 edition = "2024"
 description = "Shim macro that expands to both wasm-bindgen and wry-bindgen implementations"
 license = "MIT OR Apache-2.0"
@@ -10,7 +10,7 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 proc-macro = true
 
 [dependencies]
-wry-bindgen-macro-support = { path = "../../wry-bindgen-macro-support", version = "=0.2.106-alpha.0" }
+wry-bindgen-macro-support = { path = "../../wry-bindgen-macro-support", version = "=0.2.106-alpha.1" }
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }

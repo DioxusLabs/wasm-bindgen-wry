@@ -1,6 +1,6 @@
 [package]
 name = "wry-bindgen"
-version = "0.2.106-alpha.0"
+version = "0.2.106-alpha.1"
 edition = "2024"
 description = "Native desktop implementation of wasm-bindgen APIs using wry"
 license = "MIT OR Apache-2.0"
@@ -16,7 +16,7 @@ msrv = []
 base64 = "0.22"
 bytemuck = "1.14"
 inventory = "0.3.21"
-wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.0" }
+wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.1" }
 # We use this instead of std because wasm bindgen supports no_std environments
 once_cell = { version = "1.21.3", features = ["critical-section"] }
 spin = "0.10.0"
