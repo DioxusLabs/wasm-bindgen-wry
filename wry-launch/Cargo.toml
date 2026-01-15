@@ -11,7 +11,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tao = "0.34"
 wry = { version = "0.53.5", features = ["devtools"] }
-wasm-bindgen = { path = "../shims/wasm-bindgen", package = "wasm-bindgen" }
+wasm-bindgen = { path = "../shims/wasm-bindgen", package = "wasm-bindgen-x" }
 futures-util = "0.3.31"
 tokio = { version = "1.48.0", features = ["full"] }
 
@@ -22,9 +22,9 @@ gtk = "0.18"
 lazy-js-bundle = { git = "https://github.com/DioxusLabs/dioxus" }
 
 [dev-dependencies]
-web-sys = { version = "0.3", features = ["CssStyleDeclaration", "Element", "HtmlElement", "Window", "CanvasRenderingContext2d", "Document", "HtmlCanvasElement", "MouseEvent"] }
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
+web-sys = { path = "../wasm-bindgen/crates/web-sys", package = "web-sys-x", features = ["CssStyleDeclaration", "Element", "HtmlElement", "Window", "CanvasRenderingContext2d", "Document", "HtmlCanvasElement", "MouseEvent"] }
+wasm-bindgen-futures = { path = "../wasm-bindgen/crates/futures", package = "wasm-bindgen-futures-x" }
+js-sys = { path = "../wasm-bindgen/crates/js-sys", package = "js-sys-x" }
 futures-channel = "0.3.31"
 rand = "0.9.2"
 

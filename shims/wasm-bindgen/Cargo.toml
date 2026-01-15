@@ -1,6 +1,6 @@
 [package]
-name = "wasm-bindgen"
-version = "0.2.106"
+name = "wasm-bindgen-x"
+version = "0.2.106-alpha.0"
 edition = "2024"
 description = "Shim crate that re-exports either wry-bindgen (desktop) or wasm-bindgen (wasm32)"
 license = "MIT OR Apache-2.0"
@@ -13,15 +13,15 @@ enable-interning = []
 msrv = []
 
 [dependencies]
-wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-macro", version = "=0.2.106" }
+wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-macro", version = "=0.2.106-alpha.0" }
 
 # Desktop implementation
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wry-bindgen = { path = "../../wry-bindgen", version = "=0.2.106-alpha.0" }
 
-# wasm32 implementation
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", tag = "0.2.106" }
+# wasm32 implementation - commented out to avoid links conflict with crates.io version
+# [target.'cfg(target_arch = "wasm32")'.dependencies]
+# wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", tag = "0.2.106" }
 
 [lints]
 workspace = true

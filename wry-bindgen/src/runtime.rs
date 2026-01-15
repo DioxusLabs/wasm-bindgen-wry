@@ -94,7 +94,7 @@ struct IPCReceivers {
 }
 
 impl IPCReceivers {
-    pub fn recv_blocking(&mut self) -> IPCMessage {
+    pub fn recv_blocking(&mut self) -> Option<IPCMessage> {
         pollster::block_on(async {
             let Self {
                 eval_receiver,
@@ -104,10 +104,10 @@ impl IPCReceivers {
                 // We need to always poll the respond receiver first. If the response is ready, quit immediately
                 // before running any more callbacks
                 respond_msg = respond_receiver.next().fuse() => {
-                    respond_msg.expect("Failed to receive respond message")
+                    respond_msg
                 },
                 eval_msg = eval_receiver.next().fuse() => {
-                    eval_msg.expect("Failed to receive evaluate message")
+                    eval_msg
                 },
             }
         })
@@ -149,7 +149,7 @@ impl WryIPC {
 pub(crate) fn progress_js_with<O>(
     with_respond: impl for<'a> Fn(DecodedData<'a>) -> O,
 ) -> Option<O> {
-    let response = with_runtime(|runtime| runtime.ipc().receivers.write().recv_blocking());
+    let response = with_runtime(|runtime| runtime.ipc().receivers.write().recv_blocking())?;
 
     let decoder = response.decoded().expect("Failed to decode response");
     match decoder {
