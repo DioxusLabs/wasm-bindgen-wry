@@ -148,7 +148,7 @@ pub(crate) fn wait_for_respond<O>(
         });
 
         if msg.respond_evaluate_id() == Ok(eval_id) {
-            let DecodedVariant::Respond { data, .. } =
+            let DecodedVariant::Respond { data } =
                 msg.decoded().expect("Failed to decode Respond")
             else {
                 unreachable!()

@@ -166,11 +166,8 @@ impl IPCMessage {
         let variant = match message_type {
             0 => DecodedVariant::Evaluate { data: decoded },
             1 => {
-                let evaluate_id = decoded.take_u32()?;
-                DecodedVariant::Respond {
-                    evaluate_id,
-                    data: decoded,
-                }
+                let _evaluate_id = decoded.take_u32()?;
+                DecodedVariant::Respond { data: decoded }
             }
             v => return Err(DecodeError::InvalidMessageType { value: v }),
         };
@@ -190,11 +187,9 @@ impl IPCMessage {
 
 /// Decoded message variant.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum DecodedVariant<'a> {
     /// Response from JS/Rust (evaluate_id already consumed from the data stream)
     Respond {
-        evaluate_id: u32,
         data: DecodedData<'a>,
     },
     /// Evaluation request
