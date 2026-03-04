@@ -21,7 +21,6 @@ wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.1
 once_cell = { version = "1.21.3", features = ["critical-section"] }
 spin = "0.10.0"
 futures-core = "0.3.31"
-pollster = "0.4.0"
 futures-channel = "0.3.31"
 futures-util = "0.3.31"
 async-channel = "2.5.0"

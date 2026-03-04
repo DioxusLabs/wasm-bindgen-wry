@@ -13,14 +13,14 @@ use core::cell::RefCell;
 use core::future::poll_fn;
 use core::pin::{Pin, pin};
 use futures_util::FutureExt;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use http::Response;
 
 use crate::batch::{Runtime, in_runtime};
 use crate::function_registry::FUNCTION_REGISTRY;
-use crate::ipc::{DecodedVariant, IPCMessage, MessageType, decode_data};
+use crate::ipc::{IPCMessage, MessageType, decode_data};
 use crate::runtime::{AppEventVariant, IPCSenders, WryBindgenEvent, WryIPC, handle_callbacks};
 
 pub trait ImplWryBindgenResponder {
@@ -103,6 +103,17 @@ struct WebviewState {
     loading_state: WebviewLoadingState,
     // A function that evaluates scripts in the webview
     evaluate_script: Box<dyn FnMut(&str)>,
+    /// Respond messages that arrived via proxy when no ongoing XHR was available.
+    /// These are drained when the next XHR arrives from JS.
+    /// The pending_rust_evaluates counter was NOT decremented when queuing;
+    /// it is decremented when the message is actually delivered.
+    pending_responds: VecDeque<IPCMessage>,
+    /// Evaluate messages that arrived via proxy when JS was blocked in a sync XHR
+    /// (pending_rust_evaluates > 0) and no ongoing XHR was available.
+    /// evaluate_script cannot work while JS is blocked, so we queue and drain
+    /// when the next XHR arrives. The pending_js_evaluates counter WAS already
+    /// incremented when queuing.
+    pending_evaluates: VecDeque<IPCMessage>,
 }
 
 impl WebviewState {
@@ -115,6 +126,8 @@ impl WebviewState {
             sender,
             loading_state: WebviewLoadingState::default(),
             evaluate_script: Box::new(evaluate_script),
+            pending_responds: VecDeque::new(),
+            pending_evaluates: VecDeque::new(),
         }
     }
 
@@ -279,6 +292,12 @@ impl ProtocolHandler {
                 MessageType::Evaluate => {
                     webview_state.pending_rust_evaluates += 1;
                     webview_state.set_ongoing_request(responder);
+
+                    // If an Evaluate was queued (JS was blocked, evaluate_script
+                    // would deadlock), piggyback it now that we have an XHR.
+                    if let Some(queued) = webview_state.pending_evaluates.pop_front() {
+                        webview_state.respond_to_request(queued);
+                    }
                 }
                 // Response from JS to a previous Evaluate - decrement pending count and respond accordingly
                 MessageType::Respond => {
@@ -287,8 +306,20 @@ impl ProtocolHandler {
                     if webview_state.pending_rust_evaluates > 0
                         || webview_state.pending_js_evaluates > 0
                     {
-                        // Still more round-trips expected
+                        // Still more round-trips expected - store the XHR
                         webview_state.set_ongoing_request(responder);
+
+                        // Drain queued messages: Responds first (higher priority),
+                        // then Evaluates (were queued because JS was blocked).
+                        if let Some(queued) = webview_state.pending_responds.pop_front() {
+                            webview_state.pending_rust_evaluates =
+                                webview_state.pending_rust_evaluates.saturating_sub(1);
+                            webview_state.respond_to_request(queued);
+                        } else if let Some(queued) =
+                            webview_state.pending_evaluates.pop_front()
+                        {
+                            webview_state.respond_to_request(queued);
+                        }
                     } else {
                         // Conversation is over
                         responder.respond(blank_response());
@@ -426,34 +457,48 @@ impl WryBindgen {
         ipc_msg: IPCMessage,
     ) {
         let ty = ipc_msg.ty().unwrap();
-        match ty {
-            // Rust wants to evaluate something in js
-            MessageType::Evaluate => {
-                webview_state.pending_js_evaluates += 1;
-            }
-            // Rust is responding to a previous js evaluate
-            MessageType::Respond => {
+
+        // Increment pending_js_evaluates for Evaluate messages regardless of delivery method
+        if ty == MessageType::Evaluate {
+            webview_state.pending_js_evaluates += 1;
+        }
+
+        // If there is an ongoing request, piggyback on it
+        if webview_state.has_pending_request() {
+            // Decrement counter for Respond messages when actually delivered
+            if ty == MessageType::Respond {
                 webview_state.pending_rust_evaluates =
                     webview_state.pending_rust_evaluates.saturating_sub(1);
             }
-        }
-
-        // If there is an ongoing request, respond to immediately
-        if webview_state.has_pending_request() {
             webview_state.respond_to_request(ipc_msg);
             return;
         }
 
-        // Otherwise call into js through evaluate_script
-        let decoded = ipc_msg.decoded().unwrap();
-
-        if let DecodedVariant::Evaluate { .. } = decoded {
-            // Encode the binary data as base64 and pass to JS
-            // JS will iterate over operations in the buffer
-            let engine = base64::engine::general_purpose::STANDARD;
-            let data_base64 = engine.encode(ipc_msg.data());
-            let code = format!("window.evaluate_from_rust_binary(\"{data_base64}\")");
-            webview_state.evaluate_script(&code);
+        // No ongoing request - use fallback delivery
+        match ty {
+            MessageType::Evaluate => {
+                if webview_state.pending_rust_evaluates > 0 {
+                    // JS is blocked in a sync XHR processing a callback.
+                    // evaluate_script won't run until JS unblocks, which
+                    // requires a response we can't send yet → deadlock.
+                    // Queue the Evaluate and drain it when the next XHR arrives.
+                    // pending_js_evaluates was already incremented above.
+                    webview_state.pending_evaluates.push_back(ipc_msg);
+                } else {
+                    // JS is idle - evaluate_script is safe.
+                    let engine = base64::engine::general_purpose::STANDARD;
+                    let data_base64 = engine.encode(ipc_msg.data());
+                    let code = format!("window.evaluate_from_rust_binary(\"{data_base64}\")");
+                    webview_state.evaluate_script(&code);
+                }
+            }
+            MessageType::Respond => {
+                // No XHR to piggyback on. Queue for delivery when the next
+                // XHR arrives from JS. The pending_rust_evaluates counter is
+                // NOT decremented here - it is deferred until the queued
+                // message is actually delivered in handle_request.
+                webview_state.pending_responds.push_back(ipc_msg);
+            }
         }
     }
 }

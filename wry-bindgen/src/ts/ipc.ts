@@ -142,10 +142,14 @@ function handleBinaryResponse(
   const msgType: MessageType = rawMsgType;
 
   if (msgType === MessageType.Respond) {
-    // Respond - just return the decoder for further processing
+    // Respond - skip the evaluate_id (used for Rust-side routing)
+    decoder.takeU32();
     return decoder;
   } else if (msgType === MessageType.Evaluate) {
     // Evaluate - Rust is calling JS functions (possibly multiple)
+
+    // Read the evaluate_id so we can echo it back in our Respond
+    const evaluateId = decoder.takeU32();
 
     // Read the reserved placeholder count and push a reservation scope
     // This ensures nested callback allocations skip these reserved IDs
@@ -154,6 +158,8 @@ function handleBinaryResponse(
 
     const encoder = new DataEncoder();
     encoder.pushU8(MessageType.Respond);
+    // Echo the evaluate_id so Rust can route this Respond to the correct caller
+    encoder.pushU32(evaluateId);
 
     // Push a single borrow frame for this entire Evaluate message
     // This frame persists across all operations and nested calls
