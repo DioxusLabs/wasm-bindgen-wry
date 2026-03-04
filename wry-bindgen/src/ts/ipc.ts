@@ -142,8 +142,6 @@ function handleBinaryResponse(
   const msgType: MessageType = rawMsgType;
 
   if (msgType === MessageType.Respond) {
-    // Respond - skip the evaluate_id (used for Rust-side routing)
-    decoder.takeU32();
     return decoder;
   } else if (msgType === MessageType.Evaluate) {
     // Evaluate - Rust is calling JS functions (possibly multiple)

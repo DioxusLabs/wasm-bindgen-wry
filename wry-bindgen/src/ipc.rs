@@ -126,11 +126,9 @@ impl IPCMessage {
     }
 
     /// Create a new respond message with the given data.
-    /// Includes a dummy evaluate_id of 0 (callback results routed via proxy, not by id).
     pub fn new_respond(push_data: impl FnOnce(&mut EncodedData)) -> Self {
         let mut encoder = EncodedData::new();
         encoder.push_u8(MessageType::Respond as u8);
-        encoder.push_u32(0); // evaluate_id (0 = not routed by id)
 
         push_data(&mut encoder);
 
