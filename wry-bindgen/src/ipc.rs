@@ -126,7 +126,11 @@ impl IPCMessage {
     /// Create a new IPCMessage from raw bytes, eagerly parsing the header.
     pub fn new(data: Vec<u8>) -> Self {
         let (msg_type, evaluate_id) = Self::pre_parse(&data);
-        Self { data, msg_type, evaluate_id }
+        Self {
+            data,
+            msg_type,
+            evaluate_id,
+        }
     }
 
     /// Parse message type and (for Responds) evaluate_id from raw bytes.
