@@ -88,6 +88,11 @@ impl IPCSenders {
 /// The runtime environment for communicating with JavaScript.
 pub(crate) struct WryIPC {
     pub(crate) proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
+    /// IPC message receiver. IMPORTANT: Must only be consumed via `recv_blocking()`
+    /// or `try_recv()`, never via `.recv().await`. The `handle_callbacks` async task
+    /// uses `try_recv` + a manual waker so that `recv_blocking` in `wait_for_respond`
+    /// is the sole channel listener. Using `.recv().await` would register a second
+    /// waker on the channel, causing one consumer to starve.
     receiver: Receiver<IPCMessage>,
     async_waker: Arc<Mutex<Option<Waker>>>,
 }
@@ -147,7 +152,8 @@ pub(crate) fn wait_for_respond<O>(
         if let Some(msg) = stashed {
             let data = match msg.decoded().expect("Failed to decode stashed Respond") {
                 DecodedVariant::Respond { mut data } => {
-                    let _ = data.take_u32(); // skip evaluate_id
+                    let stashed_id = data.take_u32().expect("missing evaluate_id in stashed Respond");
+                    debug_assert_eq!(stashed_id, eval_id, "stashed Respond has wrong evaluate_id");
                     data
                 }
                 _ => unreachable!(),
@@ -266,7 +272,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
     let response = match fn_id {
         // Call a registered Rust callback
         0 => {
-            let key = data.take_u32().unwrap();
+            let key = data.take_u32().expect("Failed to read callback key");
 
             let callback = with_runtime(|state| {
                 let rust_callback = state.get_object::<RustCallback>(key);
@@ -311,7 +317,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
                 }
             }
         }
-        _ => todo!(),
+        _ => panic!("Unknown fn_id in handle_rust_callback: {fn_id}"),
     };
     with_runtime(|runtime| runtime.ipc().js_response(runtime.webview_id(), response));
 }

@@ -157,6 +157,10 @@ impl IPCMessage {
     }
 
     /// Decode the message into its variant form.
+    ///
+    /// **Note:** For `Respond` messages, the returned `data` still contains the
+    /// `evaluate_id` as its first u32. Callers must consume it with `data.take_u32()`
+    /// before reading the actual payload.
     pub fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
         let message_type = decoded.take_u8()?;
