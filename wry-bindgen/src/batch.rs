@@ -82,7 +82,7 @@ impl Runtime {
             type_cache: BTreeMap::new(),
             // Type IDs start at 0
             next_type_id: 0,
-            // Evaluate IDs start at 1 (0 is reserved for non-routed Responds)
+            // Evaluate IDs start at 0
             evaluate_id_counter: 0,
             // Object store starts empty
             objects: BTreeMap::new(),

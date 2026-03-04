@@ -13,7 +13,7 @@ use async_channel::{Receiver, Sender};
 use crate::BinaryDecode;
 use crate::batch::with_runtime;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
-use crate::ipc::{DecodedData, DecodedVariant, IPCMessage, MessageType};
+use crate::ipc::{DecodedData, IPCMessage, MessageType};
 use crate::object_store::ObjectHandle;
 use crate::object_store::remove_object;
 
@@ -138,7 +138,7 @@ pub(crate) fn wait_for_respond<O>(
         let msg = with_runtime(|rt| {
             rt.stashed_responds
                 .iter()
-                .position(|m| m.respond_evaluate_id() == Ok(eval_id))
+                .position(|m| m.respond_evaluate_id() == Some(eval_id))
                 .map(|idx| rt.stashed_responds.swap_remove(idx))
         })
         .unwrap_or_else(|| {
@@ -147,13 +147,8 @@ pub(crate) fn wait_for_respond<O>(
                 .expect("channel closed unexpectedly")
         });
 
-        if msg.respond_evaluate_id() == Ok(eval_id) {
-            let DecodedVariant::Respond { data } =
-                msg.decoded().expect("Failed to decode Respond")
-            else {
-                unreachable!()
-            };
-            return with_respond(data);
+        if msg.respond_evaluate_id() == Some(eval_id) {
+            return with_respond(msg.payload().expect("Failed to decode Respond"));
         }
 
         handle_ipc_message(msg);
@@ -197,14 +192,11 @@ pub async fn handle_callbacks() {
 
 fn handle_ipc_message(msg: IPCMessage) {
     // Check type first: Responds are stashed without full decode (avoids borrow conflict).
-    if msg.ty() == Ok(MessageType::Respond) {
+    if msg.ty() == MessageType::Respond {
         with_runtime(|rt| rt.stashed_responds.push(msg));
         return;
     }
-    let DecodedVariant::Evaluate { mut data } = msg.decoded().expect("Failed to decode Evaluate")
-    else {
-        unreachable!()
-    };
+    let mut data = msg.payload().expect("Failed to decode Evaluate");
     handle_rust_callback(&mut data);
 }
 

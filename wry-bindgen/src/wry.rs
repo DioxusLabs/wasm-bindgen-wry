@@ -286,7 +286,7 @@ impl ProtocolHandler {
                 responder.respond(error_response());
                 return None;
             };
-            let msg_type = msg.ty().unwrap();
+            let msg_type = msg.ty();
             match msg_type {
                 // New call from JS - save responder and wait for the js application thread to respond
                 MessageType::Evaluate => {
@@ -454,7 +454,7 @@ impl WryBindgen {
         webview_state: &mut WebviewState,
         ipc_msg: IPCMessage,
     ) {
-        let ty = ipc_msg.ty().unwrap();
+        let ty = ipc_msg.ty();
 
         // Increment pending_js_evaluates for Evaluate messages regardless of delivery method
         if ty == MessageType::Evaluate {

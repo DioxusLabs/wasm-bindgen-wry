@@ -117,59 +117,63 @@ pub(crate) enum MessageType {
 #[derive(Debug, Clone)]
 pub(crate) struct IPCMessage {
     data: Vec<u8>,
+    msg_type: MessageType,
+    /// Pre-parsed evaluate_id for JS→Rust Respond messages. None for everything else.
+    evaluate_id: Option<u32>,
 }
 
 impl IPCMessage {
-    /// Create a new IPCMessage from raw bytes.
+    /// Create a new IPCMessage from raw bytes, eagerly parsing the header.
     pub fn new(data: Vec<u8>) -> Self {
-        Self { data }
+        let (msg_type, evaluate_id) = Self::pre_parse(&data);
+        Self { data, msg_type, evaluate_id }
     }
 
-    /// Create a new respond message with the given data.
+    /// Parse message type and (for Responds) evaluate_id from raw bytes.
+    fn pre_parse(data: &[u8]) -> (MessageType, Option<u32>) {
+        let Ok(mut d) = DecodedData::from_bytes(data) else {
+            return (MessageType::Evaluate, None);
+        };
+        let Ok(ty) = d.take_u8() else {
+            return (MessageType::Evaluate, None);
+        };
+        match ty {
+            0 => (MessageType::Evaluate, None),
+            1 => (MessageType::Respond, d.take_u32().ok()),
+            _ => (MessageType::Evaluate, None),
+        }
+    }
+
+    /// Create a new respond message (Rust→JS callback result, no evaluate_id).
     pub fn new_respond(push_data: impl FnOnce(&mut EncodedData)) -> Self {
         let mut encoder = EncodedData::new();
         encoder.push_u8(MessageType::Respond as u8);
-
         push_data(&mut encoder);
-
-        IPCMessage::new(encoder.to_bytes())
+        Self {
+            data: encoder.to_bytes(),
+            msg_type: MessageType::Respond,
+            evaluate_id: None,
+        }
     }
 
-    /// Read the evaluate_id from a Respond message.
-    /// Returns `Err` if the message is not a Respond.
-    pub fn respond_evaluate_id(&self) -> Result<u32, DecodeError> {
-        let mut decoded = DecodedData::from_bytes(&self.data)?;
-        let msg_type = decoded.take_u8()?;
-        if msg_type != MessageType::Respond as u8 {
-            return Err(DecodeError::InvalidMessageType { value: msg_type });
-        }
-        decoded.take_u32()
+    /// Get the pre-parsed evaluate_id (only `Some` for JS→Rust Respond messages).
+    pub fn respond_evaluate_id(&self) -> Option<u32> {
+        self.evaluate_id
     }
 
     /// Get the message type.
-    pub fn ty(&self) -> Result<MessageType, DecodeError> {
-        let mut decoded = DecodedData::from_bytes(&self.data)?;
-        let message_type = decoded.take_u8()?;
-        match message_type {
-            0 => Ok(MessageType::Evaluate),
-            1 => Ok(MessageType::Respond),
-            v => Err(DecodeError::InvalidMessageType { value: v }),
-        }
+    pub fn ty(&self) -> MessageType {
+        self.msg_type
     }
 
-    /// Decode the message into its variant form.
-    pub fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
+    /// Decode the message payload, skipping any type-specific header fields.
+    pub fn payload(&self) -> Result<DecodedData<'_>, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
-        let message_type = decoded.take_u8()?;
-        let variant = match message_type {
-            0 => DecodedVariant::Evaluate { data: decoded },
-            1 => {
-                let _evaluate_id = decoded.take_u32()?;
-                DecodedVariant::Respond { data: decoded }
-            }
-            v => return Err(DecodeError::InvalidMessageType { value: v }),
-        };
-        Ok(variant)
+        let _ = decoded.take_u8()?; // skip message type
+        if self.evaluate_id.is_some() {
+            let _ = decoded.take_u32()?; // skip evaluate_id
+        }
+        Ok(decoded)
     }
 
     /// Get the raw data bytes.
@@ -181,17 +185,6 @@ impl IPCMessage {
     pub fn into_data(self) -> Vec<u8> {
         self.data
     }
-}
-
-/// Decoded message variant.
-#[derive(Debug)]
-pub(crate) enum DecodedVariant<'a> {
-    /// Response from JS/Rust (evaluate_id already consumed from the data stream)
-    Respond {
-        data: DecodedData<'a>,
-    },
-    /// Evaluation request
-    Evaluate { data: DecodedData<'a> },
 }
 
 /// Decoded binary data with aligned buffer access.
@@ -438,5 +431,5 @@ impl EncodedData {
 pub(crate) fn decode_data(bytes: &[u8]) -> Option<IPCMessage> {
     let engine = base64::engine::general_purpose::STANDARD;
     let data = engine.decode(bytes).ok()?;
-    Some(IPCMessage { data })
+    Some(IPCMessage::new(data))
 }
