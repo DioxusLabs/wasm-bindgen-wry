@@ -77,10 +77,10 @@ impl IPCSenders {
         self.sender
             .try_send(msg)
             .expect("Failed to send message");
-        if let Ok(guard) = self.async_waker.lock() {
-            if let Some(waker) = guard.as_ref() {
-                waker.wake_by_ref();
-            }
+        if let Ok(guard) = self.async_waker.lock()
+            && let Some(waker) = guard.as_ref()
+        {
+            waker.wake_by_ref();
         }
     }
 }
@@ -137,29 +137,24 @@ pub(crate) fn wait_for_respond<O>(
     let start = std::time::Instant::now();
 
     loop {
-        // Check stash first (a nested wait_for_respond may have stashed our Respond)
-        let stashed = with_runtime(|rt| {
+        // Get next message: check stash first (nested calls may have stashed ours),
+        // otherwise block on the channel.
+        let msg = with_runtime(|rt| {
             rt.stashed_responds
                 .iter()
                 .position(|m| m.respond_evaluate_id() == Ok(eval_id))
                 .map(|idx| rt.stashed_responds.swap_remove(idx))
-        });
-        if let Some(msg) = stashed {
-            let data = match msg.decoded().expect("Failed to decode stashed Respond") {
-                DecodedVariant::Respond { mut data } => {
-                    let stashed_id = data.take_u32().expect("missing evaluate_id in stashed Respond");
-                    debug_assert_eq!(stashed_id, eval_id, "stashed Respond has wrong evaluate_id");
-                    data
-                }
-                _ => unreachable!(),
+        })
+        .unwrap_or_else(|| receiver.recv_blocking().expect("channel closed unexpectedly"));
+
+        if msg.respond_evaluate_id() == Ok(eval_id) {
+            let DecodedVariant::Respond { data, .. } =
+                msg.decoded().expect("Failed to decode Respond")
+            else {
+                unreachable!()
             };
             return with_respond(data);
         }
-
-        // Block until the next message arrives
-        let msg = receiver
-            .recv_blocking()
-            .expect("channel closed unexpectedly");
 
         handle_ipc_message(msg);
 
@@ -201,19 +196,17 @@ pub async fn handle_callbacks() {
 }
 
 fn handle_ipc_message(msg: IPCMessage) {
-    let ty = msg.ty().expect("Failed to read message type");
-    match ty {
-        MessageType::Respond => {
-            with_runtime(|rt| rt.stashed_responds.push(msg));
-        }
-        MessageType::Evaluate => {
-            let mut data = match msg.decoded().expect("Failed to decode Evaluate") {
-                DecodedVariant::Evaluate { data } => data,
-                _ => unreachable!(),
-            };
-            handle_rust_callback(&mut data);
-        }
+    // Check type first: Responds are stashed without full decode (avoids borrow conflict).
+    if msg.ty() == Ok(MessageType::Respond) {
+        with_runtime(|rt| rt.stashed_responds.push(msg));
+        return;
     }
+    let DecodedVariant::Evaluate { mut data } =
+        msg.decoded().expect("Failed to decode Evaluate")
+    else {
+        unreachable!()
+    };
+    handle_rust_callback(&mut data);
 }
 
 /// Handle a Rust callback invocation from JavaScript.

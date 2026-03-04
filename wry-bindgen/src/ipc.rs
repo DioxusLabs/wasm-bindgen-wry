@@ -138,10 +138,13 @@ impl IPCMessage {
     }
 
     /// Read the evaluate_id from a Respond message.
-    /// The evaluate_id is the first u32 after the message type byte.
+    /// Returns `Err` if the message is not a Respond.
     pub fn respond_evaluate_id(&self) -> Result<u32, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
-        let _msg_type = decoded.take_u8()?;
+        let msg_type = decoded.take_u8()?;
+        if msg_type != MessageType::Respond as u8 {
+            return Err(DecodeError::InvalidMessageType { value: msg_type });
+        }
         decoded.take_u32()
     }
 
@@ -157,19 +160,21 @@ impl IPCMessage {
     }
 
     /// Decode the message into its variant form.
-    ///
-    /// **Note:** For `Respond` messages, the returned `data` still contains the
-    /// `evaluate_id` as its first u32. Callers must consume it with `data.take_u32()`
-    /// before reading the actual payload.
     pub fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
         let message_type = decoded.take_u8()?;
-        let message_type = match message_type {
+        let variant = match message_type {
             0 => DecodedVariant::Evaluate { data: decoded },
-            1 => DecodedVariant::Respond { data: decoded },
+            1 => {
+                let evaluate_id = decoded.take_u32()?;
+                DecodedVariant::Respond {
+                    evaluate_id,
+                    data: decoded,
+                }
+            }
             v => return Err(DecodeError::InvalidMessageType { value: v }),
         };
-        Ok(message_type)
+        Ok(variant)
     }
 
     /// Get the raw data bytes.
@@ -185,9 +190,10 @@ impl IPCMessage {
 
 /// Decoded message variant.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum DecodedVariant<'a> {
-    /// Response from JS/Rust
-    Respond { data: DecodedData<'a> },
+    /// Response from JS/Rust (evaluate_id already consumed from the data stream)
+    Respond { evaluate_id: u32, data: DecodedData<'a> },
     /// Evaluation request
     Evaluate { data: DecodedData<'a> },
 }
