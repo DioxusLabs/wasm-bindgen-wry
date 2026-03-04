@@ -57,6 +57,10 @@ pub struct Runtime {
     webview_id: u64,
     /// Thread locals associated with the runtime
     thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
+    /// Responds that arrived out of order during nested `wait_for_respond` calls.
+    /// When an inner call receives a Respond meant for an outer call, it stashes
+    /// it here for the outer call to pick up.
+    pub(crate) stashed_responds: Vec<crate::ipc::IPCMessage>,
 }
 
 impl Runtime {
@@ -87,6 +91,7 @@ impl Runtime {
             ipc,
             webview_id,
             thread_locals: BTreeMap::new(),
+            stashed_responds: Vec::new(),
         }
     }
 
