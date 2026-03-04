@@ -4,6 +4,7 @@ use wasm_bindgen::{batch::batch_async, wasm_bindgen};
 mod add_number_js;
 #[allow(clippy::redundant_closure)]
 mod async_bindings;
+mod batch_stress;
 mod borrow_stack;
 mod callbacks;
 mod catch_attribute;
@@ -176,6 +177,12 @@ fn main() {
         test_with_js_context(is_type_of::test_is_type_of_with_dyn_into).await;
         test_with_js_context(is_type_of::test_is_type_of_with_dyn_ref).await;
         test_with_js_context(is_type_of::test_has_type_with_is_type_of).await;
+
+        // Batch stress test (IPC buffer exhaustion reproduction — issue #21)
+        async_test_with_js_context_allow_new_js_values(
+            batch_stress::test_batch_stress_browser_event_callbacks,
+        )
+        .await;
 
         // async bindings test
         async_test_with_js_context(async_bindings::test_call_async).await;

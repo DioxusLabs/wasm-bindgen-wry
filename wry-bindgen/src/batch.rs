@@ -45,6 +45,8 @@ pub struct Runtime {
     type_cache: BTreeMap<Vec<u8>, u32>,
     /// Next type ID to assign
     next_type_id: u32,
+    /// Counter for assigning unique evaluate IDs to match Evaluates with Responds
+    evaluate_id_counter: u32,
     /// Exported Rust structs stored by handle
     objects: BTreeMap<u32, Box<dyn Any>>,
     /// Next handle to assign for exported objects
@@ -55,6 +57,10 @@ pub struct Runtime {
     webview_id: u64,
     /// Thread locals associated with the runtime
     thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
+    /// Responds that arrived out of order during nested `wait_for_respond` calls.
+    /// When an inner call receives a Respond meant for an outer call, it stashes
+    /// it here for the outer call to pick up.
+    pub(crate) stashed_responds: Vec<crate::ipc::IPCMessage>,
 }
 
 impl Runtime {
@@ -76,6 +82,8 @@ impl Runtime {
             type_cache: BTreeMap::new(),
             // Type IDs start at 0
             next_type_id: 0,
+            // Evaluate IDs start at 0
+            evaluate_id_counter: 0,
             // Object store starts empty
             objects: BTreeMap::new(),
             // Object handles start at 0
@@ -83,6 +91,7 @@ impl Runtime {
             ipc,
             webview_id,
             thread_locals: BTreeMap::new(),
+            stashed_responds: Vec::new(),
         }
     }
 
@@ -161,14 +170,23 @@ impl Runtime {
         }
     }
 
+    /// Get the next evaluate ID for matching Evaluates to Responds.
+    pub(crate) fn next_evaluate_id(&mut self) -> u32 {
+        let id = self.evaluate_id_counter;
+        self.evaluate_id_counter = self.evaluate_id_counter.wrapping_add(1);
+        id
+    }
+
     /// Take the message data and reset the batch for reuse.
     /// Includes any pending drops at the start of the message.
-    /// Prepends the reserved placeholder count so JS can skip those IDs during nested allocations.
-    pub(crate) fn take_message(&mut self) -> IPCMessage {
+    /// Prepends the evaluate_id and reserved placeholder count.
+    pub(crate) fn take_message(&mut self) -> (IPCMessage, u32) {
+        let eval_id = self.next_evaluate_id();
         let reserved_count = self.take_reserved_placeholder_count();
         let mut encoder = self.take_encoder();
         encoder.prepend_u32(reserved_count);
-        IPCMessage::new(encoder.to_bytes())
+        encoder.prepend_u32(eval_id);
+        (IPCMessage::new(encoder.to_bytes()), eval_id)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -407,7 +425,15 @@ pub(crate) fn run_js_sync<R: BatchableResult>(
     let result = if !is_batching() || needs_flush {
         flush_and_then(|mut data| {
             let response = get_placeholder()
-                .unwrap_or_else(|| R::decode(&mut data).expect("Failed to decode return value"));
+                .unwrap_or_else(|| {
+                    R::decode(&mut data).unwrap_or_else(|e| {
+                        panic!(
+                            "Failed to decode return value: {e}\ndata.is_empty()={}, fn_id={fn_id}, is_batching={}, needs_flush={needs_flush}",
+                            data.is_empty(),
+                            is_batching(),
+                        )
+                    })
+                });
             assert!(
                 data.is_empty(),
                 "Extra data remaining after decoding response"
@@ -442,17 +468,15 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> R {
     use crate::runtime::WryBindgenEvent;
 
-    let batch_msg = with_runtime(|state| state.take_message());
+    let (batch_msg, eval_id) = with_runtime(|state| state.take_message());
 
-    // Send and wait for result
+    // Send the Evaluate via proxy
     with_runtime(|runtime| {
         (runtime.ipc().proxy)(WryBindgenEvent::ipc(runtime.webview_id(), batch_msg))
     });
-    loop {
-        if let Some(result) = crate::runtime::progress_js_with(&then) {
-            return result;
-        }
-    }
+
+    // Block until the Respond with matching eval_id arrives
+    crate::runtime::wait_for_respond(eval_id, then)
 }
 
 /// Execute operations inside a batch. Operations that return opaque types (like JsValue)

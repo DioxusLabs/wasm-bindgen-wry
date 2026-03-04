@@ -22,7 +22,7 @@ gtk = "0.18"
 lazy-js-bundle = { git = "https://github.com/DioxusLabs/dioxus" }
 
 [dev-dependencies]
-web-sys = { path = "../wasm-bindgen/crates/web-sys", package = "web-sys", features = ["CssStyleDeclaration", "Element", "HtmlElement", "Window", "CanvasRenderingContext2d", "Document", "HtmlCanvasElement", "MouseEvent"] }
+web-sys = { path = "../wasm-bindgen/crates/web-sys", package = "web-sys", features = ["CssStyleDeclaration", "Element", "HtmlElement", "Node", "Window", "CanvasRenderingContext2d", "Document", "HtmlCanvasElement", "MouseEvent"] }
 wasm-bindgen-futures = { path = "../wasm-bindgen/crates/futures", package = "wasm-bindgen-futures" }
 js-sys = { path = "../wasm-bindgen/crates/js-sys", package = "js-sys" }
 futures-channel = "0.3.31"

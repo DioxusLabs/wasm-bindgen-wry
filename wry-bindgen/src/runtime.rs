@@ -3,19 +3,17 @@
 //! This module handles the connection between the Rust runtime and the
 //! JavaScript environment via winit's event loop.
 
-use core::pin::Pin;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::task::Waker;
+use std::time::Duration;
 
-use alloc::boxed::Box;
 use async_channel::{Receiver, Sender};
-use futures_util::{FutureExt, StreamExt};
-use spin::RwLock;
 
 use crate::BinaryDecode;
 use crate::batch::with_runtime;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
-use crate::ipc::MessageType;
-use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
+use crate::ipc::{DecodedData, IPCMessage, MessageType};
 use crate::object_store::ObjectHandle;
 use crate::object_store::remove_object;
 
@@ -67,76 +65,50 @@ pub(crate) enum AppEventVariant {
 
 #[derive(Clone)]
 pub(crate) struct IPCSenders {
-    eval_sender: Sender<IPCMessage>,
-    respond_sender: futures_channel::mpsc::UnboundedSender<IPCMessage>,
+    sender: Sender<IPCMessage>,
+    /// Waker for the async `handle_callbacks` task.
+    /// `handle_callbacks` uses `try_recv` (no waker on the channel) so that
+    /// `recv_blocking` in `wait_for_respond` is the sole channel listener.
+    async_waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl IPCSenders {
     pub(crate) fn start_send(&self, msg: IPCMessage) {
-        match msg.ty().unwrap() {
-            MessageType::Evaluate => {
-                self.eval_sender
-                    .try_send(msg)
-                    .expect("Failed to send evaluate message");
-            }
-            MessageType::Respond => {
-                self.respond_sender
-                    .unbounded_send(msg)
-                    .expect("Failed to send respond message");
-            }
+        self.sender.try_send(msg).expect("Failed to send message");
+        if let Ok(guard) = self.async_waker.lock()
+            && let Some(waker) = guard.as_ref()
+        {
+            waker.wake_by_ref();
         }
     }
 }
 
-struct IPCReceivers {
-    eval_receiver: Pin<Box<Receiver<IPCMessage>>>,
-    respond_receiver: futures_channel::mpsc::UnboundedReceiver<IPCMessage>,
-}
-
-impl IPCReceivers {
-    pub fn recv_blocking(&mut self) -> Option<IPCMessage> {
-        pollster::block_on(async {
-            let Self {
-                eval_receiver,
-                respond_receiver,
-            } = self;
-            futures_util::select_biased! {
-                // We need to always poll the respond receiver first. If the response is ready, quit immediately
-                // before running any more callbacks
-                respond_msg = respond_receiver.next().fuse() => {
-                    respond_msg
-                },
-                eval_msg = eval_receiver.next().fuse() => {
-                    eval_msg
-                },
-            }
-        })
-    }
-}
-
 /// The runtime environment for communicating with JavaScript.
-///
-/// This struct holds the event loop proxy for sending messages to the
-/// WebView and manages queued Rust calls.
 pub(crate) struct WryIPC {
     pub(crate) proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
-    receivers: RwLock<IPCReceivers>,
+    /// IPC message receiver. IMPORTANT: Must only be consumed via `recv_blocking()`
+    /// or `try_recv()`, never via `.recv().await`. The `handle_callbacks` async task
+    /// uses `try_recv` + a manual waker so that `recv_blocking` in `wait_for_respond`
+    /// is the sole channel listener. Using `.recv().await` would register a second
+    /// waker on the channel, causing one consumer to starve.
+    receiver: Receiver<IPCMessage>,
+    async_waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl WryIPC {
     /// Create a new runtime with the given event loop proxy.
     pub(crate) fn new(proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>) -> (Self, IPCSenders) {
-        let (eval_sender, eval_receiver) = async_channel::unbounded();
-        let (respond_sender, respond_receiver) = futures_channel::mpsc::unbounded();
+        let (sender, receiver) = async_channel::unbounded();
+        let async_waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
         let senders = IPCSenders {
-            eval_sender,
-            respond_sender,
+            sender,
+            async_waker: async_waker.clone(),
         };
-        let receivers = RwLock::new(IPCReceivers {
-            eval_receiver: Box::pin(eval_receiver),
-            respond_receiver,
-        });
-        let ipc = Self { proxy, receivers };
+        let ipc = Self {
+            proxy,
+            receiver,
+            async_waker,
+        };
         (ipc, senders)
     }
 
@@ -146,33 +118,86 @@ impl WryIPC {
     }
 }
 
-pub(crate) fn progress_js_with<O>(
+/// Wait for the Respond matching `eval_id`, processing interleaved callbacks.
+///
+/// All messages (Evaluates and Responds) share one channel. `recv_blocking()`
+/// blocks efficiently; it is the sole channel listener because `handle_callbacks`
+/// uses `try_recv` + a separate waker.
+pub(crate) fn wait_for_respond<O>(
+    eval_id: u32,
     with_respond: impl for<'a> Fn(DecodedData<'a>) -> O,
-) -> Option<O> {
-    let response = with_runtime(|runtime| runtime.ipc().receivers.write().recv_blocking())?;
+) -> O {
+    let receiver = with_runtime(|runtime| runtime.ipc().receiver.clone());
 
-    let decoder = response.decoded().expect("Failed to decode response");
-    match decoder {
-        DecodedVariant::Respond { data } => Some(with_respond(data)),
-        DecodedVariant::Evaluate { mut data } => {
-            handle_rust_callback(&mut data);
-            None
+    #[cfg(debug_assertions)]
+    let start = std::time::Instant::now();
+
+    loop {
+        // Get next message: check stash first (nested calls may have stashed ours),
+        // otherwise block on the channel.
+        let msg = with_runtime(|rt| {
+            rt.stashed_responds
+                .iter()
+                .position(|m| m.respond_evaluate_id() == Some(eval_id))
+                .map(|idx| rt.stashed_responds.swap_remove(idx))
+        })
+        .unwrap_or_else(|| {
+            receiver
+                .recv_blocking()
+                .expect("channel closed unexpectedly")
+        });
+
+        if msg.respond_evaluate_id() == Some(eval_id) {
+            return with_respond(msg.payload().expect("Failed to decode Respond"));
+        }
+
+        handle_ipc_message(msg);
+
+        #[cfg(debug_assertions)]
+        if start.elapsed() > Duration::from_secs(30) {
+            panic!("wait_for_respond timed out after 30s waiting for evaluate_id={eval_id}");
         }
     }
 }
 
 pub async fn handle_callbacks() {
-    let receiver = with_runtime(|runtime| runtime.ipc().receivers.read().eval_receiver.clone());
-
-    while let Ok(response) = receiver.recv().await {
-        let decoder = response.decoded().expect("Failed to decode response");
-        match decoder {
-            DecodedVariant::Respond { .. } => unreachable!(),
-            DecodedVariant::Evaluate { mut data } => {
-                handle_rust_callback(&mut data);
+    let receiver = with_runtime(|runtime| runtime.ipc().receiver.clone());
+    let waker_slot = with_runtime(|runtime| runtime.ipc().async_waker.clone());
+    loop {
+        // Drain all available messages (no waker on channel)
+        while let Ok(msg) = receiver.try_recv() {
+            handle_ipc_message(msg);
+        }
+        // Register waker and wait for start_send to wake us
+        let closed = std::future::poll_fn(|cx| {
+            if let Ok(mut guard) = waker_slot.lock() {
+                *guard = Some(cx.waker().clone());
             }
+            // Re-check after registering (avoid missed wake)
+            match receiver.try_recv() {
+                Ok(msg) => {
+                    handle_ipc_message(msg);
+                    core::task::Poll::Ready(false)
+                }
+                Err(async_channel::TryRecvError::Empty) => core::task::Poll::Pending,
+                Err(async_channel::TryRecvError::Closed) => core::task::Poll::Ready(true),
+            }
+        })
+        .await;
+        if closed {
+            break;
         }
     }
+}
+
+fn handle_ipc_message(msg: IPCMessage) {
+    // Check type first: Responds are stashed without full decode (avoids borrow conflict).
+    if msg.ty() == MessageType::Respond {
+        with_runtime(|rt| rt.stashed_responds.push(msg));
+        return;
+    }
+    let mut data = msg.payload().expect("Failed to decode Evaluate");
+    handle_rust_callback(&mut data);
 }
 
 /// Handle a Rust callback invocation from JavaScript.
@@ -181,25 +206,19 @@ fn handle_rust_callback(data: &mut DecodedData) {
     let response = match fn_id {
         // Call a registered Rust callback
         0 => {
-            let key = data.take_u32().unwrap();
+            let key = data.take_u32().expect("Failed to read callback key");
 
-            // Clone the Rc while briefly borrowing the batch state, then release the borrow.
-            // This allows nested callbacks to access the object store during our callback execution.
             let callback = with_runtime(|state| {
                 let rust_callback = state.get_object::<RustCallback>(key);
-
                 rust_callback.clone_rc()
             });
 
-            // Push a borrow frame before calling the callback - nested calls won't clear our borrowed refs
             with_runtime(|state| state.push_borrow_frame());
 
-            // Call through the cloned Rc (uniform Fn interface)
             let response = IPCMessage::new_respond(|encoder| {
                 (callback)(data, encoder);
             });
 
-            // Pop the borrow frame after the callback completes
             with_runtime(|state| state.pop_borrow_frame());
 
             response
@@ -207,30 +226,22 @@ fn handle_rust_callback(data: &mut DecodedData) {
         // Drop a native Rust object when JS GC'd the wrapper
         DROP_NATIVE_REF_FN_ID => {
             let key = ObjectHandle::decode(data).expect("Failed to decode object handle");
-
-            // Remove the object from the thread-local encoder
             remove_object::<RustCallback>(key);
-
-            // Send empty response
             IPCMessage::new_respond(|_| {})
         }
         // Call an exported Rust struct method
         CALL_EXPORT_FN_ID => {
-            // Read the export name
             let export_name: alloc::string::String =
                 crate::encode::BinaryDecode::decode(data).expect("Failed to decode export name");
 
-            // Find the export handler
             let export = crate::inventory::iter::<crate::JsExportSpec>()
                 .find(|e| e.name == export_name)
                 .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
 
-            // Call the handler
             let result = (export.handler)(data);
 
             assert!(data.is_empty(), "Extra data remaining after export call");
 
-            // Send response
             match result {
                 Ok(encoded) => IPCMessage::new_respond(|encoder| {
                     encoder.extend(&encoded);
@@ -240,7 +251,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
                 }
             }
         }
-        _ => todo!(),
+        _ => panic!("Unknown fn_id in handle_rust_callback: {fn_id}"),
     };
     with_runtime(|runtime| runtime.ipc().js_response(runtime.webview_id(), response));
 }
