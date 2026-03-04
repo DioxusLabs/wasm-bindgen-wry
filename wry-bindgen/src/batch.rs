@@ -83,7 +83,7 @@ impl Runtime {
             // Type IDs start at 0
             next_type_id: 0,
             // Evaluate IDs start at 1 (0 is reserved for non-routed Responds)
-            evaluate_id_counter: 1,
+            evaluate_id_counter: 0,
             // Object store starts empty
             objects: BTreeMap::new(),
             // Object handles start at 0
@@ -174,9 +174,6 @@ impl Runtime {
     pub(crate) fn next_evaluate_id(&mut self) -> u32 {
         let id = self.evaluate_id_counter;
         self.evaluate_id_counter = self.evaluate_id_counter.wrapping_add(1);
-        if self.evaluate_id_counter == 0 {
-            self.evaluate_id_counter = 1; // skip 0 (reserved for non-routed Responds)
-        }
         id
     }
 
