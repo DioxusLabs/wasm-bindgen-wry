@@ -3,18 +3,18 @@
 //! This module handles the connection between the Rust runtime and the
 //! JavaScript environment via winit's event loop.
 
+use std::cell::RefCell;
 use std::sync::Arc;
-use std::sync::OnceLock;
-use std::thread::Thread;
+use std::sync::Mutex;
+use std::task::Waker;
 use std::time::Duration;
 
 use async_channel::{Receiver, Sender};
-use spin::Mutex;
 
 use crate::BinaryDecode;
 use crate::batch::with_runtime;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
-use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
+use crate::ipc::{DecodedData, DecodedVariant, IPCMessage, MessageType};
 use crate::object_store::ObjectHandle;
 use crate::object_store::remove_object;
 
@@ -64,44 +64,26 @@ pub(crate) enum AppEventVariant {
     WebviewLoaded,
 }
 
-/// Map of evaluate_id → oneshot sender for Respond routing.
-/// Each `flush_and_then` call inserts a sender keyed by evaluate_id.
-/// When a Respond arrives, start_send reads the evaluate_id and routes it.
-pub(crate) type RespondMap =
-    Arc<Mutex<alloc::collections::BTreeMap<u32, futures_channel::oneshot::Sender<IPCMessage>>>>;
-
 #[derive(Clone)]
 pub(crate) struct IPCSenders {
-    eval_sender: Sender<IPCMessage>,
-    respond_map: RespondMap,
-    app_thread: Arc<OnceLock<Thread>>,
+    sender: Sender<IPCMessage>,
+    /// Waker to wake the async `handle_callbacks` task when a message arrives.
+    /// `handle_callbacks` uses `try_recv` (no waker on the channel) to avoid
+    /// conflicting with `recv_blocking` in `wait_for_respond`.
+    async_waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl IPCSenders {
     pub(crate) fn start_send(&self, msg: IPCMessage) {
-        match msg.ty().unwrap() {
-            crate::ipc::MessageType::Evaluate => {
-                self.eval_sender
-                    .try_send(msg)
-                    .expect("Failed to send evaluate message");
+        self.sender
+            .try_send(msg)
+            .expect("Failed to send message");
+        // Wake either the async handle_callbacks task or the blocking
+        // wait_for_respond call — whichever is currently waiting.
+        if let Ok(guard) = self.async_waker.lock() {
+            if let Some(waker) = guard.as_ref() {
+                waker.wake_by_ref();
             }
-            crate::ipc::MessageType::Respond => {
-                let eval_id = msg
-                    .respond_evaluate_id()
-                    .expect("Failed to read evaluate_id from Respond");
-                let tx = self
-                    .respond_map
-                    .lock()
-                    .remove(&eval_id)
-                    .unwrap_or_else(|| {
-                        panic!("Respond with evaluate_id={eval_id} but no one is waiting for it")
-                    });
-                tx.send(msg).ok();
-            }
-        }
-        // Wake the app thread if it's parked in wait_for_respond
-        if let Some(thread) = self.app_thread.get() {
-            thread.unpark();
         }
     }
 }
@@ -112,28 +94,25 @@ impl IPCSenders {
 /// WebView and manages queued Rust calls.
 pub(crate) struct WryIPC {
     pub(crate) proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
-    eval_receiver: Receiver<IPCMessage>,
-    respond_map: RespondMap,
-    app_thread: Arc<OnceLock<Thread>>,
+    receiver: Receiver<IPCMessage>,
+    async_waker: Arc<Mutex<Option<Waker>>>,
 }
 
 impl WryIPC {
     /// Create a new runtime with the given event loop proxy.
-    pub(crate) fn new(proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>) -> (Self, IPCSenders) {
-        let (eval_sender, eval_receiver) = async_channel::unbounded();
-        let respond_map: RespondMap =
-            Arc::new(Mutex::new(alloc::collections::BTreeMap::new()));
-        let app_thread: Arc<OnceLock<Thread>> = Arc::new(OnceLock::new());
+    pub(crate) fn new(
+        proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
+    ) -> (Self, IPCSenders) {
+        let (sender, receiver) = async_channel::unbounded();
+        let async_waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
         let senders = IPCSenders {
-            eval_sender,
-            respond_map: respond_map.clone(),
-            app_thread: app_thread.clone(),
+            sender,
+            async_waker: async_waker.clone(),
         };
         let ipc = Self {
             proxy,
-            eval_receiver,
-            respond_map,
-            app_thread,
+            receiver,
+            async_waker,
         };
         (ipc, senders)
     }
@@ -144,121 +123,164 @@ impl WryIPC {
     }
 }
 
-/// Register a oneshot channel in the respond_map for the given evaluate_id.
-///
-/// MUST be called BEFORE sending the Evaluate via proxy, to avoid a race
-/// where the Respond arrives before the map entry exists.
-pub(crate) fn register_respond_receiver(
-    eval_id: u32,
-) -> futures_channel::oneshot::Receiver<IPCMessage> {
-    let (tx, rx) = futures_channel::oneshot::channel::<IPCMessage>();
-    with_runtime(|runtime| {
-        runtime.ipc().respond_map.lock().insert(eval_id, tx);
-    });
-    rx
+// Thread-local stash for Responds that arrived out of order.
+// When a nested `wait_for_respond` receives a Respond for an outer call,
+// it stashes it here. The outer call checks the stash before blocking.
+thread_local! {
+    static STASHED_RESPONDS: RefCell<alloc::vec::Vec<IPCMessage>> = const { RefCell::new(alloc::vec::Vec::new()) };
 }
 
-/// Wait for the Respond to our most recent Evaluate, processing any
-/// interleaved callback Evaluates along the way.
+/// Wait for the Respond to our Evaluate (identified by `eval_id`), processing
+/// any interleaved callback Evaluates along the way.
 ///
-/// Uses a per-call one-shot channel so nested calls each get their own Respond.
-/// Uses only `try_recv` on the eval channel (no async waker registration) to avoid
-/// waker conflicts with `handle_callbacks`. The sender calls `thread::unpark` to
-/// wake us from `park_timeout`.
-///
-/// The caller MUST have already called `register_respond_receiver` and inserted
-/// into the respond_map BEFORE sending the Evaluate via proxy.
+/// Both Evaluates (callbacks from JS) and Responds (results of our flushes)
+/// arrive on the same channel. We use `recv_blocking()` to block efficiently
+/// without polling or parking. This is safe because `handle_callbacks` never
+/// calls `recv().await` on the channel — it uses `try_recv` + a separate waker.
 pub(crate) fn wait_for_respond<O>(
-    mut rx: futures_channel::oneshot::Receiver<IPCMessage>,
+    eval_id: u32,
     with_respond: impl for<'a> Fn(DecodedData<'a>) -> O,
 ) -> O {
-    // Register the app thread so the sender can unpark us
-    with_runtime(|runtime| {
-        runtime
-            .ipc()
-            .app_thread
-            .get_or_init(|| std::thread::current());
-    });
+    let receiver = with_runtime(|runtime| runtime.ipc().receiver.clone());
 
-    let eval_receiver = with_runtime(|runtime| runtime.ipc().eval_receiver.clone());
+    #[cfg(debug_assertions)]
+    let start = std::time::Instant::now();
 
     loop {
-        // 1. Check if Respond has arrived (non-blocking)
-        match rx.try_recv() {
-            Ok(Some(msg)) => {
-                let mut data = match msg.decoded().expect("Failed to decode response") {
-                    DecodedVariant::Respond { data } => data,
-                    _ => unreachable!("Expected Respond from oneshot"),
-                };
-                // Skip the evaluate_id field (already used for routing)
-                let _ = data.take_u32();
-                return with_respond(data);
+        // 1. Check the stash for our Respond (may have been stashed by a nested call)
+        let stashed = STASHED_RESPONDS.with(|s| {
+            let mut stash = s.borrow_mut();
+            if let Some(idx) = stash.iter().position(|m| {
+                m.respond_evaluate_id()
+                    .map(|id| id == eval_id)
+                    .unwrap_or(false)
+            }) {
+                Some(stash.swap_remove(idx))
+            } else {
+                None
             }
-            Ok(None) => {} // Not ready yet
-            Err(_) => panic!("Respond oneshot cancelled"),
+        });
+        if let Some(msg) = stashed {
+            let data = match msg.decoded().expect("Failed to decode stashed Respond") {
+                DecodedVariant::Respond { mut data } => {
+                    let _ = data.take_u32(); // skip evaluate_id (already matched)
+                    data
+                }
+                _ => unreachable!("Stashed message was not a Respond"),
+            };
+            return with_respond(data);
         }
 
-        // 2. Drain all available Evaluate messages (non-blocking, no waker registration)
-        let mut processed_any = false;
-        while let Ok(msg) = eval_receiver.try_recv() {
-            let decoder = msg.decoded().expect("Failed to decode eval message");
-            match decoder {
-                DecodedVariant::Evaluate { mut data } => {
-                    handle_rust_callback(&mut data);
-                    processed_any = true;
-                }
-                DecodedVariant::Respond { .. } => {
-                    unreachable!("Respond should go through oneshot, not eval channel")
-                }
+        // 2. Drain all available messages without blocking first
+        let mut found_ours = false;
+        while let Ok(msg) = receiver.try_recv() {
+            if process_or_stash(msg, eval_id) {
+                found_ours = true;
+                break;
             }
         }
-
-        // 3. If we processed callbacks, loop immediately to re-check Respond
-        if processed_any {
+        if found_ours {
+            // Our Respond was stashed by process_or_stash — loop to pick it up from stash
             continue;
         }
 
-        // 4. Nothing available - park briefly. The sender will unpark us
-        //    immediately when a message arrives, so this timeout is just a safety net.
-        std::thread::park_timeout(Duration::from_millis(1));
+        // 3. Block until a message arrives on the channel.
+        //    Safe because handle_callbacks only uses try_recv (no waker on channel).
+        let msg = receiver
+            .recv_blocking()
+            .expect("channel closed unexpectedly");
+
+        if process_or_stash(msg, eval_id) {
+            // Our Respond was stashed — loop to pick it up
+            continue;
+        }
+
+        #[cfg(debug_assertions)]
+        if start.elapsed() > Duration::from_secs(30) {
+            panic!("wait_for_respond timed out after 30s waiting for evaluate_id={eval_id}");
+        }
+    }
+}
+
+/// Process a message from the channel. Returns true if it was a Respond for `our_eval_id`
+/// (stashed for pickup). Evaluates are processed inline.
+fn process_or_stash(msg: IPCMessage, our_eval_id: u32) -> bool {
+    let ty = msg.ty().expect("Failed to read message type");
+    match ty {
+        MessageType::Evaluate => {
+            let mut data = match msg.decoded().expect("Failed to decode Evaluate") {
+                DecodedVariant::Evaluate { data } => data,
+                _ => unreachable!(),
+            };
+            handle_rust_callback(&mut data);
+            false
+        }
+        MessageType::Respond => {
+            // Stash it (including our own — the main loop will pick it up)
+            STASHED_RESPONDS.with(|s| s.borrow_mut().push(msg));
+            // Return true if this was for us
+            let last = STASHED_RESPONDS.with(|s| {
+                let stash = s.borrow();
+                stash
+                    .last()
+                    .unwrap()
+                    .respond_evaluate_id()
+                    .map(|id| id == our_eval_id)
+                    .unwrap_or(false)
+            });
+            last
+        }
     }
 }
 
 pub async fn handle_callbacks() {
-    // Use a short sleep between polls to avoid busy-waiting while still
-    // allowing wait_for_respond to have exclusive access to eval_receiver's wakers
-    // during synchronous blocking.
-    let receiver = with_runtime(|runtime| runtime.ipc().eval_receiver.clone());
+    let receiver = with_runtime(|runtime| runtime.ipc().receiver.clone());
+    let waker_slot = with_runtime(|runtime| runtime.ipc().async_waker.clone());
     loop {
-        // Try non-blocking first
-        match receiver.try_recv() {
-            Ok(response) => {
-                let decoder = response.decoded().expect("Failed to decode response");
-                match decoder {
-                    DecodedVariant::Respond { .. } => unreachable!(),
-                    DecodedVariant::Evaluate { mut data } => {
-                        handle_rust_callback(&mut data);
-                    }
-                }
-                continue; // drain all available messages before sleeping
+        // Drain all available messages without registering a waker on the channel
+        while let Ok(msg) = receiver.try_recv() {
+            handle_ipc_message(msg);
+        }
+        // No messages available — register our waker and wait.
+        // start_send() will call waker.wake_by_ref() when a message arrives.
+        let closed = std::future::poll_fn(|cx| {
+            // Register the waker so start_send can wake us
+            if let Ok(mut guard) = waker_slot.lock() {
+                *guard = Some(cx.waker().clone());
             }
-            Err(async_channel::TryRecvError::Empty) => {
-                // No messages available. Yield and wait for a notification.
-                // We use recv() here, which registers a waker. This is safe
-                // because wait_for_respond is NOT running during async execution
-                // (it blocks the thread, preventing this task from running).
-                let Ok(response) = receiver.recv().await else {
-                    break;
-                };
-                let decoder = response.decoded().expect("Failed to decode response");
-                match decoder {
-                    DecodedVariant::Respond { .. } => unreachable!(),
-                    DecodedVariant::Evaluate { mut data } => {
-                        handle_rust_callback(&mut data);
-                    }
+            // Check once more after registering (avoid race)
+            match receiver.try_recv() {
+                Ok(msg) => {
+                    handle_ipc_message(msg);
+                    core::task::Poll::Ready(false)
                 }
+                Err(async_channel::TryRecvError::Empty) => core::task::Poll::Pending,
+                Err(async_channel::TryRecvError::Closed) => core::task::Poll::Ready(true),
             }
-            Err(async_channel::TryRecvError::Closed) => break,
+        })
+        .await;
+        if closed {
+            break;
+        }
+    }
+}
+
+/// Handle a single IPC message from the channel.
+/// During async execution, only Evaluates should arrive. Responds are stashed
+/// as a safety measure (they'll be picked up by the next wait_for_respond).
+fn handle_ipc_message(msg: IPCMessage) {
+    let ty = msg.ty().expect("Failed to read message type");
+    match ty {
+        MessageType::Respond => {
+            // Shouldn't happen during async execution, but stash it safely
+            STASHED_RESPONDS.with(|s| s.borrow_mut().push(msg));
+        }
+        MessageType::Evaluate => {
+            let mut data = match msg.decoded().expect("Failed to decode Evaluate") {
+                DecodedVariant::Evaluate { data } => data,
+                _ => unreachable!(),
+            };
+            handle_rust_callback(&mut data);
         }
     }
 }

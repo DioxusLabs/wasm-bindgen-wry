@@ -468,17 +468,13 @@ pub(crate) fn flush_and_then<R>(then: impl for<'a> Fn(DecodedData<'a>) -> R) -> 
 
     let (batch_msg, eval_id) = with_runtime(|state| state.take_message());
 
-    // Register the respond receiver BEFORE sending the proxy to avoid a race
-    // where the Respond arrives before the map entry exists.
-    let rx = crate::runtime::register_respond_receiver(eval_id);
-
     // Send the Evaluate via proxy
     with_runtime(|runtime| {
         (runtime.ipc().proxy)(WryBindgenEvent::ipc(runtime.webview_id(), batch_msg))
     });
 
-    // Wait for the response
-    crate::runtime::wait_for_respond(rx, then)
+    // Block until the Respond with matching eval_id arrives
+    crate::runtime::wait_for_respond(eval_id, then)
 }
 
 /// Execute operations inside a batch. Operations that return opaque types (like JsValue)
