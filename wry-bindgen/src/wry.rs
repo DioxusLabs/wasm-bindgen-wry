@@ -315,9 +315,7 @@ impl ProtocolHandler {
                             webview_state.pending_rust_evaluates =
                                 webview_state.pending_rust_evaluates.saturating_sub(1);
                             webview_state.respond_to_request(queued);
-                        } else if let Some(queued) =
-                            webview_state.pending_evaluates.pop_front()
-                        {
+                        } else if let Some(queued) = webview_state.pending_evaluates.pop_front() {
                             webview_state.respond_to_request(queued);
                         }
                     } else {

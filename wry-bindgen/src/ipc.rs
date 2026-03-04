@@ -193,7 +193,10 @@ impl IPCMessage {
 #[allow(dead_code)]
 pub(crate) enum DecodedVariant<'a> {
     /// Response from JS/Rust (evaluate_id already consumed from the data stream)
-    Respond { evaluate_id: u32, data: DecodedData<'a> },
+    Respond {
+        evaluate_id: u32,
+        data: DecodedData<'a>,
+    },
     /// Evaluation request
     Evaluate { data: DecodedData<'a> },
 }

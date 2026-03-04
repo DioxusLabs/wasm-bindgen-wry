@@ -74,9 +74,7 @@ pub(crate) struct IPCSenders {
 
 impl IPCSenders {
     pub(crate) fn start_send(&self, msg: IPCMessage) {
-        self.sender
-            .try_send(msg)
-            .expect("Failed to send message");
+        self.sender.try_send(msg).expect("Failed to send message");
         if let Ok(guard) = self.async_waker.lock()
             && let Some(waker) = guard.as_ref()
         {
@@ -99,9 +97,7 @@ pub(crate) struct WryIPC {
 
 impl WryIPC {
     /// Create a new runtime with the given event loop proxy.
-    pub(crate) fn new(
-        proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
-    ) -> (Self, IPCSenders) {
+    pub(crate) fn new(proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>) -> (Self, IPCSenders) {
         let (sender, receiver) = async_channel::unbounded();
         let async_waker: Arc<Mutex<Option<Waker>>> = Arc::new(Mutex::new(None));
         let senders = IPCSenders {
@@ -145,7 +141,11 @@ pub(crate) fn wait_for_respond<O>(
                 .position(|m| m.respond_evaluate_id() == Ok(eval_id))
                 .map(|idx| rt.stashed_responds.swap_remove(idx))
         })
-        .unwrap_or_else(|| receiver.recv_blocking().expect("channel closed unexpectedly"));
+        .unwrap_or_else(|| {
+            receiver
+                .recv_blocking()
+                .expect("channel closed unexpectedly")
+        });
 
         if msg.respond_evaluate_id() == Ok(eval_id) {
             let DecodedVariant::Respond { data, .. } =
@@ -201,8 +201,7 @@ fn handle_ipc_message(msg: IPCMessage) {
         with_runtime(|rt| rt.stashed_responds.push(msg));
         return;
     }
-    let DecodedVariant::Evaluate { mut data } =
-        msg.decoded().expect("Failed to decode Evaluate")
+    let DecodedVariant::Evaluate { mut data } = msg.decoded().expect("Failed to decode Evaluate")
     else {
         unreachable!()
     };
