@@ -137,17 +137,12 @@ pub(crate) fn wait_for_respond<O>(
     let start = std::time::Instant::now();
 
     loop {
-        // 1. Check stash for our Respond (a nested call may have stashed it)
+        // Check stash first (a nested wait_for_respond may have stashed our Respond)
         let stashed = with_runtime(|rt| {
-            if let Some(idx) = rt.stashed_responds.iter().position(|m| {
-                m.respond_evaluate_id()
-                    .map(|id| id == eval_id)
-                    .unwrap_or(false)
-            }) {
-                Some(rt.stashed_responds.swap_remove(idx))
-            } else {
-                None
-            }
+            rt.stashed_responds
+                .iter()
+                .position(|m| m.respond_evaluate_id() == Ok(eval_id))
+                .map(|idx| rt.stashed_responds.swap_remove(idx))
         });
         if let Some(msg) = stashed {
             let data = match msg.decoded().expect("Failed to decode stashed Respond") {
@@ -161,61 +156,16 @@ pub(crate) fn wait_for_respond<O>(
             return with_respond(data);
         }
 
-        // 2. Drain available messages without blocking
-        loop {
-            match receiver.try_recv() {
-                Ok(msg) => {
-                    if dispatch_message(msg, eval_id) {
-                        break; // our Respond was stashed — go pick it up
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-
-        // Re-check stash (dispatch_message may have stashed our Respond)
-        let found = with_runtime(|rt| {
-            rt.stashed_responds
-                .iter()
-                .any(|m| m.respond_evaluate_id().map(|id| id == eval_id).unwrap_or(false))
-        });
-        if found {
-            continue;
-        }
-
-        // 3. Block until a message arrives
+        // Block until the next message arrives
         let msg = receiver
             .recv_blocking()
             .expect("channel closed unexpectedly");
-        dispatch_message(msg, eval_id);
+
+        handle_ipc_message(msg);
 
         #[cfg(debug_assertions)]
         if start.elapsed() > Duration::from_secs(30) {
             panic!("wait_for_respond timed out after 30s waiting for evaluate_id={eval_id}");
-        }
-    }
-}
-
-/// Process one message: Evaluates are handled inline, Responds are stashed.
-/// Returns true if the message was a Respond for `our_eval_id`.
-fn dispatch_message(msg: IPCMessage, our_eval_id: u32) -> bool {
-    let ty = msg.ty().expect("Failed to read message type");
-    match ty {
-        MessageType::Evaluate => {
-            let mut data = match msg.decoded().expect("Failed to decode Evaluate") {
-                DecodedVariant::Evaluate { data } => data,
-                _ => unreachable!(),
-            };
-            handle_rust_callback(&mut data);
-            false
-        }
-        MessageType::Respond => {
-            let is_ours = msg
-                .respond_evaluate_id()
-                .map(|id| id == our_eval_id)
-                .unwrap_or(false);
-            with_runtime(|rt| rt.stashed_responds.push(msg));
-            is_ours
         }
     }
 }
