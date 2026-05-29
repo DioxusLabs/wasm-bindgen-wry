@@ -160,24 +160,3 @@ fn wrap_body_with_try_catch(body: &str) -> String {
         "{{{{ try {{{{ return {{{{ ok: {body} }}}}; }}}} catch(e) {{{{ return {{{{ err: e }}}}; }}}} }}}}"
     )
 }
-
-fn params_with_promise_callbacks(params: &str) -> String {
-    if params == "()" {
-        "(__wryResolve, __wryReject)".to_string()
-    } else {
-        let params = params
-            .strip_suffix(')')
-            .expect("generated JS params should be parenthesized");
-        format!("{params}, __wryResolve, __wryReject)")
-    }
-}
-
-pub(super) fn async_promise_attach_js_code(js_code: &str) -> String {
-    let Some((params, body)) = js_code.split_once(" => ") else {
-        panic!("generated async JS code should be an arrow function");
-    };
-    let params = params_with_promise_callbacks(params);
-    format!(
-        "{params} => {{{{ try {{{{ Promise.resolve({body}).then(__wryResolve, __wryReject); }}}} catch (e) {{{{ __wryReject(e); }}}} }}}}"
-    )
-}

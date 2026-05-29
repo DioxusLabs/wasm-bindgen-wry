@@ -421,8 +421,7 @@ pub(super) fn generate_export_method(
                 }
             };
 
-            if method.ret.is_some() {
-                let ret_ty = method.ret.as_ref().unwrap();
+            if let Some(ret_ty) = method.ret.as_ref() {
                 quote_spanned! {span=>
                     let handle = <#krate::__rt::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #decode_args
