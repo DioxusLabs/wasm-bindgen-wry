@@ -42,6 +42,10 @@ const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
         "wasm-bindgen-futures",
     ),
 ];
+const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x"];
+const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x"];
+const WASM_BINDGEN_FUTURES_PACKAGE_NAMES: &[&str] =
+    &["wasm-bindgen-futures", "wasm-bindgen-futures-x"];
 const PINNED_UPSTREAM_DEPENDENCY_MANIFESTS: &[&str] = &["wry-launch/Cargo.toml"];
 
 #[derive(Debug)]
@@ -94,7 +98,8 @@ fn run() -> Result<()> {
 
     let base_version = read_package_version(&upstream_manifest, Some(UPSTREAM_PACKAGE_NAMES))?;
     let version = target_version(&base_version, args.suffix.as_deref())?;
-    let patched_upstream_versions = read_patched_upstream_versions(&repo_root)?;
+    let patched_upstream_versions =
+        read_patched_upstream_versions(&repo_root, args.suffix.as_deref())?;
     let mut changes = Vec::new();
 
     for (relative_path, crate_name) in LOCAL_MANIFESTS {
@@ -106,11 +111,28 @@ fn run() -> Result<()> {
         }
     }
 
+    for (relative_path, crate_name, version) in &patched_upstream_versions {
+        let path = repo_root.join(relative_path);
+        let current = fs::read_to_string(&path)?;
+        let updated = update_package_version_text_with_names(
+            &path,
+            &current,
+            patched_upstream_package_names(crate_name),
+            version,
+        )?;
+        if updated != current {
+            changes.push((path, updated));
+        }
+    }
+
     for relative_path in PINNED_UPSTREAM_DEPENDENCY_MANIFESTS {
         let path = repo_root.join(relative_path);
         let current = fs::read_to_string(&path)?;
-        let updated =
-            update_dependency_versions_text(&current, patched_upstream_versions.as_slice());
+        let dependency_versions = patched_upstream_versions
+            .iter()
+            .map(|(_, crate_name, version)| (*crate_name, version.clone()))
+            .collect::<Vec<_>>();
+        let updated = update_dependency_versions_text(&current, dependency_versions.as_slice());
         if updated != current {
             changes.push((path, updated));
         }
@@ -125,7 +147,7 @@ fn run() -> Result<()> {
 
     if args.check {
         if changes.is_empty() {
-            println!("local bindgen crate versions already match {version}");
+            println!("bindgen crate versions already match requested versions");
             return Ok(());
         }
 
@@ -137,7 +159,7 @@ fn run() -> Result<()> {
     }
 
     if args.dry_run {
-        println!("derived version: {version}");
+        println!("derived wasm-bindgen version: {version}");
         if changes.is_empty() {
             println!("no changes needed");
         } else {
@@ -154,9 +176,9 @@ fn run() -> Result<()> {
     }
 
     if changes.is_empty() {
-        println!("local bindgen crate versions already match {version}");
+        println!("bindgen crate versions already match requested versions");
     } else {
-        println!("updated local bindgen crate version to {version}:");
+        println!("updated bindgen crate versions:");
         for (path, _) in &changes {
             println!("  {}", relative_to(&repo_root, path));
         }
@@ -165,14 +187,28 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn read_patched_upstream_versions(repo_root: &Path) -> Result<Vec<(&'static str, String)>> {
+fn read_patched_upstream_versions(
+    repo_root: &Path,
+    suffix: Option<&str>,
+) -> Result<Vec<(&'static str, &'static str, String)>> {
     let mut versions = Vec::new();
     for (relative_path, crate_name) in PATCHED_UPSTREAM_MANIFESTS {
         let path = repo_root.join(relative_path);
-        let version = read_package_version(&path, Some(&[*crate_name]))?;
-        versions.push((*crate_name, version));
+        let current_version =
+            read_package_version(&path, Some(patched_upstream_package_names(crate_name)))?;
+        let version = target_package_version(&current_version, suffix)?;
+        versions.push((*relative_path, *crate_name, version));
     }
     Ok(versions)
+}
+
+fn patched_upstream_package_names(crate_name: &str) -> &'static [&'static str] {
+    match crate_name {
+        "js-sys" => JS_SYS_PACKAGE_NAMES,
+        "web-sys" => WEB_SYS_PACKAGE_NAMES,
+        "wasm-bindgen-futures" => WASM_BINDGEN_FUTURES_PACKAGE_NAMES,
+        _ => unreachable!("unknown patched upstream crate `{crate_name}`"),
+    }
 }
 
 fn parse_args() -> Result<Args> {
@@ -301,6 +337,13 @@ fn target_version(base_version: &str, suffix: Option<&str>) -> Result<String> {
     Ok(format!("{base_version}-{suffix}"))
 }
 
+fn target_package_version(current_version: &str, suffix: Option<&str>) -> Result<String> {
+    let base_version = current_version
+        .split_once('-')
+        .map_or(current_version, |(base, _)| base);
+    target_version(base_version, suffix)
+}
+
 fn is_stable_semver(version: &str) -> bool {
     let parts: Vec<_> = version.split('.').collect();
     parts.len() == 3
@@ -355,43 +398,32 @@ fn read_package_version(path: &Path, expected_names: Option<&[&str]>) -> Result<
         })
 }
 
+#[cfg(test)]
+fn update_package_version_text(
+    path: &Path,
+    text: &str,
+    crate_name: &str,
+    target_version: &str,
+) -> Result<String> {
+    update_package_version_text_with_names(path, text, &[crate_name], target_version)
+}
+
+fn update_package_version_text_with_names(
+    path: &Path,
+    text: &str,
+    expected_names: &[&str],
+    target_version: &str,
+) -> Result<String> {
+    Ok(update_package_version_lines(path, text, expected_names, target_version)?.into_string())
+}
+
 fn update_manifest_text(
     path: &Path,
     text: &str,
     crate_name: &str,
     target_version: &str,
 ) -> Result<String> {
-    let mut lines = Lines::from(text);
-    let (start, end) = lines
-        .find_section_bounds("package")
-        .ok_or_else(|| Error::new(format!("{} is missing a [package] section", path.display())))?;
-    let package_text = lines.range_text(start, end);
-    let name = read_field(&package_text, "name").ok_or_else(|| {
-        Error::new(format!(
-            "{} is missing package field `name`",
-            path.display()
-        ))
-    })?;
-    if name != crate_name {
-        return Err(Error::new(format!(
-            "{} package name is `{name}`, expected `{crate_name}`",
-            path.display()
-        )));
-    }
-
-    let mut updated_package_version = false;
-    for index in start..end {
-        if lines.replace_field(index, "version", target_version) {
-            updated_package_version = true;
-            break;
-        }
-    }
-    if !updated_package_version {
-        return Err(Error::new(format!(
-            "{} is missing package field `version`",
-            path.display()
-        )));
-    }
+    let mut lines = update_package_version_lines(path, text, &[crate_name], target_version)?;
 
     for index in 0..lines.len() {
         let line = lines.body(index).to_string();
@@ -415,6 +447,48 @@ fn update_manifest_text(
     }
 
     Ok(lines.into_string())
+}
+
+fn update_package_version_lines(
+    path: &Path,
+    text: &str,
+    expected_names: &[&str],
+    target_version: &str,
+) -> Result<Lines> {
+    let mut lines = Lines::from(text);
+    let (start, end) = lines
+        .find_section_bounds("package")
+        .ok_or_else(|| Error::new(format!("{} is missing a [package] section", path.display())))?;
+    let package_text = lines.range_text(start, end);
+    let name = read_field(&package_text, "name").ok_or_else(|| {
+        Error::new(format!(
+            "{} is missing package field `name`",
+            path.display()
+        ))
+    })?;
+    if !expected_names.contains(&name) {
+        return Err(Error::new(format!(
+            "{} package name is `{name}`, expected one of: {}",
+            path.display(),
+            expected_names.join(", ")
+        )));
+    }
+
+    let mut updated_package_version = false;
+    for index in start..end {
+        if lines.replace_field(index, "version", target_version) {
+            updated_package_version = true;
+            break;
+        }
+    }
+    if !updated_package_version {
+        return Err(Error::new(format!(
+            "{} is missing package field `version`",
+            path.display()
+        )));
+    }
+
+    Ok(lines)
 }
 
 fn update_dependency_versions_text(text: &str, dependency_versions: &[(&str, String)]) -> String {
@@ -814,6 +888,18 @@ mod tests {
     }
 
     #[test]
+    fn target_package_version_replaces_existing_suffix() {
+        assert_eq!(
+            target_package_version("0.3.99-alpha.1", Some("alpha.2")).unwrap(),
+            "0.3.99-alpha.2"
+        );
+        assert_eq!(
+            target_package_version("0.3.99-alpha.1", None).unwrap(),
+            "0.3.99"
+        );
+    }
+
+    #[test]
     fn manifest_update_changes_package_and_path_dependency_versions() {
         let input = r#"[package]
 name = "wry-bindgen"
@@ -829,6 +915,42 @@ serde = "1"
         assert!(output.contains("version = \"0.2.122\""));
         assert!(output.contains("version = \"=0.2.122\""));
         assert!(output.contains("serde = \"1\""));
+    }
+
+    #[test]
+    fn patched_upstream_manifest_update_changes_package_version() {
+        let input = r#"[package]
+name = "js-sys"
+version = "0.3.99"
+
+[dependencies]
+wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+"#;
+        let output =
+            update_package_version_text(Path::new("Cargo.toml"), input, "js-sys", "0.3.99-alpha.2")
+                .unwrap();
+
+        assert!(output.contains("version = \"0.3.99-alpha.2\""));
+        assert!(output.contains("package = \"wasm-bindgen\""));
+        assert!(!output.contains("version = \"=0.3.99-alpha.2\""));
+    }
+
+    #[test]
+    fn patched_upstream_manifest_update_accepts_renamed_package() {
+        let input = r#"[package]
+name = "web-sys-x"
+version = "0.3.99"
+"#;
+        let output = update_package_version_text_with_names(
+            Path::new("Cargo.toml"),
+            input,
+            WEB_SYS_PACKAGE_NAMES,
+            "0.3.99-alpha.2",
+        )
+        .unwrap();
+
+        assert!(output.contains("name = \"web-sys-x\""));
+        assert!(output.contains("version = \"0.3.99-alpha.2\""));
     }
 
     #[test]
@@ -883,6 +1005,22 @@ serde = "1"
         assert!(output.contains("web-sys = { version = \"=0.3.99\""));
         assert!(output.contains("wasm-bindgen-futures = \"=0.4.72\""));
         assert!(output.contains("serde = \"1\""));
+    }
+
+    #[test]
+    fn dependency_update_preserves_patched_upstream_suffixes() {
+        let input = r#"[dev-dependencies]
+web-sys = { version = "=0.3.99", features = ["Window"] }
+wasm-bindgen-futures = "=0.4.72"
+"#;
+        let versions = vec![
+            ("web-sys", "0.3.99-alpha.2".to_string()),
+            ("wasm-bindgen-futures", "0.4.72-alpha.2".to_string()),
+        ];
+        let output = update_dependency_versions_text(input, &versions);
+
+        assert!(output.contains("web-sys = { version = \"=0.3.99-alpha.2\""));
+        assert!(output.contains("wasm-bindgen-futures = \"=0.4.72-alpha.2\""));
     }
 
     #[test]

@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
 const MARKER_FILE: &str = ".publish-wasm-bindgen-x-staging";
+const WEB_SYS_MANIFEST: &str = "wasm-bindgen/crates/web-sys/Cargo.toml";
+const PUBLISHED_WEB_SYS_PACKAGE: &str = "web-sys-x";
+const CRATES_IO_FEATURE_LIMIT: usize = 300;
 
 const COPY_ENTRIES: &[&str] = &[
     "Cargo.toml",
@@ -464,7 +467,218 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
 
     rewrite_root_workspace_members(&staging_dir.join("Cargo.toml"))?;
     rewrite_dependency_packages(&staging_dir.join("Cargo.toml"), &versions, false)?;
+    trim_web_sys_features_to_published(staging_dir)?;
     Ok(())
+}
+
+fn trim_web_sys_features_to_published(staging_dir: &Path) -> Result<()> {
+    let manifest = staging_dir.join(WEB_SYS_MANIFEST);
+    let published_features = published_crate_features(PUBLISHED_WEB_SYS_PACKAGE)?;
+    let text = fs::read_to_string(&manifest)?;
+    let features = parse_features(&text, &manifest)?;
+    let local_names: BTreeSet<_> = features.iter().map(|feature| feature.name.as_str()).collect();
+
+    let missing: Vec<_> = published_features
+        .iter()
+        .filter(|feature| !local_names.contains(feature.as_str()))
+        .cloned()
+        .collect();
+    if !missing.is_empty() {
+        return Err(Error::new(format!(
+            "{} is missing published {} feature(s): {}",
+            manifest.display(),
+            PUBLISHED_WEB_SYS_PACKAGE,
+            missing.join(", ")
+        )));
+    }
+
+    let retained = retained_web_sys_features(&features, &published_features);
+    if retained.len() > CRATES_IO_FEATURE_LIMIT {
+        return Err(Error::new(format!(
+            "{} would publish {} features after trimming to {}; crates.io allows at most {}",
+            manifest.display(),
+            retained.len(),
+            PUBLISHED_WEB_SYS_PACKAGE,
+            CRATES_IO_FEATURE_LIMIT
+        )));
+    }
+
+    let mut lines = Lines::from(&text);
+    let (start, end) = lines.find_section_bounds("features").ok_or_else(|| {
+        Error::new(format!(
+            "{} is missing a [features] section",
+            manifest.display()
+        ))
+    })?;
+
+    let kept: Vec<_> = features
+        .iter()
+        .filter(|feature| retained.contains(&feature.name))
+        .map(|feature| Line {
+            body: feature.line.clone(),
+            ending: "\n",
+        })
+        .collect();
+    lines.lines.splice(start..end, kept);
+
+    for index in 0..lines.len() {
+        if lines
+            .body(index)
+            .contains("unexpected_cfgs = { level = \"warn\"")
+        {
+            lines.set_body(
+                index,
+                "unexpected_cfgs = { level = \"allow\", check-cfg = ['cfg(web_sys_unstable_apis)'] }"
+                    .to_string(),
+            );
+        }
+    }
+
+    fs::write(manifest, lines.into_string())?;
+    Ok(())
+}
+
+fn published_crate_features(package: &str) -> Result<BTreeSet<String>> {
+    let output = Command::new("cargo")
+        .args(["info", package, "--verbose", "--color", "never"])
+        .output()
+        .map_err(|error| Error::new(format!("failed to run `cargo info {package}`: {error}")))?;
+    if !output.status.success() {
+        return Err(Error::new(format!(
+            "`cargo info {package} --verbose` failed with status {}:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    let stdout = String::from_utf8(output.stdout)
+        .map_err(|error| Error::new(format!("`cargo info {package}` emitted invalid UTF-8: {error}")))?;
+    parse_cargo_info_features(&stdout, package)
+}
+
+fn parse_cargo_info_features(text: &str, package: &str) -> Result<BTreeSet<String>> {
+    let mut in_features = false;
+    let mut features = BTreeSet::new();
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed == "features:" {
+            in_features = true;
+            continue;
+        }
+        if !in_features {
+            continue;
+        }
+        if trimmed == "dependencies:" {
+            break;
+        }
+
+        let trimmed = trimmed.strip_prefix('+').unwrap_or(trimmed).trim_start();
+        let Some((name, _)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let name = name.trim();
+        if !name.is_empty() {
+            features.insert(name.to_string());
+        }
+    }
+
+    if features.is_empty() {
+        return Err(Error::new(format!(
+            "could not parse any features from `cargo info {package} --verbose`"
+        )));
+    }
+
+    Ok(features)
+}
+
+#[derive(Debug)]
+struct Feature {
+    name: String,
+    dependencies: Vec<String>,
+    line: String,
+}
+
+fn parse_features(text: &str, path: &Path) -> Result<Vec<Feature>> {
+    let lines = Lines::from(text);
+    let (start, end) = lines.find_section_bounds("features").ok_or_else(|| {
+        Error::new(format!(
+            "{} is missing a [features] section",
+            path.display()
+        ))
+    })?;
+
+    let mut features = Vec::new();
+    for index in start..end {
+        let line = lines.body(index);
+        let Some(feature) = parse_feature_line(line) else {
+            continue;
+        };
+        features.push(feature);
+    }
+
+    Ok(features)
+}
+
+fn parse_feature_line(line: &str) -> Option<Feature> {
+    let (name, dependencies) = line.split_once('=')?;
+    let name = name.trim();
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return None;
+    }
+
+    let mut dependencies = dependencies;
+    let mut feature_dependencies = Vec::new();
+    while let Some(start) = dependencies.find('"') {
+        let rest = &dependencies[start + 1..];
+        let Some(end) = rest.find('"') else {
+            break;
+        };
+        let dependency = &rest[..end];
+        if !dependency.contains('/') && !dependency.starts_with("dep:") {
+            feature_dependencies.push(dependency.to_string());
+        }
+        dependencies = &rest[end + 1..];
+    }
+
+    Some(Feature {
+        name: name.to_string(),
+        dependencies: feature_dependencies,
+        line: line.to_string(),
+    })
+}
+
+fn retained_web_sys_features(
+    features: &[Feature],
+    published_features: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let dependencies_by_feature: BTreeMap<_, _> = features
+        .iter()
+        .map(|feature| (feature.name.as_str(), feature.dependencies.as_slice()))
+        .collect();
+    let local_names: BTreeSet<_> = features.iter().map(|feature| feature.name.as_str()).collect();
+    let mut retained = published_features.clone();
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for feature in retained.clone() {
+            let Some(dependencies) = dependencies_by_feature.get(feature.as_str()) else {
+                continue;
+            };
+            for dependency in *dependencies {
+                if local_names.contains(dependency.as_str()) && retained.insert(dependency.clone()) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    retained
 }
 
 fn merge_vendored_workspace_lints(staging_dir: &Path) -> Result<()> {
