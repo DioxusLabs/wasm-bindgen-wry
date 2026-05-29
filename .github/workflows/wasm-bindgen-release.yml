@@ -1,0 +1,182 @@
+name: wasm-bindgen release update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: wasm-bindgen-release-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Check and update wasm-bindgen
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c
+
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@9d36bebae244fb1a7fd7831d3c5a4bc8f1cab230
+
+      - name: Check upstream releases
+        id: release
+        shell: bash
+        run: |
+          set +e
+          release_output="$(./scripts/check-wasm-bindgen-releases.rs --check --list 2>&1)"
+          release_status=$?
+          set -e
+
+          printf '%s\n' "$release_output"
+          {
+            echo '## wasm-bindgen release check'
+            echo
+            echo '```text'
+            printf '%s\n' "$release_output"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          current="$(printf '%s\n' "$release_output" | sed -n 's/^current wasm-bindgen version:[[:space:]]*//p')"
+          latest="$(printf '%s\n' "$release_output" | sed -n 's/^latest upstream release:[[:space:]]*//p')"
+
+          if [[ "$release_status" -eq 0 ]]; then
+            echo "update_available=false" >>"$GITHUB_OUTPUT"
+            echo "current=$current" >>"$GITHUB_OUTPUT"
+            echo "latest=$latest" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$release_status" -eq 1 ]]; then
+            if [[ -z "$current" || -z "$latest" ]]; then
+              echo "failed to parse current/latest versions from release output" >&2
+              exit 2
+            fi
+            echo "update_available=true" >>"$GITHUB_OUTPUT"
+            echo "current=$current" >>"$GITHUB_OUTPUT"
+            echo "latest=$latest" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          exit "$release_status"
+
+      - name: Check for existing update PR
+        id: existing_pr
+        if: steps.release.outputs.update_available == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPDATE_BRANCH: automation/wasm-bindgen-${{ steps.release.outputs.latest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pr_number="$(gh api -X GET \
+            "/repos/$GITHUB_REPOSITORY/pulls" \
+            -f state=open \
+            -f head="$GITHUB_REPOSITORY_OWNER:$UPDATE_BRANCH" \
+            -f base=main \
+            --jq '.[0].number // ""')"
+
+          if [[ -n "$pr_number" ]]; then
+            {
+              echo "should_run=false"
+              echo "number=$pr_number"
+            } >>"$GITHUB_OUTPUT"
+            {
+              echo "## wasm-bindgen update skipped"
+              echo
+              echo "An open update PR already exists for $UPDATE_BRANCH: #$pr_number."
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "should_run=true" >>"$GITHUB_OUTPUT"
+
+      - name: Attempt vendored wasm-bindgen update
+        id: upgrade
+        if: steps.release.outputs.update_available == 'true' && steps.existing_pr.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -u
+
+          current="${{ steps.release.outputs.current }}"
+          latest="${{ steps.release.outputs.latest }}"
+          report="$RUNNER_TEMP/wasm-bindgen-upgrade-report.md"
+          log_dir="$RUNNER_TEMP/wasm-bindgen-upgrade-logs"
+          failure_file="patches/wasm-bindgen/UPGRADE_FAILURE.md"
+          status_file="$RUNNER_TEMP/wasm-bindgen-upgrade-status.env"
+
+          set +e
+          ./scripts/update-wasm-bindgen.sh "$latest" \
+            --current "$current" \
+            --report "$report" \
+            --log-dir "$log_dir" \
+            --failure-file "$failure_file" \
+            --status-file "$status_file" \
+            --install-api-tool
+          update_status=$?
+          set -e
+
+          read_status() {
+            local key="$1"
+            sed -n "s/^${key}=//p" "$status_file" | tail -n 1
+          }
+
+          if [[ ! -f "$status_file" ]]; then
+            echo "update-wasm-bindgen.sh did not write $status_file" >&2
+            exit "${update_status:-1}"
+          fi
+
+          pr_title="$(read_status pr_title)"
+          failed="$(read_status failed)"
+          api_check_failed="$(read_status api_check_failed)"
+
+          echo "pr_title=$pr_title" >>"$GITHUB_OUTPUT"
+          echo "failed=$failed" >>"$GITHUB_OUTPUT"
+          echo "api_check_failed=$api_check_failed" >>"$GITHUB_OUTPUT"
+
+          {
+            echo "pr_body<<PR_BODY_EOF"
+            cat "$report"
+            echo "PR_BODY_EOF"
+          } >>"$GITHUB_OUTPUT"
+
+          cat "$report" >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Open pull request
+        if: steps.release.outputs.update_available == 'true' && steps.existing_pr.outputs.should_run == 'true'
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: automation/wasm-bindgen-${{ steps.release.outputs.latest }}
+          base: main
+          delete-branch: true
+          title: ${{ steps.upgrade.outputs.pr_title }}
+          body: ${{ steps.upgrade.outputs.pr_body }}
+          commit-message: ${{ steps.upgrade.outputs.pr_title }}
+          labels: |
+            dependencies
+            automated
+          add-paths: |
+            Cargo.lock
+            wry-bindgen/Cargo.toml
+            wry-bindgen-macro/Cargo.toml
+            wry-bindgen-macro-support/Cargo.toml
+            shims/wasm-bindgen/Cargo.toml
+            shims/wasm-bindgen-macro/Cargo.toml
+            wry-launch/Cargo.toml
+            wasm-bindgen
+            patches/wasm-bindgen
+
+      - name: Mark manual repair as failed
+        if: steps.upgrade.outputs.failed == 'true' || steps.upgrade.outputs.api_check_failed == 'true'
+        run: exit 1

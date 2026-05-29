@@ -5,7 +5,7 @@ use crate::{__rt, IntoJsGeneric, JsCast, JsValue, convert};
 /// A JavaScript Error object.
 ///
 /// This type is used to create JavaScript Error objects that can be thrown or returned.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct JsError {
     value: JsValue,

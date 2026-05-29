@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "build": "webpack",
+    "serve": "webpack serve"
+  },
+  "devDependencies": {
+    "@wasm-tool/wasm-pack-plugin": "catalog:",
+    "css-loader": "catalog:",
+    "html-webpack-plugin": "catalog:",
+    "mini-css-extract-plugin": "catalog:",
+    "webpack": "catalog:",
+    "webpack-cli": "catalog:",
+    "webpack-dev-server": "catalog:"
+  }
+}

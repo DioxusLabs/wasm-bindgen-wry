@@ -1,0 +1,5 @@
+error: setters must start with `set_`, found: a
+ --> ui-tests/invalid-setter.rs:8:8
+  |
+8 |     fn a(this: &A, b: i32);
+  |        ^

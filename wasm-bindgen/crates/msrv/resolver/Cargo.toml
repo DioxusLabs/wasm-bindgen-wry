@@ -1,0 +1,27 @@
+[package]
+edition = "2021"
+name = "msrv-resolver-test"
+publish = false
+resolver = "1"
+version = "0.0.0"
+
+[features]
+default = [
+  "wasm-bindgen/default",
+  "js-sys/default",
+  "wasm-bindgen-futures/default",
+  "web-sys/default",
+  "wasm-bindgen-test/default",
+]
+
+[dependencies]
+js-sys = { path = "../../js-sys", default-features = false }
+wasm-bindgen = { path = "../../../", default-features = false }
+wasm-bindgen-futures = { path = "../../futures", default-features = false }
+wasm-bindgen-test = { path = "../../test", default-features = false }
+web-sys = { path = "../../web-sys", default-features = false }
+
+# Pinned sub-dependencies for MSRV
+bumpalo = "=3.12.0"
+proc-macro2 = "=1.0.101"
+quote = "=1.0.40"

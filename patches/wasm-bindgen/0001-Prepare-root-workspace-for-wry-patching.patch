@@ -1,0 +1,94 @@
+From 1955e4fe749d78265c29d8501e6d343451d0d07b Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Fri, 29 May 2026 10:56:07 -0500
+Subject: [PATCH 1/4] Prepare root workspace for wry patching
+
+---
+ Cargo.toml | 57 +++++++++++-------------------------------------------
+ 1 file changed, 11 insertions(+), 46 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index cc5ca3aaa..1cd28e0c5 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -9,7 +9,7 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen"
+ include = ["/build.rs", "/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "wasm-bindgen"
++name = "not-wasm-bindgen"
+ readme = "README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen"
+ rust-version = "1.77"
+@@ -93,58 +93,23 @@ type_complexity = "allow"
+ uninlined_format_args = "warn"
+ 
+ [workspace]
+-exclude = ["crates/msrv/resolver", "crates/msrv/lib", "crates/msrv/cli"]
+-members = [
++exclude = [
+   "benchmarks",
+-  "benchmarks/wcodspeed",
+   "crates/cli",
+-  "crates/js-sys",
++  "crates/msrv/resolver",
++  "crates/msrv/lib",
++  "crates/msrv/cli",
+   "crates/test",
+   "crates/test/sample",
+   "crates/typescript-tests",
+-  "crates/web-sys",
+   "crates/webidl",
+   "crates/webidl-tests",
+-  "examples/add",
+-  "examples/canvas",
+-  "examples/char",
+-  "examples/closures",
+-  "examples/console_log",
+-  "examples/nodejs_and_deno",
+-  "examples/nodejs-threads",
+-  "examples/dom",
+-  "examples/duck-typed-interfaces",
+-  "examples/explicit-resource-management",
+-  "examples/fetch",
+-  "examples/guide-supported-types-examples",
+-  "examples/hello_world",
+-  "examples/import_js/crate",
+-  "examples/julia_set",
+-  "examples/paint",
+-  "examples/performance",
+-  "examples/raytrace-parallel",
+-  "examples/request-animation-frame",
+-  "examples/todomvc",
+-  "examples/wasm-audio-worklet",
+-  "examples/wasm-in-wasm",
+-  "examples/wasm-in-wasm-imports",
+-  "examples/wasm-in-web-worker",
+-  "examples/weather_report",
+-  "examples/webaudio",
+-  "examples/webgl",
+-  "examples/webrtc_datachannel",
+-  "examples/websockets",
+-  "examples/webxr",
+-  "examples/without-a-bundler",
+-  "examples/without-a-bundler-no-modules",
+-  "examples/synchronous-instantiation",
++  "examples/*",
+   "tests/no-std",
+ ]
++members = [
++  "crates/js-sys",
++  "crates/web-sys",
++  "crates/futures",
++]
+ resolver = "2"
+-
+-[patch.crates-io]
+-js-sys = { path = 'crates/js-sys' }
+-wasm-bindgen = { path = '.' }
+-wasm-bindgen-futures = { path = 'crates/futures' }
+-wasm-bindgen-test = { path = 'crates/test' }
+-web-sys = { path = 'crates/web-sys' }
+-- 
+2.49.0
+

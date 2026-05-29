@@ -9,15 +9,27 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 [features]
 default = ["std"]
 std = []
-enable-interning = ["wry-bindgen/enable-interning"]
+# Mirror upstream wasm-bindgen's feature surface so downstream crates that enable
+# these features still build against the shim. Features that map to optional
+# upstream dependencies (serde, serde_json) or other crates' features (gg-alloc,
+# strict-macro) are declared as no-ops here since the shim has no such deps.
+enable-interning = ["std", "wry-bindgen/enable-interning"]
+serde-serialize = ["serde", "serde_json", "std"]
+serde = []
+serde_json = []
+spans = []
+strict-macro = []
+gg-alloc = []
 msrv = []
+rustversion = []
+xxx_debug_only_print_generated_code = []
 
 [dependencies]
 wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-macro", version = "=0.2.122" }
 
 # Desktop implementation
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wry-bindgen = { path = "../../wry-bindgen", version = "=0.2.106-alpha.1" }
+wry-bindgen = { path = "../../wry-bindgen", version = "=0.2.122" }
 
 # wasm32 implementation - commented out to avoid links conflict with crates.io version
 # [target.'cfg(target_arch = "wasm32")'.dependencies]

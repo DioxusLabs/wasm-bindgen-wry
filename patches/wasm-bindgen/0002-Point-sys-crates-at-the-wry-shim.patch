@@ -1,0 +1,111 @@
+From 019af7201813bdafa82b52156edf54bd71097804 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Fri, 29 May 2026 10:57:02 -0500
+Subject: [PATCH 2/4] Point sys crates at the wry shim
+
+---
+ crates/futures/Cargo.toml |  9 ++-------
+ crates/js-sys/Cargo.toml  | 10 +---------
+ crates/shared/Cargo.toml  |  5 -----
+ crates/web-sys/Cargo.toml |  9 ++-------
+ crates/web-sys/src/lib.rs |  2 +-
+ 5 files changed, 6 insertions(+), 29 deletions(-)
+
+diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
+index b355ca5de..949cbc795 100644
+--- a/crates/futures/Cargo.toml
++++ b/crates/futures/Cargo.toml
+@@ -17,18 +17,13 @@ all-features = true
+ rustdoc-args = ["--cfg", "docsrs"]
+ 
+ [dependencies]
+-js-sys = { path = "../js-sys", version = "=0.3.99", default-features = false }
+-wasm-bindgen = { path = "../..", version = "=0.2.122", default-features = false }
++js-sys = { path = "../js-sys", package = "js-sys", default-features = false }
++wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [features]
+ default = ["std"]
+ futures-core-03-stream = ["js-sys/futures-core-03-stream"]
+ std = ["wasm-bindgen/std", "js-sys/std"]
+ 
+-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+-futures-channel = "0.3"
+-futures-lite = { version = "2", default-features = false }
+-wasm-bindgen-test = { path = '../test' }
+-
+ [lints]
+ workspace = true
+diff --git a/crates/js-sys/Cargo.toml b/crates/js-sys/Cargo.toml
+index 1da2a7e25..112842e09 100644
+--- a/crates/js-sys/Cargo.toml
++++ b/crates/js-sys/Cargo.toml
+@@ -37,15 +37,7 @@ cfg-if = "1.0.0"
+ futures-core = { version = "0.3.8", default-features = false, optional = true }
+ futures-util = { version = "0.3.31", default-features = false, features = ["std"], optional = true }
+ once_cell = { version = "1.12", default-features = false }
+-wasm-bindgen = { path = "../..", version = "=0.2.122", default-features = false }
+-
+-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+-futures-channel = "0.3"
+-futures-lite = { version = "2", default-features = false }
+-half = "2"
+-wasm-bindgen-futures = { path = '../futures' }
+-wasm-bindgen-test = { path = '../test' }
+-web-sys = { path = "../web-sys", features = ["Headers", "Response", "ResponseInit"] }
++wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [lints.rust]
+ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(js_sys_unstable_apis)'] }
+diff --git a/crates/shared/Cargo.toml b/crates/shared/Cargo.toml
+index 4b37dac65..c57d1bdff 100644
+--- a/crates/shared/Cargo.toml
++++ b/crates/shared/Cargo.toml
+@@ -14,11 +14,6 @@ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/sh
+ rust-version = "1.77"
+ version = "0.2.122"
+ 
+-# Because only a single `wasm_bindgen` version can be used in a dependency
+-# graph, pretend we link a native library so that `cargo` will provide better
+-# error messages than the esoteric linker errors we would otherwise trigger.
+-links = "wasm_bindgen"
+-
+ [lints]
+ workspace = true
+ 
+diff --git a/crates/web-sys/Cargo.toml b/crates/web-sys/Cargo.toml
+index f621e9473..fb472bfff 100644
+--- a/crates/web-sys/Cargo.toml
++++ b/crates/web-sys/Cargo.toml
+@@ -23,13 +23,8 @@ doctest = false
+ test = false
+ 
+ [dependencies]
+-js-sys = { path = '../js-sys', version = '=0.3.99', default-features = false }
+-wasm-bindgen = { path = "../..", version = "=0.2.122", default-features = false }
+-
+-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+-futures = "0.3"
+-wasm-bindgen-futures = { path = '../futures', features = ["futures-core-03-stream"] }
+-wasm-bindgen-test = { path = '../test' }
++js-sys = { path = '../js-sys', package = "js-sys", default-features = false }
++wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [lints.rust]
+ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
+diff --git a/crates/web-sys/src/lib.rs b/crates/web-sys/src/lib.rs
+index 38cdb6732..ed019dda5 100644
+--- a/crates/web-sys/src/lib.rs
++++ b/crates/web-sys/src/lib.rs
+@@ -12,7 +12,7 @@
+ //! require.
+ 
+ #![doc(html_root_url = "https://docs.rs/web-sys/0.3")]
+-#![no_std]
++// #![no_std]
+ #![allow(deprecated)]
+ 
+ extern crate alloc;
+-- 
+2.49.0
+

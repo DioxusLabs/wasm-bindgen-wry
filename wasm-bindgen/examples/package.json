@@ -1,0 +1,20 @@
+{
+  "scripts": {
+    "build": "pnpm run -r build",
+    "serve": "serve",
+    "pretest": "cargo build -p wasm-bindgen-cli --bin wasm-bindgen",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.55.0",
+    "serve": "^14.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "memfs": "4.17.0"
+    }
+  }
+}

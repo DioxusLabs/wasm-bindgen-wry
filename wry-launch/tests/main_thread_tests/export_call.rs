@@ -1,4 +1,4 @@
-use wasm_bindgen::{batch, wasm_bindgen};
+use wasm_bindgen::wasm_bindgen;
 use wry_launch::batch;
 
 #[wasm_bindgen(inline_js = r#"

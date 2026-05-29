@@ -128,7 +128,25 @@ macro_rules! __wry_submit_js_function {
 /// This is API-compatible with wasm-bindgen's UnwrapThrowExt.
 pub trait UnwrapThrowExt<T>: Sized {
     /// Unwrap the value or panic with a message.
-    fn unwrap_throw(self) -> T;
+    ///
+    /// Has a default impl (delegating to [`expect_throw`](Self::expect_throw)) to
+    /// match upstream wasm-bindgen, so downstream impls only need `expect_throw`.
+    #[cfg_attr(any(debug_assertions, not(target_family = "wasm")), track_caller)]
+    fn unwrap_throw(self) -> T {
+        if cfg!(all(debug_assertions, target_family = "wasm")) {
+            let loc = core::panic::Location::caller();
+            let msg = alloc::format!(
+                "called `{}::unwrap_throw()` ({}:{}:{})",
+                core::any::type_name::<Self>(),
+                loc.file(),
+                loc.line(),
+                loc.column()
+            );
+            self.expect_throw(&msg)
+        } else {
+            self.expect_throw("called `unwrap_throw()`")
+        }
+    }
 
     /// Unwrap the value or panic with a custom message.
     fn expect_throw(self, message: &str) -> T;
@@ -171,6 +189,15 @@ pub fn throw_val(s: JsValue) -> ! {
 #[inline(never)]
 pub fn throw_str(s: &str) -> ! {
     panic!("cannot throw JS exception when running outside of wasm: {s}");
+}
+
+/// Renamed to [`throw_str`].
+#[cold]
+#[inline(never)]
+#[deprecated(note = "renamed to `throw_str`")]
+#[doc(hidden)]
+pub fn throw(s: &str) -> ! {
+    throw_str(s)
 }
 
 /// Returns the number of live externref objects.
@@ -219,6 +246,24 @@ pub fn memory() -> JsValue {
 /// This function always panics when running outside of WASM.
 pub fn function_table() -> JsValue {
     panic!("cannot introspect wasm memory when running outside of wasm")
+}
+
+/// Legacy wrapper for imported statics.
+///
+/// This type implements `Deref` to the inner type so it's typically used as if
+/// it were `&T`. Prefer `#[wasm_bindgen(thread_local_v2)]` and [`JsThreadLocal`].
+#[deprecated = "use with `#[wasm_bindgen(thread_local_v2)]` instead"]
+pub struct JsStatic<T: 'static> {
+    #[doc(hidden)]
+    pub __inner: &'static std::thread::LocalKey<T>,
+}
+
+#[allow(deprecated)]
+impl<T: 'static> core::ops::Deref for JsStatic<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        unsafe { self.__inner.with(|ptr| &*(ptr as *const T)) }
+    }
 }
 
 /// Prelude module for common imports

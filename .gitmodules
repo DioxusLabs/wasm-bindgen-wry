@@ -1,4 +1,0 @@
-[submodule "wasm-bindgen"]
-	path = wasm-bindgen
-	url = https://github.com/ealmloff/wasm-bindgen.git
-	branch = wry-bindgen

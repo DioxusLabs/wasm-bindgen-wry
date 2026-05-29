@@ -1,0 +1,11 @@
+[package]
+edition = "2021"
+name = "msrv-cli-test"
+publish = false
+version = "0.0.0"
+
+[dependencies]
+# time 0.3.46 requires Rust 1.88
+time = "=0.3.45"
+
+wasm-bindgen-cli = { path = "../../cli" }

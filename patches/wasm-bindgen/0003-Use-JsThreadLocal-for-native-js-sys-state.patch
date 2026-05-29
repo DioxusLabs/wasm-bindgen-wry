@@ -1,0 +1,83 @@
+From ef619fd447c2c2af55fc6dab1aecd7413c15673e Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Wed, 27 May 2026 12:06:09 -0500
+Subject: [PATCH 3/4] Use JsThreadLocal for native js-sys state
+
+---
+ crates/js-sys/src/futures/queue.rs |  9 +++++++++
+ crates/js-sys/src/lib.rs           | 29 ++++++++++++++++++++---------
+ 2 files changed, 29 insertions(+), 9 deletions(-)
+
+diff --git a/crates/js-sys/src/futures/queue.rs b/crates/js-sys/src/futures/queue.rs
+index 104ffa03d..732104450 100644
+--- a/crates/js-sys/src/futures/queue.rs
++++ b/crates/js-sys/src/futures/queue.rs
+@@ -112,6 +112,7 @@ impl Queue {
+         }
+     }
+ 
++    #[cfg(target_arch = "wasm32")]
+     pub(crate) fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
+         use once_cell::unsync::Lazy;
+ 
+@@ -128,4 +129,12 @@ impl Queue {
+ 
+         f(&QUEUE.0)
+     }
++
++    #[cfg(not(target_arch = "wasm32"))]
++    pub(crate) fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
++        static QUEUE: wasm_bindgen::JsThreadLocal<Queue> =
++            wasm_bindgen::JsThreadLocal::new(Queue::new, 0);
++
++        QUEUE.with(f)
++    }
+ }
+diff --git a/crates/js-sys/src/lib.rs b/crates/js-sys/src/lib.rs
+index efa25abe3..82a615a8d 100644
+--- a/crates/js-sys/src/lib.rs
++++ b/crates/js-sys/src/lib.rs
+@@ -13576,20 +13576,31 @@ impl Promise {
+ /// This allows access to the global properties and global names by accessing
+ /// the `Object` returned.
+ pub fn global() -> Object {
+-    use once_cell::unsync::Lazy;
++    #[cfg(target_arch = "wasm32")]
++    {
++        use once_cell::unsync::Lazy;
++
++        struct Wrapper<T>(Lazy<T>);
++
++        #[cfg(not(target_feature = "atomics"))]
++        unsafe impl<T> Sync for Wrapper<T> {}
+ 
+-    struct Wrapper<T>(Lazy<T>);
++        #[cfg(not(target_feature = "atomics"))]
++        unsafe impl<T> Send for Wrapper<T> {}
+ 
+-    #[cfg(not(target_feature = "atomics"))]
+-    unsafe impl<T> Sync for Wrapper<T> {}
++        #[cfg_attr(target_feature = "atomics", thread_local)]
++        static GLOBAL: Wrapper<Object> = Wrapper(Lazy::new(get_global_object));
+ 
+-    #[cfg(not(target_feature = "atomics"))]
+-    unsafe impl<T> Send for Wrapper<T> {}
++        return GLOBAL.0.clone();
++    }
+ 
+-    #[cfg_attr(target_feature = "atomics", thread_local)]
+-    static GLOBAL: Wrapper<Object> = Wrapper(Lazy::new(get_global_object));
++    #[cfg(not(target_arch = "wasm32"))]
++    {
++        static GLOBAL: wasm_bindgen::JsThreadLocal<Object> =
++            wasm_bindgen::JsThreadLocal::new(get_global_object, 0);
+ 
+-    return GLOBAL.0.clone();
++        return GLOBAL.with(Clone::clone);
++    }
+ 
+     fn get_global_object() -> Object {
+         // Accessing the global object is not an easy thing to do, and what we
+-- 
+2.49.0
+

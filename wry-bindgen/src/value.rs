@@ -44,14 +44,12 @@ fn is_special_value_id(id: u64) -> bool {
 ///
 /// Unlike wasm-bindgen which runs in a single-threaded Wasm environment,
 /// this implementation uses the IPC protocol to communicate with JS.
-#[repr(transparent)]
 pub struct JsValue {
+    // The handle is just a `u64`, so the type is `Send`/`Sync`. A JsValue id is
+    // only meaningful inside the thread-local runtime that created it; using one
+    // elsewhere is a runtime error.
     #[doc(hidden)]
     pub idx: u64,
-    // A JsValue id is only meaningful inside the thread-local runtime that
-    // created it. Opt out of Send + Sync so the type cannot cross runtimes.
-    #[doc(hidden)]
-    pub _not_send_sync: core::marker::PhantomData<*const ()>,
 }
 
 impl JsValue {
@@ -70,10 +68,7 @@ impl JsValue {
     /// Create a new JsValue from an index (const fn for static values).
     #[inline]
     const fn _new(idx: u64) -> JsValue {
-        JsValue {
-            idx,
-            _not_send_sync: core::marker::PhantomData,
-        }
+        JsValue { idx }
     }
 
     /// Create a new JsValue from a heap ID.
@@ -90,6 +85,58 @@ impl JsValue {
     #[inline]
     pub fn id(&self) -> u64 {
         self.idx
+    }
+
+    /// Serializes a Rust value into a `JsValue` by serializing to JSON and
+    /// invoking `JSON.parse` on the JS side.
+    ///
+    /// **This function is deprecated**, mirroring upstream wasm-bindgen. Use
+    /// [`serde-wasm-bindgen`](https://docs.rs/serde-wasm-bindgen) instead.
+    ///
+    /// Usage requires activating the `serde-serialize` feature.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error encountered when serializing `T` into JSON.
+    #[cfg(feature = "serde-serialize")]
+    #[deprecated = "causes dependency cycles, use `serde-wasm-bindgen` instead"]
+    pub fn from_serde<T>(t: &T) -> serde_json::Result<JsValue>
+    where
+        T: serde::ser::Serialize + ?Sized,
+    {
+        let json = serde_json::to_string(t)?;
+        Ok(crate::__wry_call_js_function!(
+            "(s) => JSON.parse(s)",
+            fn(&str) -> JsValue,
+            (json.as_str())
+        ))
+    }
+
+    /// Invokes `JSON.stringify` on this value and parses the resulting JSON into
+    /// an arbitrary Rust value.
+    ///
+    /// **This function is deprecated**, mirroring upstream wasm-bindgen. Use
+    /// [`serde-wasm-bindgen`](https://docs.rs/serde-wasm-bindgen) instead.
+    ///
+    /// Usage requires activating the `serde-serialize` feature.
+    ///
+    /// # Errors
+    ///
+    /// Returns any error encountered when parsing the JSON into a `T`.
+    #[cfg(feature = "serde-serialize")]
+    #[deprecated = "causes dependency cycles, use `serde-wasm-bindgen` instead"]
+    pub fn into_serde<T>(&self) -> serde_json::Result<T>
+    where
+        T: for<'a> serde::de::Deserialize<'a>,
+    {
+        // `JSON.stringify(undefined) === undefined`; reinterpret that as JSON
+        // `null` so it round-trips, matching upstream's behavior.
+        let json: String = crate::__wry_call_js_function!(
+            "(v) => JSON.stringify(v) ?? \"null\"",
+            fn(JsValue) -> String,
+            (self.clone())
+        );
+        serde_json::from_str(&json)
     }
 
     /// Returns the value as f64 without type checking.

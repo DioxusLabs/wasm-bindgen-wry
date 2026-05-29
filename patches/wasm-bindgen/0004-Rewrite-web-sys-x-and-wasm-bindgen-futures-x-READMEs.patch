@@ -1,0 +1,252 @@
+From 2ac2bd8be1ef1c5b9061fc763cf3239c279ea620 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Wed, 27 May 2026 15:41:47 -0500
+Subject: [PATCH 4/4] Rewrite web-sys-x and wasm-bindgen-futures-x READMEs
+
+---
+ crates/futures/README.md | 103 +++++++++++++++++++++++++++++++++++
+ crates/web-sys/README.md | 112 +++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 215 insertions(+)
+
+diff --git a/crates/futures/README.md b/crates/futures/README.md
+index 54efea2db..44dbe3047 100644
+--- a/crates/futures/README.md
++++ b/crates/futures/README.md
+@@ -1,3 +1,104 @@
++<div align="center">
++
++  <h1><code>wasm-bindgen-futures-x</code></h1>
++
++  <p>
++    <strong>Bridge Rust <code>Future</code>s and the webview's JavaScript <code>Promise</code>s, while your Rust runs natively.</strong>
++  </p>
++
++  <p>
++    <a href="https://crates.io/crates/wasm-bindgen-futures-x"><img src="https://img.shields.io/crates/v/wasm-bindgen-futures-x.svg?style=flat-square" alt="Crates.io version" /></a>
++    <a href="https://crates.io/crates/wasm-bindgen-futures-x"><img src="https://img.shields.io/crates/d/wasm-bindgen-futures-x.svg?style=flat-square" alt="Download" /></a>
++    <a href="https://docs.rs/wasm-bindgen-futures-x"><img src="https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square" alt="docs.rs docs" /></a>
++  </p>
++
++  <h3>
++    <a href="https://github.com/DioxusLabs/wasm-bindgen-wry"> Repo </a>
++    <span> | </span>
++    <a href="https://wasm-bindgen.github.io/wasm-bindgen/"> wasm-bindgen guide </a>
++    <span> | </span>
++    <a href="https://github.com/DioxusLabs/wasm-bindgen-wry/tree/main/examples"> Examples </a>
++    <span> | </span>
++    <a href="https://wasm-bindgen.github.io/wasm-bindgen/api/wasm_bindgen_futures/"> API Docs </a>
++  </h3>
++
++</div>
++<br>
++
++[`wasm-bindgen-futures`](https://crates.io/crates/wasm-bindgen-futures) for the [`wasm-bindgen-x`](https://crates.io/crates/wasm-bindgen-x) desktop fork. `.await` a JS `Promise` directly from your native main thread, with `spawn_local`, `JsFuture`, and `future_to_promise` all working the same as upstream.
++
++```rust
++use wasm_bindgen::prelude::*;
++
++#[wasm_bindgen(inline_js = "
++    export async function add_async(a, b) {
++        return new Promise(resolve => setTimeout(() => resolve(a + b), 100));
++    }
++")]
++extern "C" {
++    async fn add_async(a: u32, b: u32) -> JsValue;
++}
++
++fn main() -> wry::Result<()> {
++    wry_launch::run(|| async {
++        let result = add_async(2, 3).await;
++        println!("got {} from JS", result.as_f64().unwrap());
++    })
++}
++```
++
++## ⭐️ Why?
++
++Wasm-bindgen is the standard way to talk to JavaScript and the DOM, but it only works when compiling to wasm. If you want native APIs like threads, the filesystem, or networking you have to either cross an IPC boundary or give up `wasm-bindgen` entirely. This crate gives you both:
++
++- Use wasm-bindgen-compatible libraries like [web-sys-x](https://crates.io/crates/web-sys-x), [js-sys-x](https://crates.io/crates/js-sys-x), and [gloo](https://crates.io/crates/gloo) from native code.
++- Use native APIs — threads, the file system, networking — at the same time.
++- `.await` a `Promise` directly; `spawn_local` and `JsFuture` work unchanged.
++
++## Get started
++
++```toml
++[dependencies]
++wry-launch = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry" }
++wasm-bindgen-futures = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry" }
++
++[patch.crates-io]
++wasm-bindgen = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++wasm-bindgen-futures = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++js-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++web-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++wry-bindgen = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++```
++
++## web-sys paint, running unmodified from a native thread
++
++https://github.com/user-attachments/assets/a34c15f2-ff03-4a85-b447-f1aa0c6b924c
++
++## Dioxus web on the desktop
++
++A modified version of dioxus-web (without the sledgehammer optimizations) running on a native thread.
++
++https://github.com/user-attachments/assets/0d56b30b-9791-44cb-9487-e406bb891ef4
++
++## Yew's TodoMVC, unmodified
++
++https://github.com/user-attachments/assets/d13183a4-4d62-44ae-854e-11830126ca15
++
++## Leaflet.js bindings
++
++https://github.com/user-attachments/assets/a7f8e816-c8d5-486d-9746-875e324224b7
++
++## Tiptap bindings
++
++https://github.com/user-attachments/assets/4c6ef57d-5f89-4a3a-a8f3-1559ef415162
++
++## License
++
++This project is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
++
++<details>
++<summary>Upstream <code>wasm-bindgen-futures</code> documentation</summary>
++
+ # `wasm-bindgen-futures`
+ 
+ [API Documentation][docs]
+@@ -37,3 +138,5 @@ See the [API documentation][docs] for more info.
+ [`spawn_local`]: https://docs.rs/js-sys/*/js_sys/futures/fn.spawn_local.html
+ [`future_to_promise`]: https://docs.rs/js-sys/*/js_sys/futures/fn.future_to_promise.html
+ [`future_to_promise_typed`]: https://docs.rs/js-sys/*/js_sys/futures/fn.future_to_promise_typed.html
++
++</details>
+diff --git a/crates/web-sys/README.md b/crates/web-sys/README.md
+index 39835892d..d9e7da200 100644
+--- a/crates/web-sys/README.md
++++ b/crates/web-sys/README.md
+@@ -1,3 +1,113 @@
++<div align="center">
++
++  <h1><code>web-sys-x</code></h1>
++
++  <p>
++    <strong>Web APIs for the wasm-bindgen-x desktop fork. Drive the DOM from a native thread.</strong>
++  </p>
++
++  <p>
++    <a href="https://crates.io/crates/web-sys-x"><img src="https://img.shields.io/crates/v/web-sys-x.svg?style=flat-square" alt="Crates.io version" /></a>
++    <a href="https://crates.io/crates/web-sys-x"><img src="https://img.shields.io/crates/d/web-sys-x.svg?style=flat-square" alt="Download" /></a>
++    <a href="https://docs.rs/web-sys-x"><img src="https://img.shields.io/badge/docs-latest-blue.svg?style=flat-square" alt="docs.rs docs" /></a>
++  </p>
++
++  <h3>
++    <a href="https://github.com/DioxusLabs/wasm-bindgen-wry"> Repo </a>
++    <span> | </span>
++    <a href="https://wasm-bindgen.github.io/wasm-bindgen/web-sys/index.html"> web-sys guide </a>
++    <span> | </span>
++    <a href="https://github.com/DioxusLabs/wasm-bindgen-wry/tree/main/examples"> Examples </a>
++    <span> | </span>
++    <a href="https://wasm-bindgen.github.io/wasm-bindgen/api/web_sys/"> API Docs </a>
++  </h3>
++
++</div>
++<br>
++
++Raw bindings to Web APIs for the [`wasm-bindgen-x`](https://crates.io/crates/wasm-bindgen-x) desktop fork. Drop this in via `[patch.crates-io]` and the same `web-sys` types your wasm crate uses light up against a native [`wry`](https://github.com/tauri-apps/wry) webview.
++
++```rust
++use core::f64;
++use wasm_bindgen::prelude::*;
++
++fn main() -> wry::Result<()> {
++    wry_launch::run(|| async {
++        draw();
++        std::future::pending().await
++    })
++}
++
++fn draw() {
++    let document = web_sys::window().unwrap().document().unwrap();
++    document
++        .body()
++        .unwrap()
++        .set_inner_html(r#"<canvas id="c" height="150" width="150"></canvas>"#);
++
++    let canvas: web_sys::HtmlCanvasElement =
++        document.get_element_by_id("c").unwrap().dyn_into().unwrap();
++    let ctx: web_sys::CanvasRenderingContext2d =
++        canvas.get_context("2d").unwrap().unwrap().dyn_into().unwrap();
++
++    ctx.begin_path();
++    ctx.arc(75.0, 75.0, 50.0, 0.0, f64::consts::PI * 2.0).unwrap();
++    ctx.stroke();
++}
++```
++
++## ⭐️ Why?
++
++Wasm-bindgen is the standard way to talk to JavaScript and the DOM, but it only works when compiling to wasm. If you want native APIs like threads, the filesystem, or networking you have to either cross an IPC boundary or give up `wasm-bindgen` entirely. This crate gives you both:
++
++- Use wasm-bindgen-compatible libraries like [web-sys-x](https://crates.io/crates/web-sys-x), [js-sys-x](https://crates.io/crates/js-sys-x), and [gloo](https://crates.io/crates/gloo) from native code.
++- Use native APIs — threads, the file system, networking — at the same time.
++- Zero changes to existing `web-sys` code: same types, same methods, same feature flags.
++
++## Get started
++
++```toml
++[dependencies]
++wry-launch = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry" }
++web-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", features = ["Window", "Document", "Element", "HtmlCanvasElement", "CanvasRenderingContext2d"] }
++
++[patch.crates-io]
++wasm-bindgen = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++wasm-bindgen-futures = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++js-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++web-sys = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++wry-bindgen = { git = "https://github.com/DioxusLabs/wasm-bindgen-wry", tag = "v0.2.106" }
++```
++
++## web-sys paint, running unmodified from a native thread
++
++https://github.com/user-attachments/assets/a34c15f2-ff03-4a85-b447-f1aa0c6b924c
++
++## Dioxus web on the desktop
++
++A modified version of dioxus-web (without the sledgehammer optimizations) running on a native thread.
++
++https://github.com/user-attachments/assets/0d56b30b-9791-44cb-9487-e406bb891ef4
++
++## Yew's TodoMVC, unmodified
++
++https://github.com/user-attachments/assets/d13183a4-4d62-44ae-854e-11830126ca15
++
++## Leaflet.js bindings
++
++https://github.com/user-attachments/assets/a7f8e816-c8d5-486d-9746-875e324224b7
++
++## Tiptap bindings
++
++https://github.com/user-attachments/assets/4c6ef57d-5f89-4a3a-a8f3-1559ef415162
++
++## License
++
++This project is licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
++
++<details>
++<summary>Upstream <code>web-sys</code> documentation</summary>
++
+ # `web-sys`
+ 
+ Raw bindings to Web APIs for projects using `wasm-bindgen`.
+@@ -47,3 +157,5 @@ If you don't see a particular web API in `web-sys`, here is how to add it.
+    * Added <your addition>
+      [#1234](https://github.com/wasm-bindgen/wasm-bindgen/pull/1234) # <- link to your PR
+    ```
++
++</details>
+-- 
+2.49.0
+

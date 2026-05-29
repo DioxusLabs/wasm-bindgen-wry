@@ -1,0 +1,448 @@
+use js_sys::{global, Array, Object, Promise, Reflect};
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::{throw_str, JsValue};
+use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_test::wasm_bindgen_test;
+
+// JS functions for testing unwind on JS throw (without catch/Result)
+#[wasm_bindgen(module = "tests/wasm/unwind.js")]
+extern "C" {
+    // This JS function throws an error - no `catch` attribute, so it will unwind
+    fn js_throw_error();
+
+    // Check if the drop flag was set
+    fn js_check_dropped() -> bool;
+
+    // Reset the drop flag
+    fn js_reset_dropped();
+
+    // Call a Rust function that will call js_throw_error and catch the result
+    #[wasm_bindgen(catch)]
+    fn js_trigger_unwind_test() -> Result<(), JsValue>;
+}
+
+// Array
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = Array, extends = Object, is_type_of = Array::is_array, typescript_type = "Array<any>")]
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub type ArrayUnwind;
+
+    #[wasm_bindgen(constructor, js_class = Array)]
+    pub fn new() -> ArrayUnwind;
+
+    #[wasm_bindgen(method, js_class = Array)]
+    pub fn push(this: &ArrayUnwind, value: &JsValue) -> u32;
+
+    // Predicate throw or panic will panic, but be caught as Result::Err
+    // Unless a WebAssembly.RuntimeError, in which case, abort propagates
+    #[wasm_bindgen(method, catch, js_class = Array, js_name = every)]
+    pub fn try_every_result(
+        this: &ArrayUnwind,
+        predicate: &mut dyn FnMut(JsValue, u32, Array) -> Result<bool, JsValue>,
+    ) -> Result<bool, JsValue>;
+    #[wasm_bindgen(method, catch, js_class = Array, js_name = every)]
+    pub fn try_every_result_closure(
+        this: &ArrayUnwind,
+        predicate: &Closure<dyn FnMut(JsValue, u32, Array) -> Result<bool, JsValue>>,
+    ) -> Result<bool, JsValue>;
+    #[wasm_bindgen(method, catch, js_class = Array, js_name = every)]
+    pub fn try_every_result_closure_borrow(
+        this: &ArrayUnwind,
+        predicate: &ScopedClosure<dyn FnMut(JsValue, u32, Array) -> Result<bool, JsValue>>,
+    ) -> Result<bool, JsValue>;
+
+    // The macro auto-injects `__WbgCb0: MaybeUnwindSafe + FnMut(...)` for &mut dyn FnMut
+    // arguments, so callers must provide UnwindSafe closures when panic=unwind is active.
+    // This is the same signature but named separately to test the macro-injected bound.
+    #[wasm_bindgen(method, catch, js_class = Array, js_name = every)]
+    pub fn try_every_result_aborting(
+        this: &ArrayUnwind,
+        predicate: &mut dyn FnMut(JsValue, u32, Array) -> Result<bool, JsValue>,
+    ) -> Result<bool, JsValue>;
+}
+
+// global
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = setTimeout)]
+    pub fn set_timeout(handler: &Closure<dyn FnMut()>);
+}
+
+macro_rules! js_array {
+    ($($e:expr),*) => ({
+        let __x = ArrayUnwind::new();
+        $(__x.push(&JsValue::from($e));)*
+        __x
+    })
+}
+
+#[wasm_bindgen_test]
+async fn try_promise_all() {
+    let mut resolve_ = Default::default();
+    // Wrap resolve_ in AssertUnwindSafe before moving into the closure: Promise::new's
+    // executor is not called in a panic-catching context, so this is safe.
+    let mut resolve_slot = core::panic::AssertUnwindSafe(&mut resolve_);
+    let promise = Promise::new(&mut move |resolve, _reject| {
+        **resolve_slot = resolve;
+    });
+    let closure1 = Closure::own(|_v| {
+        panic!("CLOSURE PANIC");
+    });
+    let promise2 = promise.then(&closure1);
+    let future = JsFuture::from(promise2);
+    let closure2 = Closure::own(move || {
+        resolve_
+            .call1(&JsValue::undefined(), &JsValue::undefined())
+            .unwrap();
+    });
+    set_timeout(&closure2);
+    let result = future.await;
+    assert!(result.is_err());
+    let err = result.err().unwrap();
+    let msg = Reflect::get(&err, &"message".into()).unwrap();
+    assert_eq!(msg, "CLOSURE PANIC");
+}
+
+#[wasm_bindgen_test]
+fn try_every() {
+    let even = js_array![2, 4, 6, 8];
+    Reflect::set(&global(), &"dropped".into(), &JsValue::FALSE).unwrap();
+    Reflect::set(&global(), &"food".into(), &JsValue::FALSE).unwrap();
+    assert!(even
+        .try_every_result_closure(&Closure::own(|_, _, _| {
+            struct Foo {}
+            impl Drop for Foo {
+                fn drop(&mut self) {
+                    Reflect::set(&global(), &"dropped".into(), &JsValue::TRUE).unwrap();
+                }
+            }
+            impl Foo {
+                fn foo(&self) {
+                    let _ = Reflect::set(&global(), &"food".into(), &JsValue::TRUE);
+                }
+            }
+            let foo = Foo {};
+            if std::hint::black_box(true) {
+                panic!("PANIC");
+            }
+            foo.foo();
+            Ok(true)
+        }))
+        .is_err());
+    assert!(!Reflect::get(&global(), &"food".into())
+        .unwrap()
+        .as_bool()
+        .unwrap());
+    assert!(Reflect::get(&global(), &"dropped".into())
+        .unwrap()
+        .as_bool()
+        .unwrap());
+}
+
+/// Test that `&mut dyn FnMut` closures ("yolo" closures) are unwind safe by
+/// default. These stack-borrowed closures set the unwind-safe bit unconditionally,
+/// so panics are caught and converted to JS exceptions with proper unwinding
+/// (destructors run, no abort).
+#[cfg(panic = "unwind")]
+#[wasm_bindgen_test]
+fn dyn_fnmut_unwind_safe_by_default() {
+    Reflect::set(&global(), &"yolo_dropped".into(), &JsValue::FALSE).unwrap();
+    Reflect::set(&global(), &"yolo_continued".into(), &JsValue::FALSE).unwrap();
+    let result = js_array![2, 4, 6, 8].try_every_result_aborting(&mut |_, _, _| {
+        struct DropGuard;
+        impl Drop for DropGuard {
+            fn drop(&mut self) {
+                Reflect::set(&global(), &"yolo_dropped".into(), &JsValue::TRUE).unwrap();
+            }
+        }
+        let _guard = DropGuard;
+        if std::hint::black_box(true) {
+            panic!("yolo closure panic");
+        }
+        Reflect::set(&global(), &"yolo_continued".into(), &JsValue::TRUE).unwrap();
+        Ok(true)
+    });
+    // Panic should propagate as a JS error, not abort
+    assert!(result.is_err(), "panic in &mut dyn FnMut should be caught");
+    // Destructors should have run during unwind
+    assert!(
+        Reflect::get(&global(), &"yolo_dropped".into())
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "Drop should run during unwind of &mut dyn FnMut"
+    );
+    // Should not have continued past the panic
+    assert!(
+        !Reflect::get(&global(), &"yolo_continued".into())
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "should not continue past panic"
+    );
+}
+
+/// Test that the macro-injected `MaybeUnwindSafe` bound on `&mut dyn FnMut` arguments
+/// requires `AssertUnwindSafe` for non-unwind-safe captured values (like `Cell<T>`) when
+/// `panic=unwind` is active, but allows plain closures that only capture unwind-safe types.
+///
+/// This is a compile-time verification: the test itself passing means the bound was
+/// satisfied. The `Cell<bool>` capture requires explicit `AssertUnwindSafe` wrapping.
+#[cfg(panic = "unwind")]
+#[wasm_bindgen_test]
+fn macro_injected_maybe_unwind_safe_bound() {
+    // A plain bool is UnwindSafe, but &mut bool is not — wrap before capture.
+    let mut flag = false;
+    let mut flag_ref = core::panic::AssertUnwindSafe(&mut flag);
+    let _ = js_array![1].try_every_result_aborting(&mut move |_, _, _| {
+        **flag_ref = true;
+        Ok(true)
+    });
+    assert!(flag);
+
+    // Cell<bool> is NOT UnwindSafe (interior mutability). Must wrap with AssertUnwindSafe.
+    let cell = std::cell::Cell::new(false);
+    let cell_ref = core::panic::AssertUnwindSafe(&cell);
+    let _ = js_array![1].try_every_result_aborting(&mut move |_, _, _| {
+        cell_ref.set(true);
+        Ok(true)
+    });
+    assert!(cell.get());
+}
+
+#[cfg(panic = "unwind")]
+#[wasm_bindgen_test]
+fn drop_throw_str_aborting() {
+    Reflect::set(&global(), &"dropped_throw_str".into(), &JsValue::FALSE).unwrap();
+    Reflect::set(&global(), &"food_throw_str".into(), &JsValue::FALSE).unwrap();
+    assert!(js_array![0]
+        .try_every_result(&mut |_, _, _| {
+            struct Foo {}
+            impl Drop for Foo {
+                fn drop(&mut self) {
+                    Reflect::set(&global(), &"dropped_throw_str".into(), &JsValue::TRUE).unwrap();
+                }
+            }
+            impl Foo {
+                fn foo(&self) {
+                    let _ = Reflect::set(&global(), &"food_throw_str".into(), &JsValue::TRUE);
+                }
+            }
+            let foo = Foo {};
+            if std::hint::black_box(true) {
+                throw_str("THROW_STR");
+            }
+            foo.foo();
+            Ok(true)
+        })
+        .is_err());
+    assert!(!Reflect::get(&global(), &"food_throw_str".into())
+        .unwrap()
+        .as_bool()
+        .unwrap());
+    assert!(Reflect::get(&global(), &"dropped_throw_str".into())
+        .unwrap()
+        .as_bool()
+        .unwrap());
+}
+
+#[cfg(panic = "unwind")]
+#[wasm_bindgen_test]
+fn drop_throw_str() {
+    Reflect::set(&global(), &"dropped_throw_str".into(), &JsValue::FALSE).unwrap();
+    Reflect::set(&global(), &"food_throw_str".into(), &JsValue::FALSE).unwrap();
+    {
+        let mut func = |_, _, _| {
+            struct Foo {}
+            impl Drop for Foo {
+                fn drop(&mut self) {
+                    Reflect::set(&global(), &"dropped_throw_str".into(), &JsValue::TRUE).unwrap();
+                }
+            }
+            impl Foo {
+                fn foo(&self) {
+                    let _ = Reflect::set(&global(), &"food_throw_str".into(), &JsValue::TRUE);
+                }
+            }
+            let foo = Foo {};
+            if std::hint::black_box(true) {
+                throw_str("THROW_STR");
+            }
+            foo.foo();
+            Ok(true)
+        };
+        let closure = ScopedClosure::borrow_mut(&mut func);
+        assert!(js_array![0]
+            .try_every_result_closure_borrow(&closure)
+            .is_err());
+    }
+    assert!(!Reflect::get(&global(), &"food_throw_str".into())
+        .unwrap()
+        .as_bool()
+        .unwrap());
+    assert!(Reflect::get(&global(), &"dropped_throw_str".into())
+        .unwrap()
+        .as_bool()
+        .unwrap());
+}
+
+/// Rust function exported to JS that calls a throwing JS function.
+/// The JS throw should trigger unwinding, running the Drop impl.
+#[wasm_bindgen]
+pub fn rust_call_throwing_js() {
+    struct DropGuard;
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            // Set a global flag that we can check from JS
+            Reflect::set(&global(), &"unwind_drop_ran".into(), &JsValue::TRUE).unwrap();
+        }
+    }
+
+    let _guard = DropGuard;
+
+    // This JS function throws - since there's no `catch` attribute,
+    // it should trigger unwinding in Rust (when panic=unwind)
+    js_throw_error();
+
+    // This line should never be reached
+    Reflect::set(
+        &global(),
+        &"unwind_continued_after_throw".into(),
+        &JsValue::TRUE,
+    )
+    .unwrap();
+}
+
+/// Test that a JS throw from an import without `catch` triggers unwinding and runs Drop
+#[cfg(panic = "unwind")]
+#[wasm_bindgen_test]
+fn js_throw_triggers_unwind_and_drop() {
+    // Reset state
+    js_reset_dropped();
+    Reflect::set(&global(), &"unwind_drop_ran".into(), &JsValue::FALSE).unwrap();
+    Reflect::set(
+        &global(),
+        &"unwind_continued_after_throw".into(),
+        &JsValue::FALSE,
+    )
+    .unwrap();
+
+    // JS will call rust_call_throwing_js(), which calls js_throw_error()
+    // The throw should unwind, run Drop, and propagate as an error
+    let result = js_trigger_unwind_test();
+    assert!(result.is_err(), "JS throw should propagate as error");
+
+    // Verify the drop ran during unwinding
+    assert!(
+        Reflect::get(&global(), &"unwind_drop_ran".into())
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "Drop should have run during unwind"
+    );
+
+    // Verify we didn't continue past the throw
+    assert!(
+        !Reflect::get(&global(), &"unwind_continued_after_throw".into())
+            .unwrap()
+            .as_bool()
+            .unwrap(),
+        "Should not have continued after JS throw"
+    );
+}
+
+// -- Compile-time unwind-safety check on exported methods --
+//
+// Under `panic = "unwind"`, the macro emits a type-level assertion that the
+// receiver of `&self` / `&mut self` exports is `RefUnwindSafe`, and that
+// reference arguments' pointees are `RefUnwindSafe`. This catches at compile
+// time methods whose interior-mutable state could be silently torn by a
+// caught panic (e.g. a `RefCell` left in `borrowed` state, a `Cell` updated
+// halfway through an invariant-restoring sequence).
+//
+// The struct below intentionally has *no* interior mutability and so passes
+// the check naturally. The test verifies that the runtime path still
+// behaves correctly: a panicking `&mut self` method propagates as a JS
+// error, drops run, and a subsequent call observes the in-place mutations
+// that completed before the panic.
+
+#[wasm_bindgen]
+pub struct UnwindSafeCounter {
+    n: u32,
+    panicked_at: u32,
+}
+
+#[wasm_bindgen]
+impl UnwindSafeCounter {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            n: 0,
+            panicked_at: 0,
+        }
+    }
+
+    pub fn n(&self) -> u32 {
+        self.n
+    }
+
+    /// Increments and panics on the third call. Any state mutated before
+    /// the panic remains visible afterwards.
+    pub fn bump_panic_on_third(&mut self) {
+        self.n += 1;
+        if self.n == 3 {
+            self.panicked_at = self.n;
+            panic!("expected panic");
+        }
+    }
+
+    pub fn panicked_at(&self) -> u32 {
+        self.panicked_at
+    }
+}
+
+// Negative cases — these would fail to compile under `panic = "unwind"`
+// because their interior-mutable state is not `RefUnwindSafe`. They are
+// kept here as `cfg(any())` to document the intended check; uncommenting
+// either of them on a `panic = "unwind"` build produces a compile error
+// pointing at `wasm_bindgen::__rt::assert_ref_unwind_safe` with a trace
+// through the offending field type.
+//
+//     #[wasm_bindgen]
+//     pub struct UnwindUnsafeCell { c: std::cell::Cell<u32> }
+//     #[wasm_bindgen]
+//     impl UnwindUnsafeCell {
+//         pub fn bump(&mut self) { self.c.set(self.c.get() + 1); }
+//     }
+//
+//     #[wasm_bindgen]
+//     pub fn touch_cell(_c: &std::cell::RefCell<u32>) {}
+//
+// Users whose type is genuinely safe can opt in via either:
+//   * `impl core::panic::RefUnwindSafe for MyType {}`, or
+//   * wrapping interior-mutable fields in `std::panic::AssertUnwindSafe`.
+
+/// Confirms that an exported `&mut self` method on a `RefUnwindSafe` struct
+/// catches its panic correctly under `panic = "unwind"` and that completed
+/// mutations remain observable on subsequent calls.
+#[cfg(panic = "unwind")]
+#[wasm_bindgen_test]
+fn ref_unwind_safe_method_runtime_behavior() {
+    let mut c = UnwindSafeCounter::new();
+
+    // Two successful calls.
+    c.bump_panic_on_third();
+    c.bump_panic_on_third();
+    assert_eq!(c.n(), 2);
+
+    // Third call panics — JS-side observation handled by the test harness;
+    // here we just demonstrate that subsequent calls still see the
+    // pre-panic mutation (`n` was incremented to 3 before the panic).
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        c.bump_panic_on_third();
+    }));
+    assert!(result.is_err());
+    assert_eq!(c.n(), 3);
+    assert_eq!(c.panicked_at(), 3);
+}

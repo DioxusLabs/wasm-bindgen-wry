@@ -15,6 +15,11 @@ impl<T> Clone for Parent<T> {
     }
 }
 
+// Match upstream wasm-bindgen, whose `Rc<WasmRefCell<T>>`-backed `Parent` opts into the
+// unwind-safe markers (`WasmRefCell` implements both). These are safe marker traits.
+impl<T> core::panic::UnwindSafe for Parent<T> {}
+impl<T> core::panic::RefUnwindSafe for Parent<T> {}
+
 impl<T: core::fmt::Debug> core::fmt::Debug for Parent<T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("Parent")

@@ -6726,7 +6726,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen"
-version = "0.2.106-alpha.1"
+version = "0.2.122"
 dependencies = [
  "async-channel",
  "base64",
@@ -6739,13 +6739,15 @@ dependencies = [
  "lazy-js-bundle 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "once_cell",
  "pollster",
+ "serde",
+ "serde_json",
  "spin 0.10.0",
  "wry-bindgen-macro",
 ]
 
 [[package]]
 name = "wry-bindgen-macro"
-version = "0.2.106-alpha.1"
+version = "0.2.122"
 dependencies = [
  "quote",
  "wry-bindgen-macro-support",
@@ -6753,7 +6755,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen-macro-support"
-version = "0.2.106-alpha.1"
+version = "0.2.122"
 dependencies = [
  "proc-macro2",
  "quote",

@@ -1,0 +1,34 @@
+error[E0277]: the trait bound `A: IntoWasmAbi` is not satisfied
+ --> ui-tests/traits-not-implemented.rs:5:1
+  |
+5 | #[wasm_bindgen]
+  | ^^^^^^^^^^^^^^^ the trait `IntoWasmAbi` is not implemented for `A`
+  |
+  = help: the following other types implement trait `IntoWasmAbi`:
+            &'a JsOption<T>
+            &'a Undefined
+            &'a [MaybeUninit<f32>]
+            &'a [MaybeUninit<f64>]
+            &'a [MaybeUninit<i16>]
+            &'a [MaybeUninit<i32>]
+            &'a [MaybeUninit<i64>]
+            &'a [MaybeUninit<i8>]
+          and $N others
+  = note: this error originates in the attribute macro `wasm_bindgen` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0277]: the trait bound `A: IntoWasmAbi` is not satisfied
+ --> ui-tests/traits-not-implemented.rs:8:19
+  |
+8 |     pub fn foo(a: A);
+  |                   ^ the trait `IntoWasmAbi` is not implemented for `A`
+  |
+  = help: the following other types implement trait `IntoWasmAbi`:
+            &'a JsOption<T>
+            &'a Undefined
+            &'a [MaybeUninit<f32>]
+            &'a [MaybeUninit<f64>]
+            &'a [MaybeUninit<i16>]
+            &'a [MaybeUninit<i32>]
+            &'a [MaybeUninit<i64>]
+            &'a [MaybeUninit<i8>]
+          and $N others
