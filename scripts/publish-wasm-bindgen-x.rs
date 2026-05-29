@@ -161,10 +161,14 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    let mode = if args.publish { "publish" } else { "dry-run" };
-    println!("running cargo publish in {mode} mode:");
-    for krate in publish_crates {
-        run_cargo_publish(&staging_dir, krate, &args)?;
+    if args.publish {
+        println!("running cargo publish crate-by-crate:");
+        for krate in publish_crates {
+            run_cargo_publish(&staging_dir, krate, &args)?;
+        }
+    } else {
+        println!("running cargo publish --dry-run from the staged workspace:");
+        run_workspace_dry_run(&staging_dir, &publish_crates, &args)?;
     }
 
     Ok(())
@@ -242,7 +246,7 @@ Usage:
   publish-wasm-bindgen-x [--dry-run|--publish] [options]
 
 Options:
-  --dry-run             Run cargo publish --dry-run after staging. This is the default.
+  --dry-run             Run workspace cargo publish --dry-run after staging. This is the default.
   --publish, --wet-run  Run real cargo publish after staging.
   --prepare-only        Only create and rewrite the staging tree.
   --staging-dir PATH    Staging directory. Defaults to target/publish-wasm-bindgen-x.
@@ -353,13 +357,40 @@ fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
 }
 
 fn publish_crates() -> Vec<PublishCrate> {
-    let mut crates = Vec::new();
-    crates.extend_from_slice(UNRENAMED_PUBLISH_CRATES);
-    crates.extend(RENAMED_CRATES.iter().map(|krate| PublishCrate {
-        manifest: krate.manifest,
-        publish_name: krate.publish_name,
-    }));
-    crates
+    vec![
+        PublishCrate {
+            manifest: "wry-bindgen-macro-support/Cargo.toml",
+            publish_name: "wry-bindgen-macro-support",
+        },
+        PublishCrate {
+            manifest: "wry-bindgen-macro/Cargo.toml",
+            publish_name: "wry-bindgen-macro",
+        },
+        PublishCrate {
+            manifest: "wry-bindgen/Cargo.toml",
+            publish_name: "wry-bindgen",
+        },
+        PublishCrate {
+            manifest: "shims/wasm-bindgen-macro/Cargo.toml",
+            publish_name: "wasm-bindgen-macro-x",
+        },
+        PublishCrate {
+            manifest: "shims/wasm-bindgen/Cargo.toml",
+            publish_name: "wasm-bindgen-x",
+        },
+        PublishCrate {
+            manifest: "wasm-bindgen/crates/js-sys/Cargo.toml",
+            publish_name: "js-sys-x",
+        },
+        PublishCrate {
+            manifest: "wasm-bindgen/crates/web-sys/Cargo.toml",
+            publish_name: "web-sys-x",
+        },
+        PublishCrate {
+            manifest: "wasm-bindgen/crates/futures/Cargo.toml",
+            publish_name: "wasm-bindgen-futures-x",
+        },
+    ]
 }
 
 fn prepare_staging(repo_root: &Path, staging_dir: &Path) -> Result<()> {
@@ -429,7 +460,7 @@ fn copy_entry(source: &Path, destination: &Path) -> Result<()> {
 fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
     let versions = package_versions(staging_dir)?;
 
-    keep_only_workspace_sections(&staging_dir.join("wasm-bindgen/Cargo.toml"))?;
+    merge_vendored_workspace_lints(staging_dir)?;
 
     for krate in RENAMED_CRATES {
         let manifest = staging_dir.join(krate.manifest);
@@ -446,11 +477,11 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn keep_only_workspace_sections(path: &Path) -> Result<()> {
-    let text = fs::read_to_string(path)?;
+fn merge_vendored_workspace_lints(staging_dir: &Path) -> Result<()> {
+    let vendored_manifest = staging_dir.join("wasm-bindgen/Cargo.toml");
+    let text = fs::read_to_string(&vendored_manifest)?;
     let lines = Lines::from(&text);
-    let mut output = String::new();
-    let mut kept_any = false;
+    let mut lint_sections = String::new();
     let mut index = 0;
 
     while index < lines.len() {
@@ -465,26 +496,31 @@ fn keep_only_workspace_sections(path: &Path) -> Result<()> {
             index += 1;
         }
 
-        if name == "workspace" || name.starts_with("workspace.") {
+        if name.starts_with("workspace.lints.") {
             for line in &lines.lines[start..index] {
-                output.push_str(&line.body);
-                output.push_str(line.ending);
+                lint_sections.push_str(&line.body);
+                lint_sections.push_str(line.ending);
             }
-            if !output.ends_with("\n\n") {
-                output.push('\n');
-            }
-            kept_any = true;
+            lint_sections.push('\n');
         }
     }
 
-    if !kept_any {
+    if lint_sections.is_empty() {
         return Err(Error::new(format!(
-            "{} has no [workspace] sections to preserve",
-            path.display()
+            "{} has no [workspace.lints.*] sections to preserve",
+            vendored_manifest.display()
         )));
     }
 
-    fs::write(path, output)?;
+    let root_manifest = staging_dir.join("Cargo.toml");
+    let mut root = fs::read_to_string(&root_manifest)?;
+    if !root.ends_with('\n') {
+        root.push('\n');
+    }
+    root.push('\n');
+    root.push_str(&lint_sections);
+    fs::write(&root_manifest, root)?;
+    fs::remove_file(vendored_manifest)?;
     Ok(())
 }
 
@@ -498,44 +534,26 @@ fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
         ))
     })?;
 
-    for index in start..end {
-        let trimmed = lines.body(index).trim_start();
-        if !trimmed.starts_with("members") || !trimmed.contains('[') {
-            continue;
-        }
-
-        let mut close = index;
-        while close < end && lines.body(close).trim() != "]" {
-            close += 1;
-        }
-        if close == end {
-            return Err(Error::new(format!(
-                "{} has an unterminated workspace members array",
-                path.display()
-            )));
-        }
-
-        lines.replace_range(
-            index,
-            close + 1,
-            &[
-                "members = [",
-                "    \"wry-bindgen\",",
-                "    \"wry-bindgen-macro\",",
-                "    \"wry-bindgen-macro-support\",",
-                "    \"shims/wasm-bindgen\",",
-                "    \"shims/wasm-bindgen-macro\",",
-                "]",
-            ],
-        );
-        fs::write(path, lines.into_string())?;
-        return Ok(());
-    }
-
-    Err(Error::new(format!(
-        "{} is missing workspace field `members`",
-        path.display()
-    )))
+    lines.replace_range(
+        start - 1,
+        end,
+        &[
+            "[workspace]",
+            "members = [",
+            "    \"wry-bindgen\",",
+            "    \"wry-bindgen-macro\",",
+            "    \"wry-bindgen-macro-support\",",
+            "    \"shims/wasm-bindgen\",",
+            "    \"shims/wasm-bindgen-macro\",",
+            "    \"wasm-bindgen/crates/js-sys\",",
+            "    \"wasm-bindgen/crates/web-sys\",",
+            "    \"wasm-bindgen/crates/futures\",",
+            "]",
+            "resolver = \"2\"",
+        ],
+    );
+    fs::write(path, lines.into_string())?;
+    Ok(())
 }
 
 fn package_versions(staging_dir: &Path) -> Result<BTreeMap<String, String>> {
@@ -732,6 +750,43 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
         return Err(Error::new(format!(
             "cargo publish failed for {} with status {status}",
             krate.publish_name
+        )));
+    }
+
+    Ok(())
+}
+
+fn run_workspace_dry_run(
+    staging_dir: &Path,
+    publish_crates: &[PublishCrate],
+    args: &Args,
+) -> Result<()> {
+    let mut command = Command::new("cargo");
+    command.args(["publish", "--dry-run"]);
+    if args.packages.is_empty() {
+        command.arg("--workspace");
+    } else {
+        for krate in publish_crates {
+            command.args(["--package", krate.publish_name]);
+        }
+    }
+    if args.no_verify {
+        command.arg("--no-verify");
+    }
+    if let Some(registry) = &args.registry {
+        command.args(["--registry", registry]);
+    }
+    command.current_dir(staging_dir);
+
+    let status = command.status().map_err(|error| {
+        Error::new(format!(
+            "failed to run cargo publish --dry-run from {}: {error}",
+            staging_dir.display()
+        ))
+    })?;
+    if !status.success() {
+        return Err(Error::new(format!(
+            "workspace cargo publish --dry-run failed with status {status}",
         )));
     }
 
