@@ -9,7 +9,7 @@ use super::erasure::{
     GeneratedArgs, GenericEraseContext, add_js_call_bounds, add_js_call_bounds_to_generics,
     collect_constraining_type_params, generate_args, receiver_impl_type, split_method_generics,
 };
-use super::js::generate_js_code;
+use super::js::{async_promise_guard_js_code, generate_js_code};
 
 pub(super) fn generate_function(
     func: &ImportFunction,
@@ -38,10 +38,12 @@ pub(super) fn generate_function(
     };
 
     // Async imports return a JS Promise and are awaited through js-sys'
-    // JsFuture implementation. The wry-specific behavior lives in the
-    // patched js-sys Promise future, not in a separate adapter here.
+    // JsFuture implementation. The promise is wrapped so it owns a rejection
+    // handler from creation, keeping an already-rejected promise observed
+    // across the Rust-to-JS round-trip until JsFuture attaches its handlers.
     if func.is_async {
         let js_code_str = generate_js_code(func, vendor_prefixes, prefix, true);
+        let js_code_str = async_promise_guard_js_code(&js_code_str);
         return generate_async_function(func, type_generics, krate, &js_code_str, &args);
     }
 

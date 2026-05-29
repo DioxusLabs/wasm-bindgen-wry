@@ -160,3 +160,22 @@ fn wrap_body_with_try_catch(body: &str) -> String {
         "{{{{ try {{{{ return {{{{ ok: {body} }}}}; }}}} catch(e) {{{{ return {{{{ err: e }}}}; }}}} }}}}"
     )
 }
+
+/// Wrap an async import's arrow function so the promise it returns carries a
+/// rejection handler from the moment it is created.
+///
+/// `JsFuture` attaches the real resolve/reject handlers once Rust awaits the
+/// promise, but that attach is a separate Rust-to-JS call. In nonbatched mode
+/// the promise is created and handed back to Rust in one round-trip, so an
+/// already-rejected promise reaches the event loop's unhandled-rejection check
+/// before the real handler arrives. Attaching a no-op rejection handler in the
+/// same JS turn marks the promise handled; `JsFuture`'s later handlers still
+/// receive the settled value.
+pub(super) fn async_promise_guard_js_code(js_code: &str) -> String {
+    let Some((params, body)) = js_code.split_once(" => ") else {
+        panic!("generated async JS code should be an arrow function");
+    };
+    format!(
+        "{params} => {{{{ const __wryPromise = Promise.resolve({body}); __wryPromise.then(undefined, () => undefined); return __wryPromise; }}}}"
+    )
+}
