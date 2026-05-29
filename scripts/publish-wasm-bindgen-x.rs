@@ -124,7 +124,6 @@ struct Args {
     prepare_only: bool,
     staging_dir: Option<PathBuf>,
     packages: Vec<String>,
-    registry: Option<String>,
     no_verify: bool,
 }
 
@@ -215,20 +214,12 @@ fn parse_args() -> Result<Args> {
                         .ok_or_else(|| Error::new("--package requires a value"))?,
                 );
             }
-            "--registry" => {
-                args.registry = Some(
-                    raw.next()
-                        .ok_or_else(|| Error::new("--registry requires a value"))?,
-                );
-            }
             "--no-verify" => args.no_verify = true,
             _ => {
                 if let Some(path) = arg.strip_prefix("--staging-dir=") {
                     args.staging_dir = Some(PathBuf::from(path));
                 } else if let Some(package) = arg.strip_prefix("--package=") {
                     args.packages.push(package.to_string());
-                } else if let Some(registry) = arg.strip_prefix("--registry=") {
-                    args.registry = Some(registry.to_string());
                 } else {
                     return Err(Error::new(format!("unknown argument `{arg}`")));
                 }
@@ -251,7 +242,6 @@ Options:
   --prepare-only        Only create and rewrite the staging tree.
   --staging-dir PATH    Staging directory. Defaults to target/publish-wasm-bindgen-x.
   -p, --package NAME    Publish only one package. May be repeated.
-  --registry NAME       Pass --registry NAME to cargo publish.
   --no-verify           Pass --no-verify to cargo publish.
 
 The script rewrites package names only in the staging tree:
@@ -734,9 +724,6 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
     if args.no_verify {
         command.arg("--no-verify");
     }
-    if let Some(registry) = &args.registry {
-        command.args(["--registry", registry]);
-    }
     command.current_dir(crate_dir);
 
     println!("  {} {}", krate.publish_name, version);
@@ -772,9 +759,6 @@ fn run_workspace_dry_run(
     }
     if args.no_verify {
         command.arg("--no-verify");
-    }
-    if let Some(registry) = &args.registry {
-        command.args(["--registry", registry]);
     }
     command.current_dir(staging_dir);
 
