@@ -543,7 +543,7 @@ impl<'a> AppBuilder<'a> {
         }
 
         impl<F, F2> BuildFuture<F, F2> {
-            fn new(app: F,  webview_id: u64, ipc: WryIPC) -> Self {
+            fn new(app: F, webview_id: u64, ipc: WryIPC) -> Self {
                 Self {
                     app,
                     webview_id,
