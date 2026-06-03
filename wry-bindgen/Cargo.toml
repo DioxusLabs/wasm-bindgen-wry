@@ -25,6 +25,7 @@ rustversion = []
 xxx_debug_only_print_generated_code = []
 
 [dependencies]
+atomic-waker = "1.1.2"
 base64 = "0.22"
 bytemuck = "1.14"
 inventory = "0.3.21"

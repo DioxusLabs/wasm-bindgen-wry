@@ -401,11 +401,7 @@ impl WryBindgen {
         match event.into_variant() {
             // The rust thread sent us an IPCMessage to send to JS
             AppEventVariant::Ipc(ipc_msg) => self.handle_ipc_message(id, ipc_msg),
-            AppEventVariant::WebviewLoaded => {
-                let mut state = self.webview.borrow_mut();
-                let Some(webview_state) = state.get_mut(&id) else {
-                    return;
-                };
+            AppEventVariant::WebviewLoaded => self.with_webview_state(id, |webview_state| {
                 if let WebviewLoadingState::Pending {
                     pending_ipc,
                     acquire_lock,
@@ -420,12 +416,8 @@ impl WryBindgen {
                         self.request_js_lock(webview_state);
                     }
                 }
-            }
-            AppEventVariant::HandlerLock { acquire: true } => {
-                let mut state = self.webview.borrow_mut();
-                let Some(webview_state) = state.get_mut(&id) else {
-                    return;
-                };
+            }),
+            AppEventVariant::AcquireLock => self.with_webview_state(id, |webview_state| {
                 if let WebviewLoadingState::Pending { acquire_lock, .. } =
                     &mut webview_state.loading_state
                 {
@@ -433,31 +425,35 @@ impl WryBindgen {
                     return;
                 }
                 self.request_js_lock(webview_state);
-            }
-            AppEventVariant::HandlerLock { acquire: false } => {
-                let mut state = self.webview.borrow_mut();
-                let Some(webview_state) = state.get_mut(&id) else {
-                    return;
-                };
+            }),
+            AppEventVariant::ReleaseLock => self.with_webview_state(id, |webview_state| {
                 webview_state.messages.release_lock();
-            }
+            }),
         }
     }
 
     fn handle_ipc_message(&self, id: u64, ipc_msg: OutboundIPCMessage) {
+        self.with_webview_state(id, |webview_state| {
+            if let WebviewLoadingState::Pending { pending_ipc, .. } =
+                &mut webview_state.loading_state
+            {
+                assert!(
+                    pending_ipc.replace(ipc_msg).is_none(),
+                    "multiple Rust IPC messages queued before webview load"
+                );
+                return;
+            }
+
+            self.immediately_handle_ipc_message(webview_state, ipc_msg);
+        });
+    }
+
+    fn with_webview_state(&self, id: u64, f: impl FnOnce(&mut WebviewState)) {
         let mut state = self.webview.borrow_mut();
         let Some(webview_state) = state.get_mut(&id) else {
             return;
         };
-        if let WebviewLoadingState::Pending { pending_ipc, .. } = &mut webview_state.loading_state {
-            assert!(
-                pending_ipc.replace(ipc_msg).is_none(),
-                "multiple Rust IPC messages queued before webview load"
-            );
-            return;
-        }
-
-        self.immediately_handle_ipc_message(webview_state, ipc_msg)
+        f(webview_state);
     }
 
     fn request_js_lock(&self, webview_state: &mut WebviewState) {
