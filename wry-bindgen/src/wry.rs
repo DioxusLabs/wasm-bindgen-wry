@@ -641,7 +641,7 @@ impl<'a> AppBuilder<'a> {
 }
 
 /// Create a blank HTTP response.
-pub fn blank_response() -> http::Response<Vec<u8>> {
+pub(crate) fn blank_response() -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(200)
         .body(vec![])
@@ -649,7 +649,7 @@ pub fn blank_response() -> http::Response<Vec<u8>> {
 }
 
 /// Create an error HTTP response.
-pub fn error_response() -> http::Response<Vec<u8>> {
+pub(crate) fn error_response() -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(400)
         .body(vec![])
@@ -657,7 +657,7 @@ pub fn error_response() -> http::Response<Vec<u8>> {
 }
 
 /// Create a JavaScript module HTTP response.
-pub fn module_response(content: &str) -> http::Response<Vec<u8>> {
+pub(crate) fn module_response(content: &str) -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(200)
         .header("Content-Type", "application/javascript")
@@ -667,7 +667,7 @@ pub fn module_response(content: &str) -> http::Response<Vec<u8>> {
 }
 
 /// Create a not found HTTP response.
-pub fn not_found_response() -> http::Response<Vec<u8>> {
+pub(crate) fn not_found_response() -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(404)
         .body(b"Not Found".to_vec())
