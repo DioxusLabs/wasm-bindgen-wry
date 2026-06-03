@@ -52,9 +52,5 @@ path = "examples/dom.rs"
 name = "paint"
 path = "examples/paint.rs"
 
-[[example]]
-name = "reentrancy_async"
-path = "examples/reentrancy_async.rs"
-
 [lints]
 workspace = true
