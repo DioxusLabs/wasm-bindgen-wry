@@ -16,6 +16,7 @@ pub(crate) const CACHED_STRING_SENTINEL: u32 = u32::MAX;
 
 /// Error type for decoding binary IPC messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DecodeError {
     /// The message is too short (less than 12 bytes for header)
     MessageTooShort { expected: usize, actual: usize },
