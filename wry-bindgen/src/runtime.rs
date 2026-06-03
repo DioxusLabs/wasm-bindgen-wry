@@ -3,8 +3,10 @@
 //! This module handles the connection between the Rust runtime and the
 //! JavaScript environment via winit's event loop.
 
-use core::task::{Context, Poll, Waker};
+use core::task::{Context, Poll};
 use std::sync::{Arc, Condvar, Mutex};
+
+use atomic_waker::AtomicWaker;
 
 use crate::BinaryDecode;
 use crate::batch::with_runtime;
@@ -71,7 +73,7 @@ impl WryBindgenEvent {
     pub(crate) fn acquire_lock(id: u64) -> Self {
         Self {
             id,
-            event: AppEventVariant::HandlerLock { acquire: true },
+            event: AppEventVariant::AcquireLock,
         }
     }
 
@@ -79,7 +81,7 @@ impl WryBindgenEvent {
     pub(crate) fn release_lock(id: u64) -> Self {
         Self {
             id,
-            event: AppEventVariant::HandlerLock { acquire: false },
+            event: AppEventVariant::ReleaseLock,
         }
     }
 
@@ -95,47 +97,41 @@ pub(crate) enum AppEventVariant {
     Ipc(OutboundIPCMessage),
     /// The webview has finished loading
     WebviewLoaded,
-    /// Control the parked-XHR lock. `acquire` asks JS to enter the synchronous
-    /// handler and park an XHR (via `evaluate_script`); `!acquire` releases the
-    /// currently parked XHR with a blank reply, handing the event loop back to
-    /// JS. Both are main-thread-only actions the app thread can only request
-    /// through the event loop.
-    HandlerLock { acquire: bool },
+    /// Ask JS to enter the synchronous handler and park an XHR.
+    AcquireLock,
+    /// Release the currently parked XHR with a blank reply.
+    ReleaseLock,
 }
 
-pub(crate) struct IPCSenders {
+#[derive(Clone)]
+pub(crate) struct IPCSenders(Arc<IPCSenderSet>);
+
+struct IPCSenderSet {
     slots: Arc<IPCSingleSlots>,
 }
 
 impl IPCSenders {
     fn new(slots: Arc<IPCSingleSlots>) -> Self {
-        slots.add_sender();
-        Self { slots }
+        Self(Arc::new(IPCSenderSet { slots }))
     }
 
     pub(crate) fn send(&self, inbound: Inbound) -> Result<(), InboundSendError> {
-        self.slots.send(inbound)
+        self.0.slots.send(inbound)
     }
 }
 
-impl Clone for IPCSenders {
-    fn clone(&self) -> Self {
-        self.slots.add_sender();
-        Self {
-            slots: self.slots.clone(),
-        }
-    }
-}
-
-impl Drop for IPCSenders {
+// Closing on the last shared sender drop preserves channel-like shutdown
+// semantics without keeping a sender count in the receive state.
+impl Drop for IPCSenderSet {
     fn drop(&mut self) {
-        self.slots.drop_sender();
+        self.slots.close();
     }
 }
 
 struct IPCSingleSlots {
     state: Mutex<IPCSingleSlotState>,
     blocking_recv: Condvar,
+    recv_waker: AtomicWaker,
 }
 
 #[derive(Default)]
@@ -143,9 +139,6 @@ struct IPCSingleSlotState {
     /// The single pending inbound item. JS is synchronously blocked whenever an
     /// XHR is parked, so at most one item is ever outstanding.
     slot: Option<Inbound>,
-    /// Waker for the async `poll_recv` waiter (the idle driver).
-    recv_waker: Option<core::task::Waker>,
-    sender_count: usize,
     closed: bool,
 }
 
@@ -154,29 +147,7 @@ impl IPCSingleSlots {
         Self {
             state: Mutex::new(IPCSingleSlotState::default()),
             blocking_recv: Condvar::new(),
-        }
-    }
-
-    fn add_sender(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.sender_count += 1;
-    }
-
-    fn drop_sender(&self) {
-        let (should_notify, waker) = {
-            let mut state = self.state.lock().unwrap();
-            let Some(sender_count) = state.sender_count.checked_sub(1) else {
-                return;
-            };
-            state.sender_count = sender_count;
-            if sender_count == 0 {
-                (true, Self::close_state(&mut state))
-            } else {
-                (false, None)
-            }
-        };
-        if should_notify {
-            self.notify_closed(waker);
+            recv_waker: AtomicWaker::new(),
         }
     }
 
@@ -192,12 +163,9 @@ impl IPCSingleSlots {
             return Err(InboundSendError::Occupied);
         }
         state.slot = Some(inbound);
-        let waker = state.recv_waker.take();
         drop(state);
         self.blocking_recv.notify_one();
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        self.recv_waker.wake();
         Ok(())
     }
 
@@ -208,7 +176,9 @@ impl IPCSingleSlots {
         } else if state.closed {
             Poll::Ready(None)
         } else {
-            state.recv_waker = Some(cx.waker().clone());
+            // Readiness and registration are both protected by `state`, so a
+            // sender cannot fill the slot between the empty check and register.
+            self.recv_waker.register(cx.waker());
             Poll::Pending
         }
     }
@@ -234,27 +204,14 @@ impl IPCSingleSlots {
     }
 
     fn close(&self) {
-        let waker = {
-            let mut state = self.state.lock().unwrap();
-            Self::close_state(&mut state)
-        };
-        self.notify_closed(waker);
-    }
-
-    fn close_state(state: &mut IPCSingleSlotState) -> Option<Waker> {
+        let mut state = self.state.lock().unwrap();
         if state.closed {
-            None
-        } else {
-            state.closed = true;
-            state.recv_waker.take()
+            return;
         }
-    }
-
-    fn notify_closed(&self, waker: Option<Waker>) {
+        state.closed = true;
+        drop(state);
         self.blocking_recv.notify_all();
-        if let Some(waker) = waker {
-            waker.wake();
-        }
+        self.recv_waker.wake();
     }
 }
 
@@ -434,6 +391,7 @@ mod tests {
     use super::*;
     use crate::ipc::EncodedData;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::Waker;
 
     fn ipc_message(message_type: MessageType) -> IPCMessage {
         let mut data = EncodedData::default();
