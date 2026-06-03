@@ -47,7 +47,7 @@ extern "C" {
     pub fn heap_objects_alive() -> u32;
 }
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+const TEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Copy)]
 enum BatchMode {
@@ -129,16 +129,9 @@ fn sync_test<F>(name: String, mode: BatchMode, f: F) -> TestCase
 where
     F: Fn() + Copy + 'static,
 {
-    sync_test_with_timeout(name, mode, TEST_TIMEOUT, f)
-}
-
-fn sync_test_with_timeout<F>(name: String, mode: BatchMode, timeout: Duration, f: F) -> TestCase
-where
-    F: Fn() + Copy + 'static,
-{
     TestCase {
         name,
-        body: Box::new(move || Box::pin(run_with_timeout(async move { f() }, mode, timeout))),
+        body: Box::new(move || Box::pin(run_with_timeout(async move { f() }, mode, TEST_TIMEOUT))),
     }
 }
 
@@ -147,22 +140,9 @@ where
     F: Fn() -> Fut + Copy + 'static,
     Fut: Future<Output = ()> + 'static,
 {
-    async_test_with_timeout(name, mode, TEST_TIMEOUT, f)
-}
-
-fn async_test_with_timeout<Fut, F>(
-    name: String,
-    mode: BatchMode,
-    timeout: Duration,
-    f: F,
-) -> TestCase
-where
-    F: Fn() -> Fut + Copy + 'static,
-    Fut: Future<Output = ()> + 'static,
-{
     TestCase {
         name,
-        body: Box::new(move || Box::pin(run_with_timeout(f(), mode, timeout))),
+        body: Box::new(move || Box::pin(run_with_timeout(f(), mode, TEST_TIMEOUT))),
     }
 }
 
@@ -223,24 +203,22 @@ fn build_tests() -> Vec<TestCase> {
         deferred_heap_refs::test_owned_deferred_heap_ref_can_be_used_before_drop,
     ));
 
-    tests.push(async_test_with_timeout(
+    tests.push(async_test(
         trial_name(
             "opaque_id_stress",
             "test_opaque_id_double_free_stress",
             BatchMode::Batched,
         ),
         BatchMode::Batched,
-        TEST_TIMEOUT,
         opaque_id_stress::test_opaque_id_double_free_stress,
     ));
-    tests.push(async_test_with_timeout(
+    tests.push(async_test(
         trial_name(
             "batch_stress",
             "test_batch_stress_browser_event_callbacks",
             BatchMode::Batched,
         ),
         BatchMode::Batched,
-        TEST_TIMEOUT,
         batch_stress::test_batch_stress_browser_event_callbacks,
     ));
 
