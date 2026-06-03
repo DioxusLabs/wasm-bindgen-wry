@@ -13,12 +13,25 @@ use crate::ipc::MessageType;
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage, OutboundIPCMessage};
 use crate::object_store::ObjectHandle;
 
+/// An inbound item arriving from JS on the single shared channel.
+///
+/// Whichever waiter is currently active consumes it: the synchronous
+/// `recv_blocking` used inside a Rust→JS call, or the async `poll_recv` the
+/// driver awaits while idle.
 #[derive(Debug, Clone)]
-pub(crate) enum LockAcquired {
-    /// JS entered the handler only to hand Rust the JS-call capability.
-    Empty,
-    /// JS entered the handler with an inbound Evaluate that Rust must dispatch.
-    InboundEvaluate(IPCMessage),
+pub(crate) enum Inbound {
+    /// A JS→Rust message: a Respond answering an outbound call, or an Evaluate
+    /// callback Rust must dispatch.
+    Message(IPCMessage),
+    /// JS parked a fresh XHR in response to an acquire request; Rust may now
+    /// drive JS through it.
+    LockReady,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InboundSendError {
+    Closed,
+    Occupied,
 }
 
 /// Application-level events that can be sent through the event loop.
@@ -58,7 +71,7 @@ impl WryBindgenEvent {
     pub(crate) fn acquire_lock(id: u64) -> Self {
         Self {
             id,
-            event: AppEventVariant::AcquireLock,
+            event: AppEventVariant::HandlerLock { acquire: true },
         }
     }
 
@@ -66,7 +79,7 @@ impl WryBindgenEvent {
     pub(crate) fn release_lock(id: u64) -> Self {
         Self {
             id,
-            event: AppEventVariant::ReleaseLock,
+            event: AppEventVariant::HandlerLock { acquire: false },
         }
     }
 
@@ -82,10 +95,12 @@ pub(crate) enum AppEventVariant {
     Ipc(OutboundIPCMessage),
     /// The webview has finished loading
     WebviewLoaded,
-    /// Rust wants JS to enter the synchronous handler and park an XHR.
-    AcquireLock,
-    /// Rust is returning to the JS event loop with no JS payload.
-    ReleaseLock,
+    /// Control the parked-XHR lock. `acquire` asks JS to enter the synchronous
+    /// handler and park an XHR (via `evaluate_script`); `!acquire` releases the
+    /// currently parked XHR with a blank reply, handing the event loop back to
+    /// JS. Both are main-thread-only actions the app thread can only request
+    /// through the event loop.
+    HandlerLock { acquire: bool },
 }
 
 pub(crate) struct IPCSenders {
@@ -98,12 +113,8 @@ impl IPCSenders {
         Self { slots }
     }
 
-    pub(crate) fn start_send(&self, msg: IPCMessage) -> bool {
-        self.slots.send_ipc(msg)
-    }
-
-    pub(crate) fn lock_acquired(&self, acquired: LockAcquired) -> bool {
-        self.slots.send_lock(acquired)
+    pub(crate) fn send(&self, inbound: Inbound) -> Result<(), InboundSendError> {
+        self.slots.send(inbound)
     }
 }
 
@@ -129,9 +140,11 @@ struct IPCSingleSlots {
 
 #[derive(Default)]
 struct IPCSingleSlotState {
-    ipc: Option<IPCMessage>,
-    lock: Option<LockAcquired>,
-    lock_waker: Option<core::task::Waker>,
+    /// The single pending inbound item. JS is synchronously blocked whenever an
+    /// XHR is parked, so at most one item is ever outstanding.
+    slot: Option<Inbound>,
+    /// Waker for the async `poll_recv` waiter (the idle driver).
+    recv_waker: Option<core::task::Waker>,
     sender_count: usize,
     closed: bool,
 }
@@ -167,42 +180,35 @@ impl IPCSingleSlots {
         }
     }
 
-    fn send_ipc(&self, msg: IPCMessage) -> bool {
-        let mut state = self.state.lock().unwrap();
-        if state.closed || state.ipc.is_some() {
-            return false;
-        }
-        state.ipc = Some(msg);
-        drop(state);
-        self.blocking_recv.notify_one();
-        true
-    }
-
-    fn send_lock(&self, acquired: LockAcquired) -> bool {
+    /// Deliver an inbound item. The slot is single-capacity (JS is blocked while
+    /// an XHR is parked, so nothing else can arrive). Both waiters are signalled;
+    /// whichever is active consumes it and the other notification is a no-op.
+    fn send(&self, inbound: Inbound) -> Result<(), InboundSendError> {
         let mut state = self.state.lock().unwrap();
         if state.closed {
-            return false;
+            return Err(InboundSendError::Closed);
         }
-        if state.lock.is_some() {
-            return false;
+        if state.slot.is_some() {
+            return Err(InboundSendError::Occupied);
         }
-        state.lock = Some(acquired);
-        let waker = state.lock_waker.take();
+        state.slot = Some(inbound);
+        let waker = state.recv_waker.take();
         drop(state);
+        self.blocking_recv.notify_one();
         if let Some(waker) = waker {
             waker.wake();
         }
-        true
+        Ok(())
     }
 
-    fn poll_lock(&self, cx: &mut Context<'_>) -> Poll<Option<LockAcquired>> {
+    fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Option<Inbound>> {
         let mut state = self.state.lock().unwrap();
-        if let Some(value) = state.lock.take() {
+        if let Some(value) = state.slot.take() {
             Poll::Ready(Some(value))
         } else if state.closed {
             Poll::Ready(None)
         } else {
-            state.lock_waker = Some(cx.waker().clone());
+            state.recv_waker = Some(cx.waker().clone());
             Poll::Pending
         }
     }
@@ -210,8 +216,15 @@ impl IPCSingleSlots {
     fn recv_blocking(&self) -> Option<IPCMessage> {
         let mut state = self.state.lock().unwrap();
         loop {
-            if let Some(msg) = state.ipc.take() {
-                return Some(msg);
+            if let Some(inbound) = state.slot.take() {
+                match inbound {
+                    Inbound::Message(msg) => return Some(msg),
+                    // Empty locks are only requested by the idle driver, which
+                    // waits via `poll_recv`; they never reach a blocking JS call.
+                    Inbound::LockReady => {
+                        unreachable!("LockReady delivered to a blocking JS-call waiter")
+                    }
+                }
             }
             if state.closed {
                 return None;
@@ -233,7 +246,7 @@ impl IPCSingleSlots {
             None
         } else {
             state.closed = true;
-            state.lock_waker.take()
+            state.recv_waker.take()
         }
     }
 
@@ -268,12 +281,13 @@ impl WryIPC {
         (self.proxy)(WryBindgenEvent::ipc(id, responder));
     }
 
-    pub(crate) fn request_js_lock(&self, id: u64) {
+    /// Ask the main thread to have JS park an XHR (the acquire half of the lock).
+    pub(crate) fn send_acquire_lock(&self, id: u64) {
         (self.proxy)(WryBindgenEvent::acquire_lock(id));
     }
 
-    pub(crate) fn poll_lock_acquired(&self, cx: &mut Context<'_>) -> Poll<Option<LockAcquired>> {
-        self.slots.poll_lock(cx)
+    pub(crate) fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Option<Inbound>> {
+        self.slots.poll_recv(cx)
     }
 }
 
@@ -284,21 +298,14 @@ impl Drop for WryIPC {
 }
 
 pub(crate) fn progress_js_with<O>(
-    mut with_respond: impl for<'a> FnMut(DecodedData<'a>) -> O,
+    with_respond: impl for<'a> FnMut(DecodedData<'a>) -> O,
 ) -> Option<O> {
     let slots = with_runtime(|runtime| runtime.ipc().slots.clone());
     let response = slots.recv_blocking()?;
-    dispatch_inbound_message(&response, &mut with_respond)
+    dispatch_inbound_message(&response).map(with_respond)
 }
 
-pub(crate) fn handle_inbound_ipc(response: &IPCMessage) {
-    dispatch_inbound_message(response, &mut |_| unreachable!());
-}
-
-fn dispatch_inbound_message<O>(
-    response: &IPCMessage,
-    with_respond: &mut impl for<'a> FnMut(DecodedData<'a>) -> O,
-) -> Option<O> {
+pub(crate) fn dispatch_inbound_message(response: &IPCMessage) -> Option<DecodedData<'_>> {
     let decoder = response.decoded().expect("Failed to decode response");
     match decoder {
         DecodedVariant::Respond { data } => {
@@ -308,8 +315,7 @@ fn dispatch_inbound_message<O>(
                 // from here on.
                 runtime.pop_and_ack_type_cache_frame();
             });
-            let result = with_respond(data);
-            Some(result)
+            Some(data)
         }
         DecodedVariant::Evaluate { data } => {
             handle_inbound_evaluate(data);
@@ -461,17 +467,26 @@ mod tests {
     fn ipc_single_slot_rejects_second_pending_message() {
         let slots = IPCSingleSlots::new();
 
-        assert!(slots.send_ipc(ipc_message(MessageType::Evaluate)));
-        assert!(!slots.send_ipc(ipc_message(MessageType::Respond)));
+        assert_eq!(
+            slots.send(Inbound::Message(ipc_message(MessageType::Evaluate))),
+            Ok(())
+        );
+        assert_eq!(
+            slots.send(Inbound::Message(ipc_message(MessageType::Respond))),
+            Err(InboundSendError::Occupied)
+        );
 
         let received = slots.recv_blocking().expect("first message should remain");
-        assert_eq!(received.ty().unwrap(), MessageType::Evaluate);
+        assert!(matches!(received.decoded().unwrap(), DecodedVariant::Evaluate { .. }));
 
-        assert!(slots.send_ipc(ipc_message(MessageType::Respond)));
+        assert_eq!(
+            slots.send(Inbound::Message(ipc_message(MessageType::Respond))),
+            Ok(())
+        );
         let received = slots
             .recv_blocking()
             .expect("slot should accept after take");
-        assert_eq!(received.ty().unwrap(), MessageType::Respond);
+        assert!(matches!(received.decoded().unwrap(), DecodedVariant::Respond { .. }));
     }
 
     #[test]
@@ -480,8 +495,14 @@ mod tests {
 
         slots.close();
 
-        assert!(!slots.send_ipc(ipc_message(MessageType::Evaluate)));
-        assert!(!slots.send_lock(LockAcquired::Empty));
+        assert_eq!(
+            slots.send(Inbound::Message(ipc_message(MessageType::Evaluate))),
+            Err(InboundSendError::Closed)
+        );
+        assert_eq!(
+            slots.send(Inbound::LockReady),
+            Err(InboundSendError::Closed)
+        );
         assert!(slots.recv_blocking().is_none());
     }
 
@@ -491,12 +512,12 @@ mod tests {
         let (waker, wakes) = counting_waker();
         let mut cx = Context::from_waker(&waker);
 
-        assert!(matches!(ipc.poll_lock_acquired(&mut cx), Poll::Pending));
+        assert!(matches!(ipc.poll_recv(&mut cx), Poll::Pending));
 
         drop(senders);
 
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        assert!(matches!(ipc.poll_lock_acquired(&mut cx), Poll::Ready(None)));
+        assert!(matches!(ipc.poll_recv(&mut cx), Poll::Ready(None)));
     }
 
     #[test]
@@ -506,16 +527,16 @@ mod tests {
         let (waker, wakes) = counting_waker();
         let mut cx = Context::from_waker(&waker);
 
-        assert!(matches!(ipc.poll_lock_acquired(&mut cx), Poll::Pending));
+        assert!(matches!(ipc.poll_recv(&mut cx), Poll::Pending));
 
         drop(sender);
 
         assert_eq!(wakes.load(Ordering::SeqCst), 0);
-        assert!(matches!(ipc.poll_lock_acquired(&mut cx), Poll::Pending));
+        assert!(matches!(ipc.poll_recv(&mut cx), Poll::Pending));
 
         drop(sender_clone);
 
         assert_eq!(wakes.load(Ordering::SeqCst), 1);
-        assert!(matches!(ipc.poll_lock_acquired(&mut cx), Poll::Ready(None)));
+        assert!(matches!(ipc.poll_recv(&mut cx), Poll::Ready(None)));
     }
 }

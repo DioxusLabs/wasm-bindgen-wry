@@ -150,17 +150,6 @@ impl IPCMessage {
         Self { data }
     }
 
-    /// Get the message type.
-    pub fn ty(&self) -> Result<MessageType, DecodeError> {
-        let mut decoded = DecodedData::from_bytes(&self.data)?;
-        let message_type = decoded.take_u8()?;
-        match message_type {
-            0 => Ok(MessageType::Evaluate),
-            1 => Ok(MessageType::Respond),
-            v => Err(DecodeError::InvalidMessageType { value: v }),
-        }
-    }
-
     /// Decode the message into its variant form.
     pub fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
@@ -483,7 +472,6 @@ mod tests {
         encoder.push_u32(99);
 
         let msg = IPCMessage::new(encoder.to_bytes());
-        assert_eq!(msg.ty().unwrap(), MessageType::Evaluate);
 
         let DecodedVariant::Evaluate { mut data, .. } = msg.decoded().unwrap() else {
             panic!("expected Evaluate message");
