@@ -28,6 +28,7 @@ js-sys = "=0.3.99"
 futures-channel = "0.3.31"
 rand = "0.9.2"
 libtest-mimic = "0.8"
+criterion = "0.5.1"
 
 [[test]]
 name = "main_thread_tests"

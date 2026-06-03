@@ -33,6 +33,22 @@ const DROP_NATIVE_REF_FN_ID = 0xffffffff;
 const CALL_EXPORT_FN_ID = 0xfffffffe;
 
 /**
+ * Decode a base64 response body from a synchronous XHR.
+ */
+function decode_xhr_response(xhr: XMLHttpRequest): ArrayBuffer | null {
+  if (xhr.status === 200 && xhr.responseText) {
+    // Decode base64 response to ArrayBuffer
+    const responseBinary = atob(xhr.responseText);
+    const responseBytes = new Uint8Array(responseBinary.length);
+    for (let i = 0; i < responseBinary.length; i++) {
+      responseBytes[i] = responseBinary.charCodeAt(i);
+    }
+    return responseBytes.buffer;
+  }
+  return null;
+}
+
+/**
  * Sends binary data to Rust and receives binary response.
  */
 function sync_request_binary(
@@ -53,16 +69,15 @@ function sync_request_binary(
   xhr.setRequestHeader("dioxus-data", base64);
   xhr.send();
 
-  if (xhr.status === 200 && xhr.responseText) {
-    // Decode base64 response to ArrayBuffer
-    const responseBinary = atob(xhr.responseText);
-    const responseBytes = new Uint8Array(responseBinary.length);
-    for (let i = 0; i < responseBinary.length; i++) {
-      responseBytes[i] = responseBinary.charCodeAt(i);
-    }
-    return responseBytes.buffer;
-  }
-  return null;
+  return decode_xhr_response(xhr);
+}
+
+function sync_lock_request(): ArrayBuffer | null {
+  const xhr = new XMLHttpRequest();
+  xhr.open("POST", `/__wbg__/handler`, false);
+  xhr.setRequestHeader("wry-bindgen-lock", "1");
+  xhr.send();
+  return decode_xhr_response(xhr);
 }
 
 function sendEvaluateToRust(
@@ -79,21 +94,14 @@ function sendEvaluateToRust(
 }
 
 /**
- * Entry point for Rust to call JS functions using binary protocol.
- * Handles batched operations - reads and executes operations until buffer is exhausted.
- *
- * @param dataBase64 - Base64 encoded binary data containing message with operations
+ * Entry point used by Rust to acquire the synchronous XHR lock. Rust may answer
+ * the lock request with Evaluate messages; those are handled synchronously and
+ * followed by nested XHRs until Rust releases the lock with an empty response.
  */
-function evaluate_from_rust_binary(dataBase64: string) {
-  // Decode base64 to ArrayBuffer
-  const binary = atob(dataBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const remaining = handleBinaryResponse(bytes.buffer);
+function acquire_handler_lock() {
+  const remaining = handleBinaryResponse(sync_lock_request());
   if (remaining) {
-    throw new Error("Unprocessed data remaining after Evaluate handling");
+    throw new Error("Unprocessed data remaining after lock handling");
   }
 }
 
@@ -164,88 +172,90 @@ function installDeferredHeapRefs(decoder: DataDecoder): void {
 function handleBinaryResponse(
   response: ArrayBuffer | null
 ): DataDecoder | null {
-  if (!response || response.byteLength === 0) {
-    return null;
-  }
+  let currentResponse = response;
 
-  const decoder = new DataDecoder(response);
-  const msgType = decoder.takeU8();
+  while (currentResponse && currentResponse.byteLength !== 0) {
+    const decoder = new DataDecoder(currentResponse);
+    const msgType = decoder.takeU8();
 
-  if (msgType === MessageType.Respond) {
-    installDeferredHeapRefs(decoder);
-    return decoder;
-  } else if (msgType === MessageType.Evaluate) {
-    installDeferredHeapRefs(decoder);
+    if (msgType === MessageType.Respond) {
+      installDeferredHeapRefs(decoder);
+      return decoder;
+    } else if (msgType === MessageType.Evaluate) {
+      installDeferredHeapRefs(decoder);
 
-    // Read the explicit placeholder IDs Rust reserved for this batch.
-    const reservedIds = takeIdList(decoder);
-    window.jsHeap.pushReservationScope(reservedIds);
+      // Read the explicit placeholder IDs Rust reserved for this batch.
+      const reservedIds = takeIdList(decoder);
+      window.jsHeap.pushReservationScope(reservedIds);
 
-    const pendingHeapRefs = window.jsHeap.deferHeapRefs();
-    const encoder = new DataEncoder(pendingHeapRefs);
-    encoder.pushU8(MessageType.Respond);
+      const pendingHeapRefs = window.jsHeap.deferHeapRefs();
+      const encoder = new DataEncoder(pendingHeapRefs);
+      encoder.pushU8(MessageType.Respond);
 
-    // Push a single borrow frame for this entire Evaluate message.
-    // This frame persists across all operations and nested calls.
-    window.jsHeap.pushBorrowFrame();
+      // Push a single borrow frame for this entire Evaluate message.
+      // This frame persists across all operations and nested calls.
+      window.jsHeap.pushBorrowFrame();
 
-    // The borrow frame and reservation scope are popped in `finally` so a throw
-    // inside the op loop cannot leave either stack desynced. On the error path
-    // the reservation scope is popped without its fill-count check, so this
-    // cleanup never throws over and masks the original (e.g. decode) error.
-    let succeeded = false;
-    try {
-      while (decoder.hasMoreU32()) {
-        const fnId = decoder.takeU32();
-        const typeInfo = parseTypeInfo(decoder);
+      // The borrow frame and reservation scope are popped in `finally` so a throw
+      // inside the op loop cannot leave either stack desynced. On the error path
+      // the reservation scope is popped without its fill-count check, so this
+      // cleanup never throws over and masks the original (e.g. decode) error.
+      let succeeded = false;
+      try {
+        while (decoder.hasMoreU32()) {
+          const fnId = decoder.takeU32();
+          const typeInfo = parseTypeInfo(decoder);
 
-        const functionRegistry = getFunctionRegistry();
-        const jsFunction = functionRegistry[fnId];
-        if (!jsFunction) {
-          throw new Error("Unknown function ID in response: " + fnId);
+          const functionRegistry = getFunctionRegistry();
+          const jsFunction = functionRegistry[fnId];
+          if (!jsFunction) {
+            throw new Error("Unknown function ID in response: " + fnId);
+          }
+
+          let params: unknown[];
+          try {
+            params = typeInfo.paramTypes.map((paramType) => paramType.decode(decoder));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const source = String(jsFunction).replace(/\s+/g, " ").slice(0, 160);
+            throw new Error(
+              `Failed to decode parameters for function ID ${fnId} (${source}): ${message}`
+            );
+          }
+
+          const result = jsFunction(...params);
+
+          if (typeInfo.returnType instanceof HeapRefType && reservedIds.length > 0) {
+            window.jsHeap.fillNextReserved(result);
+          } else {
+            typeInfo.returnType.encode(encoder, result);
+          }
         }
-
-        let params: unknown[];
-        try {
-          params = typeInfo.paramTypes.map((paramType) => paramType.decode(decoder));
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          const source = String(jsFunction).replace(/\s+/g, " ").slice(0, 160);
-          throw new Error(
-            `Failed to decode parameters for function ID ${fnId} (${source}): ${message}`
-          );
-        }
-
-        const result = jsFunction(...params);
-
-        if (typeInfo.returnType instanceof HeapRefType && reservedIds.length > 0) {
-          window.jsHeap.fillNextReserved(result);
-        } else {
-          typeInfo.returnType.encode(encoder, result);
-        }
+        succeeded = true;
+      } finally {
+        window.jsHeap.popBorrowFrame();
+        window.jsHeap.popReservationScope(succeeded);
       }
-      succeeded = true;
-    } finally {
-      window.jsHeap.popBorrowFrame();
-      window.jsHeap.popReservationScope(succeeded);
+
+      currentResponse = sync_request_binary(
+        `/__wbg__/handler`,
+        encoder.finalize()
+      );
+      continue;
     }
 
-    const nextResponse = sync_request_binary(
-      `/__wbg__/handler`,
-      encoder.finalize()
-    );
-    return handleBinaryResponse(nextResponse);
-  }
+    if (!decoder.isEmpty()) {
+      throw new Error("Unprocessed data remaining after Evaluate handling");
+    }
 
-  if (!decoder.isEmpty()) {
-    throw new Error("Unprocessed data remaining after Evaluate handling");
+    return null;
   }
 
   return null;
 }
 
 export {
-  evaluate_from_rust_binary,
+  acquire_handler_lock,
   sendEvaluateToRust,
   DROP_NATIVE_REF_FN_ID,
   CALL_EXPORT_FN_ID,

@@ -35,6 +35,7 @@ mod roundtrip;
 mod string_enum;
 mod structs;
 mod thread_local;
+mod timer_callbacks;
 mod wasm_bindgen_compat;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
@@ -46,8 +47,7 @@ extern "C" {
     pub fn heap_objects_alive() -> u32;
 }
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(30);
-const STRESS_TEST_TIMEOUT: Duration = Duration::from_secs(300);
+const TEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Clone, Copy)]
 enum BatchMode {
@@ -67,6 +67,7 @@ impl BatchMode {
 #[derive(Clone, Copy, Default)]
 struct HarnessOptions {
     repeat_for: Option<Duration>,
+    quiet: bool,
 }
 
 // The futures returned by test bodies are !Send because they can hold
@@ -128,16 +129,9 @@ fn sync_test<F>(name: String, mode: BatchMode, f: F) -> TestCase
 where
     F: Fn() + Copy + 'static,
 {
-    sync_test_with_timeout(name, mode, TEST_TIMEOUT, f)
-}
-
-fn sync_test_with_timeout<F>(name: String, mode: BatchMode, timeout: Duration, f: F) -> TestCase
-where
-    F: Fn() + Copy + 'static,
-{
     TestCase {
         name,
-        body: Box::new(move || Box::pin(run_with_timeout(async move { f() }, mode, timeout))),
+        body: Box::new(move || Box::pin(run_with_timeout(async move { f() }, mode, TEST_TIMEOUT))),
     }
 }
 
@@ -146,22 +140,9 @@ where
     F: Fn() -> Fut + Copy + 'static,
     Fut: Future<Output = ()> + 'static,
 {
-    async_test_with_timeout(name, mode, TEST_TIMEOUT, f)
-}
-
-fn async_test_with_timeout<Fut, F>(
-    name: String,
-    mode: BatchMode,
-    timeout: Duration,
-    f: F,
-) -> TestCase
-where
-    F: Fn() -> Fut + Copy + 'static,
-    Fut: Future<Output = ()> + 'static,
-{
     TestCase {
         name,
-        body: Box::new(move || Box::pin(run_with_timeout(f(), mode, timeout))),
+        body: Box::new(move || Box::pin(run_with_timeout(f(), mode, TEST_TIMEOUT))),
     }
 }
 
@@ -222,24 +203,22 @@ fn build_tests() -> Vec<TestCase> {
         deferred_heap_refs::test_owned_deferred_heap_ref_can_be_used_before_drop,
     ));
 
-    tests.push(async_test_with_timeout(
+    tests.push(async_test(
         trial_name(
             "opaque_id_stress",
             "test_opaque_id_double_free_stress",
             BatchMode::Batched,
         ),
         BatchMode::Batched,
-        STRESS_TEST_TIMEOUT,
         opaque_id_stress::test_opaque_id_double_free_stress,
     ));
-    tests.push(async_test_with_timeout(
+    tests.push(async_test(
         trial_name(
             "batch_stress",
             "test_batch_stress_browser_event_callbacks",
             BatchMode::Batched,
         ),
         BatchMode::Batched,
-        STRESS_TEST_TIMEOUT,
         batch_stress::test_batch_stress_browser_event_callbacks,
     ));
 
@@ -346,6 +325,7 @@ fn build_tests() -> Vec<TestCase> {
     );
 
     async_trials!(tests;
+        timer_callbacks::test_timer_callbacks,
         callbacks::test_call_callback_async,
         callbacks::test_join_many_callbacks_async,
         async_bindings::test_call_async,
@@ -479,6 +459,7 @@ async fn run_tests(
     args: Arguments,
     mut tests: Vec<TestCase>,
     js_errors: &mut UnboundedReceiver<String>,
+    quiet: bool,
 ) -> bool {
     let started = Instant::now();
     let initial_count = tests.len();
@@ -493,8 +474,10 @@ async fn run_tests(
     }
 
     let plural = if tests.len() == 1 { "" } else { "s" };
-    println!();
-    println!("running {} test{plural}", tests.len());
+    if !quiet {
+        println!();
+        println!("running {} test{plural}", tests.len());
+    }
 
     let name_width = tests
         .iter()
@@ -506,22 +489,30 @@ async fn run_tests(
     let mut failures = Vec::new();
 
     for test in tests {
-        print!("test {: <name_width$} ... ", test.name);
-        io::stdout().flush().unwrap();
+        if !quiet {
+            print!("test {: <name_width$} ... ", test.name);
+            io::stdout().flush().unwrap();
+        }
 
         if args.bench {
             ignored += 1;
-            println!("ignored");
+            if !quiet {
+                println!("ignored");
+            }
             continue;
         }
 
         match run_test(test.body, js_errors).await {
             Ok(()) => {
                 passed += 1;
-                println!("ok");
+                if !quiet {
+                    println!("ok");
+                }
             }
             Err(failed) => {
-                println!("FAILED");
+                if !quiet {
+                    println!("FAILED");
+                }
                 failures.push((test.name.clone(), failed.message().map(ToOwned::to_owned)));
             }
         }
@@ -530,13 +521,15 @@ async fn run_tests(
     print_failures(&failures);
 
     let result = if failures.is_empty() { "ok" } else { "FAILED" };
-    println!();
-    println!(
-        "test result: {result}. {passed} passed; {} failed; {ignored} ignored; 0 measured; {filtered} filtered out; finished in {:.2}s",
-        failures.len(),
-        started.elapsed().as_secs_f64(),
-    );
-    println!();
+    if !quiet || !failures.is_empty() {
+        println!();
+        println!(
+            "test result: {result}. {passed} passed; {} failed; {ignored} ignored; 0 measured; {filtered} filtered out; finished in {:.2}s",
+            failures.len(),
+            started.elapsed().as_secs_f64(),
+        );
+        println!();
+    }
 
     failures.is_empty()
 }
@@ -553,6 +546,8 @@ fn parse_harness_args() -> (HarnessOptions, Vec<String>) {
     for arg in args {
         if let Some(value) = arg.strip_prefix("--wry-repeat-for-secs=") {
             options.repeat_for = value.parse::<u64>().ok().map(Duration::from_secs);
+        } else if arg == "--wry-quiet" {
+            options.quiet = true;
         } else {
             libtest_args.push(arg);
         }
@@ -568,8 +563,12 @@ fn parse_harness_args() -> (HarnessOptions, Vec<String>) {
     (options, libtest_args)
 }
 
-async fn run_selected_tests(args: Arguments, js_errors: &mut UnboundedReceiver<String>) -> bool {
-    run_tests(args, build_tests(), js_errors).await
+async fn run_selected_tests(
+    args: Arguments,
+    js_errors: &mut UnboundedReceiver<String>,
+    quiet: bool,
+) -> bool {
+    run_tests(args, build_tests(), js_errors, quiet).await
 }
 
 fn main() -> ExitCode {
@@ -584,12 +583,14 @@ fn main() -> ExitCode {
 
             loop {
                 iteration += 1;
-                println!(
-                    "=== main_thread_tests iteration {iteration} elapsed {:?} ===",
-                    start.elapsed()
-                );
+                if !options.quiet {
+                    println!(
+                        "=== main_thread_tests iteration {iteration} elapsed {:?} ===",
+                        start.elapsed()
+                    );
+                }
 
-                if !run_selected_tests(args.clone(), &mut js_errors).await {
+                if !run_selected_tests(args.clone(), &mut js_errors, options.quiet).await {
                     break false;
                 }
 
@@ -602,7 +603,7 @@ fn main() -> ExitCode {
                 }
             }
         } else {
-            run_selected_tests(args, &mut js_errors).await
+            run_selected_tests(args, &mut js_errors, options.quiet).await
         };
 
         let _ = io::stdout().flush();

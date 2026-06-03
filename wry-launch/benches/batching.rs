@@ -1,3 +1,4 @@
+use criterion::black_box;
 use wasm_bindgen::wasm_bindgen;
 use wry_launch::{self, JsValue};
 
@@ -8,12 +9,16 @@ extern "C" {
 }
 
 pub fn bench_batch_add_1() {
-    add_numbers(10, 15);
+    black_box(add_numbers(black_box(10), black_box(15)));
 }
 
 pub fn bench_batch_add_100() {
-    let _results =
-        wry_launch::batch(|| (0..100).map(|_| add_numbers(10, 15)).collect::<Vec<u32>>());
+    let results = wry_launch::batch(|| {
+        (0..100)
+            .map(|_| add_numbers(black_box(10), black_box(15)))
+            .collect::<Vec<u32>>()
+    });
+    black_box(results);
 }
 
 #[wasm_bindgen(inline_js = "export function create_element(tag) {
@@ -25,13 +30,15 @@ extern "C" {
 }
 
 pub fn bench_batch_create_element_1() {
-    let _elem = create_element("div");
+    black_box(create_element(black_box("div")));
 }
 
 pub fn bench_batch_create_element_100() {
     wry_launch::batch(|| {
         let tag = "div".to_string();
-        let results = (0..100).map(|_| create_element(&tag)).collect::<Vec<_>>();
-        drop(results);
+        let results = (0..100)
+            .map(|_| create_element(black_box(&tag)))
+            .collect::<Vec<_>>();
+        black_box(results);
     });
 }

@@ -16,6 +16,7 @@ pub(crate) const CACHED_STRING_SENTINEL: u32 = u32::MAX;
 
 /// Error type for decoding binary IPC messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum DecodeError {
     /// The message is too short (less than 12 bytes for header)
     MessageTooShort { expected: usize, actual: usize },
@@ -104,20 +105,11 @@ pub(crate) enum MessageType {
 #[derive(Debug, Clone)]
 pub(crate) struct OutboundIPCMessage {
     pub(crate) message: IPCMessage,
-    /// For Evaluate messages, whether this is a fresh top-level call from the
-    /// app future (delivered via `evaluate_script`) rather than a nested
-    /// response inside a JS→Rust callback (delivered through the parked XHR).
-    ///
-    /// This must be decided by the runtime, which alone knows its callback
-    /// depth: a parked-but-unprocessed callback XHR would otherwise make a
-    /// genuinely top-level eval look nested to the transport. Responds ignore
-    /// this flag — they always answer the parked XHR.
-    pub(crate) top_level: bool,
 }
 
 impl OutboundIPCMessage {
-    pub(crate) fn new(message: IPCMessage, top_level: bool) -> Self {
-        Self { message, top_level }
+    pub(crate) fn new(message: IPCMessage) -> Self {
+        Self { message }
     }
 }
 
@@ -159,17 +151,6 @@ impl IPCMessage {
         Self { data }
     }
 
-    /// Get the message type.
-    pub fn ty(&self) -> Result<MessageType, DecodeError> {
-        let mut decoded = DecodedData::from_bytes(&self.data)?;
-        let message_type = decoded.take_u8()?;
-        match message_type {
-            0 => Ok(MessageType::Evaluate),
-            1 => Ok(MessageType::Respond),
-            v => Err(DecodeError::InvalidMessageType { value: v }),
-        }
-    }
-
     /// Decode the message into its variant form.
     pub fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
         let mut decoded = DecodedData::from_bytes(&self.data)?;
@@ -185,11 +166,6 @@ impl IPCMessage {
     /// Get the raw data bytes.
     pub fn data(&self) -> &[u8] {
         &self.data
-    }
-
-    /// Consume the message and return the raw data.
-    pub fn into_data(self) -> Vec<u8> {
-        self.data
     }
 }
 
@@ -341,22 +317,9 @@ pub struct EncodedData {
 }
 
 impl EncodedData {
-    /// Create a new empty encoder.
-    pub fn new() -> Self {
-        Self {
-            u8_buf: Vec::new(),
-            u16_buf: Vec::new(),
-            u32_buf: Vec::new(),
-            str_buf: Vec::new(),
-            heap_ids_to_recycle_after_flush: Vec::new(),
-            pending_type_ids: Vec::new(),
-            needs_flush: false,
-        }
-    }
-
     /// Mark that this batch needs to be flushed before returning.
     /// Used for stack-allocated callbacks that require synchronous invocation.
-    pub fn mark_needs_flush(&mut self) {
+    pub(crate) fn mark_needs_flush(&mut self) {
         self.needs_flush = true;
     }
 
@@ -492,12 +455,11 @@ mod tests {
 
     #[test]
     fn message_header_only_carries_message_type() {
-        let mut encoder = EncodedData::new();
+        let mut encoder = EncodedData::default();
         encoder.push_u8(MessageType::Evaluate as u8);
         encoder.push_u32(99);
 
         let msg = IPCMessage::new(encoder.to_bytes());
-        assert_eq!(msg.ty().unwrap(), MessageType::Evaluate);
 
         let DecodedVariant::Evaluate { mut data, .. } = msg.decoded().unwrap() else {
             panic!("expected Evaluate message");
@@ -507,10 +469,10 @@ mod tests {
 
     #[test]
     fn deferred_recycle_ids_are_encoder_local() {
-        let mut queued = EncodedData::new();
+        let mut queued = EncodedData::default();
         queued.defer_heap_id_recycle_until_flush(10);
 
-        let mut unrelated = EncodedData::new();
+        let mut unrelated = EncodedData::default();
         unrelated.defer_heap_id_recycle_until_flush(20);
 
         assert_eq!(unrelated.take_heap_ids_to_recycle_after_flush(), vec![20]);
@@ -519,10 +481,10 @@ mod tests {
 
     #[test]
     fn deferred_recycle_ids_extend_with_encoder_data() {
-        let mut outer = EncodedData::new();
+        let mut outer = EncodedData::default();
         outer.defer_heap_id_recycle_until_flush(10);
 
-        let mut encoded_during_op = EncodedData::new();
+        let mut encoded_during_op = EncodedData::default();
         encoded_during_op.defer_heap_id_recycle_until_flush(20);
 
         outer.extend(&encoded_during_op);

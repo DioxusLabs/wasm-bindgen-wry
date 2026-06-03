@@ -9,7 +9,7 @@ mod tests {
     fn interned_strings_encode_as_cached_heap_refs() {
         crate::intern::insert_for_test("cached", 0x0000_0001_0000_0002);
 
-        let mut cached = EncodedData::new();
+        let mut cached = EncodedData::default();
         "cached".encode(&mut cached);
         assert_eq!(
             cached.u32_buf,
@@ -17,7 +17,7 @@ mod tests {
         );
         assert!(cached.str_buf.is_empty());
 
-        let mut inline = EncodedData::new();
+        let mut inline = EncodedData::default();
         "uncached".encode(&mut inline);
         assert_eq!(inline.u32_buf, vec![8]);
         assert_eq!(inline.str_buf, b"uncached".to_vec());
@@ -42,7 +42,7 @@ mod decode_error_tests {
         macro_rules! assert_decode_err {
             ($($t:ty),* $(,)?) => {$({
                 // header only, every value sub-buffer empty
-                let bytes = EncodedData::new().to_bytes();
+                let bytes = EncodedData::default().to_bytes();
                 let mut d = DecodedData::from_bytes(&bytes).unwrap();
                 assert!(
                     <$t as BinaryDecode>::decode(&mut d).is_err(),
@@ -58,7 +58,7 @@ mod decode_error_tests {
 
     #[test]
     fn char_decode_rejects_invalid_scalar_value() {
-        let mut enc = EncodedData::new();
+        let mut enc = EncodedData::default();
         enc.push_u32(0x11_0000); // one past the maximum Unicode scalar value
         let bytes = enc.to_bytes();
         let mut d = DecodedData::from_bytes(&bytes).unwrap();
@@ -68,7 +68,7 @@ mod decode_error_tests {
     #[test]
     fn string_decode_errors_on_truncation_and_bad_utf8() {
         // length header claims 5 bytes, but the string buffer is empty
-        let mut enc = EncodedData::new();
+        let mut enc = EncodedData::default();
         enc.push_u32(5);
         let bytes = enc.to_bytes();
         let mut d = DecodedData::from_bytes(&bytes).unwrap();
@@ -78,7 +78,7 @@ mod decode_error_tests {
         ));
 
         // length header says 2 bytes, body is invalid UTF-8
-        let mut enc = EncodedData::new();
+        let mut enc = EncodedData::default();
         enc.push_u32(2);
         enc.str_buf.extend_from_slice(&[0xff, 0xfe]);
         let bytes = enc.to_bytes();
@@ -92,7 +92,7 @@ mod decode_error_tests {
     #[test]
     fn clamped_decode_errors_when_buffer_truncated() {
         // length header claims 3 bytes, only 1 present
-        let mut enc = EncodedData::new();
+        let mut enc = EncodedData::default();
         enc.push_u32(3);
         enc.push_u8(1);
         let bytes = enc.to_bytes();

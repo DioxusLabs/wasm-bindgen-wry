@@ -93,10 +93,10 @@ where
 struct Inner<T = JsValue> {
     result: Option<Result<T, JsValue>>,
     task: Option<Waker>,
-    callbacks: Option<Rc<(
+    callbacks: Option<(
         Closure<dyn FnMut(T) -> Result<(), JsError>>,
         Closure<dyn FnMut(JsValue) -> Result<(), JsError>>,
-    )>>,
+    )>,
 }
 
 /// A Rust `Future` backed by a JavaScript `Promise`.
@@ -195,10 +195,9 @@ impl<T: FromWasmAbi + 'static> From<Promise<T>> for JsFuture<T> {
             })
         };
 
-        let callbacks = Rc::new((resolve, reject));
-        state.borrow_mut().callbacks = Some(callbacks.clone());
+        let _ = js.then_with_reject(&resolve, &reject);
 
-        let _ = js.then_with_reject(&callbacks.as_ref().0, &callbacks.as_ref().1);
+        state.borrow_mut().callbacks = Some((resolve, reject));
 
         JsFuture { inner: state }
     }

@@ -64,11 +64,6 @@ pub struct Runtime {
     webview_id: u64,
     /// Thread locals associated with the runtime
     thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
-    /// How many JS→Rust callbacks (inbound Evaluates) are currently executing
-    /// on the stack. Zero means any outbound Evaluate is a fresh top-level call
-    /// from the app future; non-zero means it is a nested response inside a
-    /// callback and must travel back through the parked JS XHR.
-    inbound_evaluate_depth: u32,
 }
 
 impl Runtime {
@@ -88,72 +83,59 @@ impl Runtime {
             ipc,
             webview_id,
             thread_locals: BTreeMap::new(),
-            inbound_evaluate_depth: 0,
         }
     }
 
-    /// Mark that a JS→Rust callback (inbound Evaluate) has started executing.
-    pub(crate) fn enter_inbound_evaluate(&mut self) {
-        self.inbound_evaluate_depth += 1;
-    }
-
-    /// Mark that a JS→Rust callback has finished executing.
-    pub(crate) fn leave_inbound_evaluate(&mut self) {
-        self.inbound_evaluate_depth -= 1;
-    }
-
-    /// Whether we are currently executing inside a JS→Rust callback. When true,
-    /// outbound Evaluates are nested responses to the parked JS XHR rather than
-    /// fresh top-level calls.
-    fn in_inbound_evaluate(&self) -> bool {
-        self.inbound_evaluate_depth > 0
-    }
-
     fn new_encoder_for_evaluate() -> EncodedData {
-        let mut encoder = EncodedData::new();
+        let mut encoder = EncodedData::default();
         encoder.push_u8(MessageType::Evaluate as u8);
         encoder
     }
 
-    /// Record a JS-allocated heap ID from a response.
-    pub fn observe_js_heap_id(&mut self, id: u64) {
-        self.heap_ids.observe_js_heap_id(id);
+    /// Get a reference to the IPC layer.
+    pub(crate) fn ipc(&self) -> &WryIPC {
+        &self.ipc
+    }
+
+    /// Get the webview ID associated with this runtime.
+    pub(crate) fn webview_id(&self) -> u64 {
+        self.webview_id
     }
 
     /// Get the next heap ID for a return value placeholder.
-    pub fn get_next_placeholder_id(&mut self) -> u64 {
+    pub(crate) fn get_next_placeholder_id(&mut self) -> u64 {
         self.heap_ids.next_placeholder_id()
     }
 
     /// Allocate the next ID for a JS object sent without encoding an ID. The ID
     /// joins the pending install batch shipped on the next Rust-to-JS message.
-    pub fn get_next_inbound_js_heap_id(&mut self) -> u64 {
+    pub(crate) fn get_next_inbound_js_heap_id(&mut self) -> u64 {
         self.heap_ids.next_inbound_js_heap_id()
     }
 
     /// Get the next borrow ID from the borrow stack (indices 1-127).
     /// The borrow stack grows downward from JSIDX_OFFSET (128) toward 1.
     /// Panics if the borrow stack overflows (more than 127 borrowed refs in one operation).
-    pub fn get_next_borrow_id(&mut self) -> u64 {
+    pub(crate) fn get_next_borrow_id(&mut self) -> u64 {
         self.borrow_ids.next_borrow_id()
     }
 
     /// Push a borrow frame before a nested operation that may use borrowed refs.
     /// This saves the current borrow stack pointer so we can restore it later.
-    pub fn push_borrow_frame(&mut self) {
+    pub(crate) fn push_borrow_frame(&mut self) {
         self.borrow_ids.push_frame();
     }
 
     /// Pop a borrow frame after a nested operation completes.
     /// This restores the borrow stack pointer to where it was before the nested operation.
-    pub fn pop_borrow_frame(&mut self) {
+    pub(crate) fn pop_borrow_frame(&mut self) {
         self.borrow_ids.pop_frame();
     }
 
     /// Track a heap ID as released and queue it for JS drop when appropriate.
     /// Returns the ID when there is no open operation frame to batch it into,
     /// signalling the caller to notify JS immediately.
-    pub fn release_heap_id(&mut self, id: u64) -> Option<u64> {
+    pub(crate) fn release_heap_id(&mut self, id: u64) -> Option<u64> {
         self.heap_ids.release_heap_slot(id);
         match self.op_free_stack.last_mut() {
             Some(frame) => {
@@ -164,15 +146,15 @@ impl Runtime {
         }
     }
 
-    pub fn recycle_heap_id(&mut self, id: u64) {
+    pub(crate) fn recycle_heap_id(&mut self, id: u64) {
         self.heap_ids.recycle_heap_id(id);
     }
 
-    pub fn recycle_heap_id_if_released(&mut self, id: u64) -> bool {
+    pub(crate) fn recycle_heap_id_if_released(&mut self, id: u64) -> bool {
         self.heap_ids.recycle_heap_id_if_released(id)
     }
 
-    pub fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
+    pub(crate) fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
         self.encoder.defer_heap_id_recycle_until_flush(id);
     }
 
@@ -212,10 +194,7 @@ impl Runtime {
         } else {
             self.type_cache.ack_type_ids(&pending_type_ids);
         }
-        // Only Evaluates (reserved_ids is Some) can be top-level; they are
-        // top-level exactly when no callback is currently on the stack.
-        let top_level = reserved_ids.is_some() && !self.in_inbound_evaluate();
-        OutboundIPCMessage::new(crate::ipc::IPCMessage::new(encoder.to_bytes()), top_level)
+        OutboundIPCMessage::new(crate::ipc::IPCMessage::new(encoder.to_bytes()))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -384,16 +363,6 @@ impl Runtime {
         }
         object
     }
-
-    /// Get a reference to the IPC layer.
-    pub(crate) fn ipc(&self) -> &WryIPC {
-        &self.ipc
-    }
-
-    /// Get the webview ID associated with this runtime.
-    pub(crate) fn webview_id(&self) -> u64 {
-        self.webview_id
-    }
 }
 
 fn push_id_list(buf: &mut Vec<u32>, ids: &[u64]) {
@@ -456,7 +425,7 @@ pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
 }
 
 /// Check if we're currently inside a batch() call
-pub fn is_batching() -> bool {
+pub(crate) fn is_batching() -> bool {
     with_runtime(|state| state.is_batching())
 }
 
@@ -695,6 +664,7 @@ pub fn batch_async<'a, R, F: core::future::Future<Output = R> + 'a>(
     std::future::poll_fn(move |ctx| batch(|| f.as_mut().poll(ctx)))
 }
 
+/// Force a flush of the current batch, even if we're inside a batch() call
 pub fn force_flush() {
     let has_pending = with_runtime(|state| !state.is_empty());
     if has_pending {
@@ -707,7 +677,7 @@ mod take_encoder_tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::ipc::IPCMessage;
+    use crate::ipc::{DecodedVariant, IPCMessage};
     use crate::runtime::WryIPC;
 
     fn test_runtime() -> Runtime {
@@ -722,7 +692,10 @@ mod take_encoder_tests {
 
         let first = runtime.take_encoder();
         let bytes = IPCMessage::new(first.to_bytes());
-        assert_eq!(bytes.ty().unwrap(), MessageType::Evaluate);
+        assert!(matches!(
+            bytes.decoded().unwrap(),
+            DecodedVariant::Evaluate { .. }
+        ));
         // The encoder holds only the single message-type byte — no per-message
         // request ID lives on the wire anymore.
         assert!(first.u32_buf.is_empty());

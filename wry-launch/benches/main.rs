@@ -1,101 +1,57 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use criterion::Criterion;
 
 mod batching;
 mod roundtrip;
 
-struct BenchResult {
-    name: String,
-    iterations: u64,
-    total_time: Duration,
-    avg_time: Duration,
+fn run_benchmarks(criterion: &mut Criterion) {
+    let mut roundtrip_group = criterion.benchmark_group("roundtrip");
+    roundtrip_group.bench_function("u32", |b| b.iter(roundtrip::bench_roundtrip_u32));
+    roundtrip_group.bench_function("u64", |b| b.iter(roundtrip::bench_roundtrip_u64));
+    roundtrip_group.bench_function("i32", |b| b.iter(roundtrip::bench_roundtrip_i32));
+    roundtrip_group.bench_function("i64", |b| b.iter(roundtrip::bench_roundtrip_i64));
+    roundtrip_group.bench_function("f32", |b| b.iter(roundtrip::bench_roundtrip_f32));
+    roundtrip_group.bench_function("f64", |b| b.iter(roundtrip::bench_roundtrip_f64));
+    roundtrip_group.bench_function("bool", |b| b.iter(roundtrip::bench_roundtrip_bool));
+    roundtrip_group.bench_function("string", |b| b.iter(roundtrip::bench_roundtrip_string));
+    roundtrip_group.bench_function("large-string", |b| {
+        b.iter(roundtrip::bench_roundtrip_large_string)
+    });
+    roundtrip_group.bench_function("option_some", |b| {
+        b.iter(roundtrip::bench_roundtrip_option_some)
+    });
+    roundtrip_group.bench_function("option_none", |b| {
+        b.iter(roundtrip::bench_roundtrip_option_none)
+    });
+    roundtrip_group.finish();
+
+    let mut batch = criterion.benchmark_group("batch");
+    batch.bench_function("add_1_calls", |b| b.iter(batching::bench_batch_add_1));
+    batch.bench_function("add_100_calls", |b| b.iter(batching::bench_batch_add_100));
+    batch.bench_function("create_element_1_calls", |b| {
+        b.iter(batching::bench_batch_create_element_1)
+    });
+    batch.bench_function("create_element_100_calls", |b| {
+        b.iter(batching::bench_batch_create_element_100)
+    });
+    batch.finish();
 }
 
-impl BenchResult {
-    fn print(&self) {
-        println!(
-            "{:<50} {:>12} iters  {:?}/iter  {:>10.2} ms total",
-            self.name,
-            self.iterations,
-            self.avg_time,
-            self.total_time.as_secs_f64() * 1000.0
-        );
-    }
-}
-
-fn bench<F: Fn()>(name: &str, f: F) -> BenchResult {
-    let warmup_iters = 10;
-    for _ in 0..warmup_iters {
-        f();
-    }
-
-    let iterations = 100u64;
-
-    let start = Instant::now();
-    for _ in 0..iterations {
-        f();
-    }
-    let elapsed = start.elapsed();
-
-    let avg_time = elapsed.div_f64(iterations as f64);
-
-    BenchResult {
-        name: name.to_string(),
-        iterations,
-        total_time: elapsed,
-        avg_time,
-    }
+fn criterion() -> Criterion {
+    Criterion::default()
+        .warm_up_time(Duration::from_millis(250))
+        .measurement_time(Duration::from_millis(750))
+        .sample_size(10)
+        .configure_from_args()
+        .without_plots()
 }
 
 fn main() {
     wry_launch::run_headless(|| async {
-        println!("\n{:=<100}", "");
-        println!("{:^100}", "wry-bindgen Benchmarks");
-        println!("{:=<100}\n", "");
-
-        println!(
-            "{:<50} {:>12}        {:>10}        {:>10}",
-            "Benchmark", "Iterations", "Avg Time", "Total Time"
-        );
-        println!("{:-<100}", "");
-
-        let results = vec![
-            bench("roundtrip/u32", roundtrip::bench_roundtrip_u32),
-            bench("roundtrip/u64", roundtrip::bench_roundtrip_u64),
-            bench("roundtrip/i32", roundtrip::bench_roundtrip_i32),
-            bench("roundtrip/i64", roundtrip::bench_roundtrip_i64),
-            bench("roundtrip/f32", roundtrip::bench_roundtrip_f32),
-            bench("roundtrip/f64", roundtrip::bench_roundtrip_f64),
-            bench("roundtrip/bool", roundtrip::bench_roundtrip_bool),
-            bench("roundtrip/string", roundtrip::bench_roundtrip_string),
-            bench(
-                "roundtrip/large-string",
-                roundtrip::bench_roundtrip_large_string,
-            ),
-            bench(
-                "roundtrip/option_some",
-                roundtrip::bench_roundtrip_option_some,
-            ),
-            bench(
-                "roundtrip/option_none",
-                roundtrip::bench_roundtrip_option_none,
-            ),
-            bench("batch/add_1_calls", batching::bench_batch_add_1),
-            bench("batch/add_100_calls", batching::bench_batch_add_100),
-            bench(
-                "batch/create_element_1_calls",
-                batching::bench_batch_create_element_1,
-            ),
-            bench(
-                "batch/create_element_100_calls",
-                batching::bench_batch_create_element_100,
-            ),
-        ];
-
-        for result in &results {
-            result.print();
-        }
-
-        println!("{:=<100}\n", "");
+        let mut criterion = criterion();
+        run_benchmarks(&mut criterion);
+        criterion.final_summary();
     })
     .unwrap();
 }
