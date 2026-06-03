@@ -317,7 +317,7 @@ pub struct EncodedData {
 
 impl EncodedData {
     /// Create a new empty encoder.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             u8_buf: Vec::new(),
             u16_buf: Vec::new(),
@@ -331,7 +331,7 @@ impl EncodedData {
 
     /// Mark that this batch needs to be flushed before returning.
     /// Used for stack-allocated callbacks that require synchronous invocation.
-    pub fn mark_needs_flush(&mut self) {
+    pub(crate) fn mark_needs_flush(&mut self) {
         self.needs_flush = true;
     }
 

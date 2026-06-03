@@ -61,14 +61,6 @@ impl<T: SlabId> IdSlab<T> {
         id
     }
 
-    fn reserve_exact(&mut self, id: T) {
-        self.free_ids.remove(&id);
-        if id >= self.next_id {
-            self.next_id = id.next().expect("ID space exhausted");
-        }
-        self.mark_live(id);
-    }
-
     fn release(&mut self, id: T) {
         assert!(
             self.live_ids.remove(&id),
@@ -107,11 +99,6 @@ impl<T: SlabId> IdSlab<T> {
         self.live_ids.contains(&id)
     }
 
-    #[cfg(test)]
-    fn is_reusable(&self, id: T) -> bool {
-        self.free_ids.contains(&id)
-    }
-
     fn mark_live(&mut self, id: T) {
         assert!(self.live_ids.insert(id), "ID {id} is already live");
     }
@@ -144,14 +131,6 @@ impl HeapIds {
 
     fn next_heap_id(&mut self) -> u64 {
         self.slab.alloc()
-    }
-
-    /// Record a heap ID allocated by JS in a response so future Rust-side
-    /// allocations cannot collide with it.
-    pub(crate) fn observe_js_heap_id(&mut self, id: u64) {
-        if id >= JSIDX_RESERVED {
-            self.slab.reserve_exact(id);
-        }
     }
 
     /// Get the next heap ID for a return value placeholder.
@@ -264,32 +243,6 @@ mod tests {
     }
 
     #[test]
-    fn reserve_exact_removes_id_from_free_list() {
-        let mut slab = IdSlab::new(10_u64);
-        let id = slab.alloc();
-        slab.release(id);
-        slab.recycle(id);
-        assert!(slab.is_reusable(id));
-
-        slab.reserve_exact(id);
-        assert!(slab.contains(id));
-        assert!(!slab.is_reusable(id));
-        assert_eq!(slab.alloc(), 11);
-    }
-
-    #[test]
-    fn recycle_if_released_leaves_reobserved_id_live() {
-        let mut slab = IdSlab::new(10_u64);
-        let id = slab.alloc();
-        slab.release(id);
-        slab.reserve_exact(id);
-
-        assert!(!slab.recycle_if_released(id));
-        assert!(slab.contains(id));
-        assert!(!slab.is_reusable(id));
-    }
-
-    #[test]
     fn heap_ids_start_at_js_reserved_and_reuse_after_recycle() {
         let mut heap = HeapIds::new();
         let id = heap.next_placeholder_id();
@@ -343,17 +296,6 @@ mod tests {
 
         let second = heap.next_inbound_js_heap_id();
         assert_eq!(heap.take_pending_install_ids(), vec![second]);
-    }
-
-    #[test]
-    fn observe_js_heap_id_reserves_recycled_id() {
-        let mut heap = HeapIds::new();
-        let id = heap.next_placeholder_id();
-        heap.release_heap_slot(id);
-        heap.recycle_heap_id(id);
-
-        heap.observe_js_heap_id(id);
-        assert_ne!(heap.next_placeholder_id(), id);
     }
 
     #[test]

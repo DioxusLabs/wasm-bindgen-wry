@@ -477,7 +477,10 @@ mod tests {
         );
 
         let received = slots.recv_blocking().expect("first message should remain");
-        assert!(matches!(received.decoded().unwrap(), DecodedVariant::Evaluate { .. }));
+        assert!(matches!(
+            received.decoded().unwrap(),
+            DecodedVariant::Evaluate { .. }
+        ));
 
         assert_eq!(
             slots.send(Inbound::Message(ipc_message(MessageType::Respond))),
@@ -486,7 +489,10 @@ mod tests {
         let received = slots
             .recv_blocking()
             .expect("slot should accept after take");
-        assert!(matches!(received.decoded().unwrap(), DecodedVariant::Respond { .. }));
+        assert!(matches!(
+            received.decoded().unwrap(),
+            DecodedVariant::Respond { .. }
+        ));
     }
 
     #[test]

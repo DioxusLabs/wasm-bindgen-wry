@@ -102,45 +102,40 @@ impl Runtime {
         self.webview_id
     }
 
-    /// Record a JS-allocated heap ID from a response.
-    pub fn observe_js_heap_id(&mut self, id: u64) {
-        self.heap_ids.observe_js_heap_id(id);
-    }
-
     /// Get the next heap ID for a return value placeholder.
-    pub fn get_next_placeholder_id(&mut self) -> u64 {
+    pub(crate) fn get_next_placeholder_id(&mut self) -> u64 {
         self.heap_ids.next_placeholder_id()
     }
 
     /// Allocate the next ID for a JS object sent without encoding an ID. The ID
     /// joins the pending install batch shipped on the next Rust-to-JS message.
-    pub fn get_next_inbound_js_heap_id(&mut self) -> u64 {
+    pub(crate) fn get_next_inbound_js_heap_id(&mut self) -> u64 {
         self.heap_ids.next_inbound_js_heap_id()
     }
 
     /// Get the next borrow ID from the borrow stack (indices 1-127).
     /// The borrow stack grows downward from JSIDX_OFFSET (128) toward 1.
     /// Panics if the borrow stack overflows (more than 127 borrowed refs in one operation).
-    pub fn get_next_borrow_id(&mut self) -> u64 {
+    pub(crate) fn get_next_borrow_id(&mut self) -> u64 {
         self.borrow_ids.next_borrow_id()
     }
 
     /// Push a borrow frame before a nested operation that may use borrowed refs.
     /// This saves the current borrow stack pointer so we can restore it later.
-    pub fn push_borrow_frame(&mut self) {
+    pub(crate) fn push_borrow_frame(&mut self) {
         self.borrow_ids.push_frame();
     }
 
     /// Pop a borrow frame after a nested operation completes.
     /// This restores the borrow stack pointer to where it was before the nested operation.
-    pub fn pop_borrow_frame(&mut self) {
+    pub(crate) fn pop_borrow_frame(&mut self) {
         self.borrow_ids.pop_frame();
     }
 
     /// Track a heap ID as released and queue it for JS drop when appropriate.
     /// Returns the ID when there is no open operation frame to batch it into,
     /// signalling the caller to notify JS immediately.
-    pub fn release_heap_id(&mut self, id: u64) -> Option<u64> {
+    pub(crate) fn release_heap_id(&mut self, id: u64) -> Option<u64> {
         self.heap_ids.release_heap_slot(id);
         match self.op_free_stack.last_mut() {
             Some(frame) => {
@@ -151,15 +146,15 @@ impl Runtime {
         }
     }
 
-    pub fn recycle_heap_id(&mut self, id: u64) {
+    pub(crate) fn recycle_heap_id(&mut self, id: u64) {
         self.heap_ids.recycle_heap_id(id);
     }
 
-    pub fn recycle_heap_id_if_released(&mut self, id: u64) -> bool {
+    pub(crate) fn recycle_heap_id_if_released(&mut self, id: u64) -> bool {
         self.heap_ids.recycle_heap_id_if_released(id)
     }
 
-    pub fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
+    pub(crate) fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
         self.encoder.defer_heap_id_recycle_until_flush(id);
     }
 
@@ -430,7 +425,7 @@ pub(crate) fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
 }
 
 /// Check if we're currently inside a batch() call
-pub fn is_batching() -> bool {
+pub(crate) fn is_batching() -> bool {
     with_runtime(|state| state.is_batching())
 }
 
@@ -669,6 +664,7 @@ pub fn batch_async<'a, R, F: core::future::Future<Output = R> + 'a>(
     std::future::poll_fn(move |ctx| batch(|| f.as_mut().poll(ctx)))
 }
 
+/// Force a flush of the current batch, even if we're inside a batch() call
 pub fn force_flush() {
     let has_pending = with_runtime(|state| !state.is_empty());
     if has_pending {
@@ -696,7 +692,10 @@ mod take_encoder_tests {
 
         let first = runtime.take_encoder();
         let bytes = IPCMessage::new(first.to_bytes());
-        assert!(matches!(bytes.decoded().unwrap(), DecodedVariant::Evaluate { .. }));
+        assert!(matches!(
+            bytes.decoded().unwrap(),
+            DecodedVariant::Evaluate { .. }
+        ));
         // The encoder holds only the single message-type byte — no per-message
         // request ID lives on the wire anymore.
         assert!(first.u32_buf.is_empty());
