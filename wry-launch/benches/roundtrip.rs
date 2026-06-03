@@ -1,3 +1,4 @@
+use criterion::black_box;
 use wasm_bindgen::wasm_bindgen;
 
 #[wasm_bindgen(inline_js = "
@@ -41,45 +42,45 @@ extern "C" {
 }
 
 pub fn bench_roundtrip_u32() {
-    let _ = identity_u32(42);
+    black_box(identity_u32(black_box(42)));
 }
 
 pub fn bench_roundtrip_u64() {
-    let _ = identity_u64(42);
+    black_box(identity_u64(black_box(42)));
 }
 
 pub fn bench_roundtrip_i32() {
-    let _ = identity_i32(-42);
+    black_box(identity_i32(black_box(-42)));
 }
 
 pub fn bench_roundtrip_i64() {
-    let _ = identity_i64(-42);
+    black_box(identity_i64(black_box(-42)));
 }
 
 pub fn bench_roundtrip_f32() {
-    let _ = identity_f32(std::f32::consts::PI);
+    black_box(identity_f32(black_box(std::f32::consts::PI)));
 }
 
 pub fn bench_roundtrip_f64() {
-    let _ = identity_f64(std::f64::consts::PI);
+    black_box(identity_f64(black_box(std::f64::consts::PI)));
 }
 
 pub fn bench_roundtrip_bool() {
-    let _ = identity_bool(true);
+    black_box(identity_bool(black_box(true)));
 }
 
 pub fn bench_roundtrip_string() {
-    let _ = identity_string("Hello, world!".to_string());
+    black_box(identity_string(black_box("Hello, world!".to_string())));
 }
 
 pub fn bench_roundtrip_large_string() {
-    let _ = identity_string("Hello, world!".repeat(100));
+    black_box(identity_string(black_box("Hello, world!".repeat(100))));
 }
 
 pub fn bench_roundtrip_option_some() {
-    let _ = identity_option(Some(42));
+    black_box(identity_option(black_box(Some(42))));
 }
 
 pub fn bench_roundtrip_option_none() {
-    let _ = identity_option(None);
+    black_box(identity_option(black_box(None)));
 }

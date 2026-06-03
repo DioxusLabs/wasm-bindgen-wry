@@ -7,6 +7,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::any::Any;
 use core::cell::RefCell;
+use core::marker::PhantomData;
 use std::boxed::Box;
 
 use crate::encode::{BatchableResult, BinaryDecode};
@@ -30,11 +31,19 @@ pub(crate) struct OperationFreeFrame {
     object_handles: Vec<u32>,
 }
 
+/// Marker for runtime state while no synchronous JS XHR is parked.
+pub(crate) struct Unlocked;
+
+/// Marker for runtime state while a synchronous JS XHR is parked and can be
+/// used as the response channel for Rust->JS calls.
+#[doc(hidden)]
+pub struct Locked;
+
 /// State for batching operations and object storage.
 /// Every evaluation is a batch - it may just have one operation.
 ///
 /// Also stores exported Rust structs and callback functions.
-pub struct Runtime {
+pub struct Runtime<State = Locked> {
     /// The encoder accumulating batched operations
     encoder: EncodedData,
     /// Heap IDs that mirror the JS runtime's reference slab.
@@ -64,14 +73,10 @@ pub struct Runtime {
     webview_id: u64,
     /// Thread locals associated with the runtime
     thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
-    /// How many JS→Rust callbacks (inbound Evaluates) are currently executing
-    /// on the stack. Zero means any outbound Evaluate is a fresh top-level call
-    /// from the app future; non-zero means it is a nested response inside a
-    /// callback and must travel back through the parked JS XHR.
-    inbound_evaluate_depth: u32,
+    state: PhantomData<State>,
 }
 
-impl Runtime {
+impl Runtime<Unlocked> {
     pub(crate) fn new(ipc: WryIPC, webview_id: u64) -> Self {
         let encoder = Self::new_encoder_for_evaluate();
         Self {
@@ -88,31 +93,64 @@ impl Runtime {
             ipc,
             webview_id,
             thread_locals: BTreeMap::new(),
-            inbound_evaluate_depth: 0,
+            state: PhantomData,
         }
     }
 
-    /// Mark that a JS→Rust callback (inbound Evaluate) has started executing.
-    pub(crate) fn enter_inbound_evaluate(&mut self) {
-        self.inbound_evaluate_depth += 1;
+    pub(crate) fn lock(self) -> Runtime<Locked> {
+        Runtime {
+            encoder: self.encoder,
+            heap_ids: self.heap_ids,
+            borrow_ids: self.borrow_ids,
+            object_handles: self.object_handles,
+            is_batching: self.is_batching,
+            type_cache: self.type_cache,
+            objects: self.objects,
+            pending_object_drops: self.pending_object_drops,
+            op_free_stack: self.op_free_stack,
+            ipc: self.ipc,
+            webview_id: self.webview_id,
+            thread_locals: self.thread_locals,
+            state: PhantomData,
+        }
     }
+}
 
-    /// Mark that a JS→Rust callback has finished executing.
-    pub(crate) fn leave_inbound_evaluate(&mut self) {
-        self.inbound_evaluate_depth -= 1;
-    }
-
-    /// Whether we are currently executing inside a JS→Rust callback. When true,
-    /// outbound Evaluates are nested responses to the parked JS XHR rather than
-    /// fresh top-level calls.
-    fn in_inbound_evaluate(&self) -> bool {
-        self.inbound_evaluate_depth > 0
-    }
-
+impl<State> Runtime<State> {
     fn new_encoder_for_evaluate() -> EncodedData {
         let mut encoder = EncodedData::new();
         encoder.push_u8(MessageType::Evaluate as u8);
         encoder
+    }
+
+    /// Get a reference to the IPC layer.
+    pub(crate) fn ipc(&self) -> &WryIPC {
+        &self.ipc
+    }
+
+    /// Get the webview ID associated with this runtime.
+    pub(crate) fn webview_id(&self) -> u64 {
+        self.webview_id
+    }
+}
+
+impl Runtime<Locked> {
+    pub(crate) fn unlock(self) -> Runtime<Unlocked> {
+        Runtime {
+            encoder: self.encoder,
+            heap_ids: self.heap_ids,
+            borrow_ids: self.borrow_ids,
+            object_handles: self.object_handles,
+            is_batching: self.is_batching,
+            type_cache: self.type_cache,
+            objects: self.objects,
+            pending_object_drops: self.pending_object_drops,
+            op_free_stack: self.op_free_stack,
+            ipc: self.ipc,
+            webview_id: self.webview_id,
+            thread_locals: self.thread_locals,
+            state: PhantomData,
+        }
     }
 
     /// Record a JS-allocated heap ID from a response.
@@ -212,10 +250,7 @@ impl Runtime {
         } else {
             self.type_cache.ack_type_ids(&pending_type_ids);
         }
-        // Only Evaluates (reserved_ids is Some) can be top-level; they are
-        // top-level exactly when no callback is currently on the stack.
-        let top_level = reserved_ids.is_some() && !self.in_inbound_evaluate();
-        OutboundIPCMessage::new(crate::ipc::IPCMessage::new(encoder.to_bytes()), top_level)
+        OutboundIPCMessage::new(crate::ipc::IPCMessage::new(encoder.to_bytes()))
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -383,16 +418,6 @@ impl Runtime {
             self.pending_object_drops.insert(handle);
         }
         object
-    }
-
-    /// Get a reference to the IPC layer.
-    pub(crate) fn ipc(&self) -> &WryIPC {
-        &self.ipc
-    }
-
-    /// Get the webview ID associated with this runtime.
-    pub(crate) fn webview_id(&self) -> u64 {
-        self.webview_id
     }
 }
 
@@ -712,7 +737,7 @@ mod take_encoder_tests {
 
     fn test_runtime() -> Runtime {
         let (ipc, _senders) = WryIPC::new(Arc::new(|_| {}));
-        Runtime::new(ipc, 0)
+        Runtime::<Unlocked>::new(ipc, 0).lock()
     }
 
     #[test]

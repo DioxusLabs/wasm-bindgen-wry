@@ -11,17 +11,17 @@ use alloc::vec::Vec;
 use base64::Engine;
 use core::cell::RefCell;
 use core::future::poll_fn;
-use core::pin::{Pin, pin};
-use futures_util::FutureExt;
+use core::pin::Pin;
+use core::task::Poll;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use http::Response;
 
-use crate::batch::{Runtime, in_runtime};
+use crate::batch::{Runtime, Unlocked, in_runtime};
 use crate::function_registry::FUNCTION_REGISTRY;
-use crate::ipc::{DecodedVariant, IPCMessage, MessageType, OutboundIPCMessage, decode_data};
-use crate::runtime::{AppEventVariant, IPCSenders, WryIPC, handle_callbacks};
+use crate::ipc::{IPCMessage, MessageType, OutboundIPCMessage, decode_data};
+use crate::runtime::{AppEventVariant, IPCSenders, LockAcquired, WryIPC, handle_inbound_ipc};
 
 pub use crate::runtime::WryBindgenEvent;
 
@@ -70,10 +70,10 @@ impl WryBindgenResponder {
     }
 
     fn respond_ipc(self, response: IPCMessage) {
-        let body = response.into_data();
+        let body = response.data();
         // Encode as base64 - sync XMLHttpRequest cannot use responseType="arraybuffer"
         let engine = base64::engine::general_purpose::STANDARD;
-        let body_base64 = engine.encode(&body);
+        let body_base64 = engine.encode(body);
         self.respond(
             http::Response::builder()
                 .status(200)
@@ -94,15 +94,23 @@ fn decode_request_data(request: &http::Request<Vec<u8>>) -> Option<IPCMessage> {
 
 /// Tracks the loading state of the webview.
 enum WebviewLoadingState {
-    /// Webview is still loading, messages are queued.
-    Pending { queued: Vec<OutboundIPCMessage> },
+    /// Webview is still loading. The lock protocol permits at most one Rust IPC
+    /// message to be waiting for load, though normally this remains empty
+    /// because user code cannot run until the lock can be acquired.
+    Pending {
+        pending_ipc: Option<OutboundIPCMessage>,
+        acquire_lock: bool,
+    },
     /// Webview is loaded and ready.
     Loaded,
 }
 
 impl Default for WebviewLoadingState {
     fn default() -> Self {
-        WebviewLoadingState::Pending { queued: Vec::new() }
+        WebviewLoadingState::Pending {
+            pending_ipc: None,
+            acquire_lock: false,
+        }
     }
 }
 
@@ -123,26 +131,15 @@ struct WebviewState {
 /// - At most one JS XHR is suspended at any moment (JS blocks on each XHR
 ///   before it can send the next one), so the responder lives in a single
 ///   `current_xhr` slot.
-/// - The remaining state is the stack of Rust Evaluates currently being
-///   processed by JS. Each frame just remembers whether it was delivered as
-///   the response to a parked JS XHR (nested) or via `evaluate_script`
-///   (top-level), so the matching JS Respond knows whether to hand the new
-///   XHR off as the next wait point or close the chain with a blank reply.
+/// - Rust->JS calls are only delivered through that suspended XHR. The
+///   remaining state is the depth of Rust Evaluates currently being processed
+///   by JS, so the matching JS Respond can hand its new XHR back as the next
+///   wait point.
 struct WebviewMessageLayer {
     current_xhr: Option<WryBindgenResponder>,
-    rust_eval_stack: Vec<RustEvalKind>,
+    rust_eval_depth: usize,
     /// The sender used to forward decoded IPC messages to the Rust runtime.
     sender: IPCSenders,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RustEvalKind {
-    /// Delivered via `evaluate_script` — no parent XHR to hand off to when JS
-    /// responds.
-    TopLevel,
-    /// Delivered as the response to a parked JS XHR — when JS responds, the
-    /// new XHR becomes the next wait point.
-    Nested,
 }
 
 impl WebviewState {
@@ -164,7 +161,7 @@ impl WebviewMessageLayer {
     fn new(sender: IPCSenders) -> Self {
         Self {
             current_xhr: None,
-            rust_eval_stack: Vec::new(),
+            rust_eval_depth: 0,
             sender,
         }
     }
@@ -179,45 +176,63 @@ impl WebviewMessageLayer {
             return;
         }
 
-        let top_level_responder = match msg_type {
+        match msg_type {
             // New call from JS — park the XHR. Rust will reply via either a
             // Respond (the answer) or an Evaluate (a nested Rust→JS call
             // delivered through the suspended XHR).
             MessageType::Evaluate => {
+                let nested_in_rust_evaluate = self.rust_eval_depth > 0;
                 self.current_xhr = Some(responder);
-                None
-            }
-            // Response from JS closes the most recent Rust Evaluate frame.
-            // Nested frames hand the new XHR off as the next wait point;
-            // top-level frames have no parent so we close the chain with a
-            // blank response after Rust has accepted the Respond.
-            MessageType::Respond => match self.rust_eval_stack.pop() {
-                Some(RustEvalKind::Nested) => {
-                    self.current_xhr = Some(responder);
-                    None
-                }
-                Some(RustEvalKind::TopLevel) => Some(responder),
-                None => {
-                    responder.respond(error_response());
+                if nested_in_rust_evaluate {
+                    if self.sender.start_send(msg) {
+                        return;
+                    }
+                } else if self
+                    .sender
+                    .lock_acquired(LockAcquired::InboundEvaluate(msg))
+                {
                     return;
                 }
-            },
-        };
-
-        if self.sender.start_send(msg) {
-            if let Some(responder) = top_level_responder {
-                responder.respond(blank_response());
+                if let Some(responder) = self.current_xhr.take() {
+                    responder.respond(error_response());
+                }
             }
-        } else if let Some(responder) = top_level_responder {
+            // Response from JS closes the most recent Rust Evaluate frame.
+            // The new XHR becomes the next wait point while Rust continues
+            // running under the same locked capability.
+            MessageType::Respond => {
+                if self.rust_eval_depth > 0 {
+                    self.rust_eval_depth -= 1;
+                    self.current_xhr = Some(responder);
+                    if self.sender.start_send(msg) {
+                        return;
+                    }
+                    if let Some(responder) = self.current_xhr.take() {
+                        responder.respond(error_response());
+                    }
+                } else {
+                    responder.respond(error_response());
+                }
+            }
+        }
+    }
+
+    fn receive_lock_request(&mut self, responder: WryBindgenResponder) {
+        if self.current_xhr.is_some() {
             responder.respond(error_response());
-        } else if let Some(responder) = self.current_xhr.take() {
+            return;
+        }
+        self.current_xhr = Some(responder);
+        if self.sender.lock_acquired(LockAcquired::Empty) {
+            return;
+        }
+        if let Some(responder) = self.current_xhr.take() {
             responder.respond(error_response());
         }
     }
 
-    fn receive_rust_message(&mut self, ipc_msg: OutboundIPCMessage) -> Option<IPCMessage> {
+    fn receive_rust_message(&mut self, ipc_msg: OutboundIPCMessage) {
         let ty = ipc_msg.message.ty().unwrap();
-        let top_level = ipc_msg.top_level;
         let message = ipc_msg.message;
 
         match ty {
@@ -227,32 +242,27 @@ impl WebviewMessageLayer {
                     .take()
                     .expect("Rust Respond with no suspended JS XHR to reply to");
                 responder.respond_ipc(message);
-                None
-            }
-            // The runtime tells us whether this Evaluate is a fresh top-level
-            // call or a nested response inside a callback. We must not infer it
-            // from `current_xhr`: a callback XHR can already be parked (awaiting
-            // the app future to pick it up) when the app future emits an
-            // unrelated top-level eval, which would otherwise be misdelivered as
-            // that callback's response.
-            MessageType::Evaluate if top_level => {
-                // Top-level: caller delivers via `evaluate_script`. JS, if it is
-                // currently blocked on a parked callback XHR, will run this only
-                // once that callback's JS→Rust chain fully resolves.
-                self.rust_eval_stack.push(RustEvalKind::TopLevel);
-                Some(message)
             }
             MessageType::Evaluate => {
-                // Nested: deliver as the response to the parked JS XHR.
+                // Deliver as the response to the parked JS XHR. This is the
+                // only Rust->JS payload path; `evaluate_script` is reserved for
+                // asking JS to acquire this lock.
                 let responder = self
                     .current_xhr
                     .take()
-                    .expect("Nested Rust Evaluate with no suspended JS XHR to reply to");
+                    .expect("Rust Evaluate with no suspended JS XHR to reply to");
+                self.rust_eval_depth += 1;
                 responder.respond_ipc(message);
-                self.rust_eval_stack.push(RustEvalKind::Nested);
-                None
             }
         }
+    }
+
+    fn release_lock(&mut self) {
+        let responder = self
+            .current_xhr
+            .take()
+            .expect("release lock with no suspended JS XHR");
+        responder.respond(blank_response());
     }
 }
 
@@ -367,6 +377,10 @@ impl ProtocolHandler {
                 responder.respond(error_response());
                 return None;
             };
+            if request.headers().get("wry-bindgen-lock").is_some() {
+                webview_state.messages.receive_lock_request(responder);
+                return None;
+            }
             let Some(msg) = decode_request_data(request) else {
                 responder.respond(error_response());
                 return None;
@@ -471,14 +485,40 @@ impl WryBindgen {
                 let Some(webview_state) = state.get_mut(&id) else {
                     return;
                 };
-                if let WebviewLoadingState::Pending { queued } = std::mem::replace(
+                if let WebviewLoadingState::Pending {
+                    pending_ipc,
+                    acquire_lock,
+                } = std::mem::replace(
                     &mut webview_state.loading_state,
                     WebviewLoadingState::Loaded,
                 ) {
-                    for msg in queued {
+                    if let Some(msg) = pending_ipc {
                         self.immediately_handle_ipc_message(webview_state, msg);
                     }
+                    if acquire_lock {
+                        self.request_js_lock(webview_state);
+                    }
                 }
+            }
+            AppEventVariant::AcquireLock => {
+                let mut state = self.webview.borrow_mut();
+                let Some(webview_state) = state.get_mut(&id) else {
+                    return;
+                };
+                if let WebviewLoadingState::Pending { acquire_lock, .. } =
+                    &mut webview_state.loading_state
+                {
+                    *acquire_lock = true;
+                    return;
+                }
+                self.request_js_lock(webview_state);
+            }
+            AppEventVariant::ReleaseLock => {
+                let mut state = self.webview.borrow_mut();
+                let Some(webview_state) = state.get_mut(&id) else {
+                    return;
+                };
+                webview_state.messages.release_lock();
             }
         }
     }
@@ -488,12 +528,19 @@ impl WryBindgen {
         let Some(webview_state) = state.get_mut(&id) else {
             return;
         };
-        if let WebviewLoadingState::Pending { queued } = &mut webview_state.loading_state {
-            queued.push(ipc_msg);
+        if let WebviewLoadingState::Pending { pending_ipc, .. } = &mut webview_state.loading_state {
+            assert!(
+                pending_ipc.replace(ipc_msg).is_none(),
+                "multiple Rust IPC messages queued before webview load"
+            );
             return;
         }
 
         self.immediately_handle_ipc_message(webview_state, ipc_msg)
+    }
+
+    fn request_js_lock(&self, webview_state: &mut WebviewState) {
+        webview_state.evaluate_script("window.__wry_acquire_handler_lock()");
     }
 
     fn immediately_handle_ipc_message(
@@ -501,18 +548,33 @@ impl WryBindgen {
         webview_state: &mut WebviewState,
         ipc_msg: OutboundIPCMessage,
     ) {
-        let Some(message) = webview_state.messages.receive_rust_message(ipc_msg) else {
-            return;
-        };
-        let decoded = message.decoded().unwrap();
-        if let DecodedVariant::Evaluate { .. } = decoded {
-            // Encode the binary data as base64 and pass to JS
-            // JS will iterate over operations in the buffer
-            let engine = base64::engine::general_purpose::STANDARD;
-            let data_base64 = engine.encode(message.data());
-            let code = format!("window.evaluate_from_rust_binary(\"{data_base64}\")");
-            webview_state.evaluate_script(&code);
+        webview_state.messages.receive_rust_message(ipc_msg);
+    }
+}
+
+/// RAII guard for an acquired `Empty` JS lock.
+///
+/// Holding the guard means a JS XHR is parked, suspending the JS event loop so
+/// Rust can drive JS. Dropping it replies to that XHR, handing control back to
+/// the JS event loop until the next wakeup. Tying release to the guard's scope
+/// keeps acquire and release paired.
+struct JsLockGuard {
+    proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
+    webview_id: u64,
+}
+
+impl JsLockGuard {
+    fn acquire(ipc: &WryIPC, webview_id: u64) -> Self {
+        Self {
+            proxy: ipc.proxy.clone(),
+            webview_id,
         }
+    }
+}
+
+impl Drop for JsLockGuard {
+    fn drop(&mut self) {
+        (self.proxy)(WryBindgenEvent::release_lock(self.webview_id));
     }
 }
 
@@ -551,32 +613,109 @@ impl<'a> AppBuilder<'a> {
         }
 
         let start_future = move || {
-            let run_app_in_runtime = async move {
-                let run_app = app();
-                let wait_for_events = handle_callbacks();
+            let mut runtime = Some(Runtime::<Unlocked>::new(self.ipc, self.webview_id));
+            let mut app = Some(app);
+            let mut run_app = None::<Pin<Box<F>>>;
+            let mut pending_acquired = None::<LockAcquired>;
 
-                futures_util::select! {
-                    _ = run_app.fuse() => {},
-                    _ = wait_for_events.fuse() => {},
-                }
-            };
+            let poll_driver = poll_fn(move |ctx| {
+                let acquired = if let Some(acquired) = pending_acquired.take() {
+                    acquired
+                } else {
+                    let Some(runtime_ref) = runtime.as_ref() else {
+                        return Poll::Ready(());
+                    };
+                    match runtime_ref.ipc().poll_lock_acquired(ctx) {
+                        Poll::Ready(Some(acquired)) => acquired,
+                        Poll::Ready(None) => return Poll::Ready(()),
+                        Poll::Pending => {
+                            runtime_ref.ipc().request_js_lock(runtime_ref.webview_id());
+                            match runtime_ref.ipc().poll_lock_acquired(ctx) {
+                                Poll::Ready(Some(acquired)) => acquired,
+                                Poll::Ready(None) => return Poll::Ready(()),
+                                Poll::Pending => return Poll::Pending,
+                            }
+                        }
+                    }
+                };
+                // An InboundEvaluate replies through the callback's own parked
+                // XHR, so it manages its own release. An Empty lock is released by
+                // the guard when it drops at the end of the poll scope.
+                let handled_callback = matches!(acquired, LockAcquired::InboundEvaluate(_));
 
-            let runtime = Runtime::new(self.ipc, self.webview_id);
-            let mut maybe_runtime = Some(runtime);
-            let poll_in_runtime = async move {
-                let mut run_app_in_runtime = pin!(run_app_in_runtime);
-                poll_fn(move |ctx| {
-                    let (new_runtime, poll_result) =
-                        in_runtime(maybe_runtime.take().unwrap(), || {
-                            run_app_in_runtime.as_mut().poll(ctx)
+                let poll_result = {
+                    let _lock = match &acquired {
+                        LockAcquired::Empty => {
+                            let runtime_ref = runtime
+                                .as_ref()
+                                .expect("runtime must be available while the driver is active");
+                            Some(JsLockGuard::acquire(
+                                runtime_ref.ipc(),
+                                runtime_ref.webview_id(),
+                            ))
+                        }
+                        LockAcquired::InboundEvaluate(_) => None,
+                    };
+
+                    let locked_runtime = runtime
+                        .take()
+                        .expect("runtime must be available while the driver is active")
+                        .lock();
+
+                    let (locked_runtime, poll_result) =
+                        in_runtime(locked_runtime, || match acquired {
+                            LockAcquired::InboundEvaluate(msg) => {
+                                handle_inbound_ipc(&msg);
+                                Poll::Pending
+                            }
+                            LockAcquired::Empty => {
+                                if run_app.is_none() {
+                                    run_app = Some(Box::pin(app
+                                        .take()
+                                        .expect("app constructor called once")(
+                                    )));
+                                }
+                                run_app
+                                    .as_mut()
+                                    .expect("app future must exist")
+                                    .as_mut()
+                                    .poll(ctx)
+                            }
                         });
-                    maybe_runtime = Some(new_runtime);
-                    poll_result
-                })
-                .await
-            };
 
-            Box::pin(poll_in_runtime) as Pin<Box<dyn Future<Output = ()> + 'static>>
+                    runtime = Some(locked_runtime.unlock());
+                    poll_result
+                };
+
+                match poll_result {
+                    // Only the app future (held under an Empty lock, released by
+                    // the guard above) reaches Ready; that completes the driver.
+                    Poll::Ready(()) => Poll::Ready(()),
+                    Poll::Pending => {
+                        let runtime_ref = runtime
+                            .as_ref()
+                            .expect("runtime must be available while the driver is active");
+                        match runtime_ref.ipc().poll_lock_acquired(ctx) {
+                            Poll::Ready(Some(acquired)) => {
+                                pending_acquired = Some(acquired);
+                                ctx.waker().wake_by_ref();
+                            }
+                            Poll::Ready(None) => return Poll::Ready(()),
+                            Poll::Pending => {
+                                if handled_callback {
+                                    // A callback can advance state the app future
+                                    // awaits. Acquire an Empty lock so the driver
+                                    // polls the app future and observes that progress.
+                                    runtime_ref.ipc().request_js_lock(runtime_ref.webview_id());
+                                }
+                            }
+                        }
+                        Poll::Pending
+                    }
+                }
+            });
+
+            Box::pin(poll_driver) as Pin<Box<dyn Future<Output = ()> + 'static>>
         };
 
         PreparedApp {
@@ -642,6 +781,30 @@ mod tests {
             .expect("failed to build request")
     }
 
+    fn lock_request() -> http::Request<Vec<u8>> {
+        http::Request::builder()
+            .uri("wry://index.html/__wbg__/handler")
+            .header("wry-bindgen-lock", "1")
+            .body(Vec::new())
+            .expect("failed to build request")
+    }
+
+    #[test]
+    fn rust_evaluate_depth_is_marked_before_responding_to_parked_xhr() {
+        let (_ipc, sender) = WryIPC::new(std::sync::Arc::new(|_| {}));
+        let mut layer = WebviewMessageLayer::new(sender);
+        layer.current_xhr = Some(WryBindgenResponder::from(|_| {
+            panic!("responder resumed webview before returning")
+        }));
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            layer.receive_rust_message(OutboundIPCMessage::new(ipc_message(MessageType::Evaluate)));
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(layer.rust_eval_depth, 1);
+    }
+
     #[test]
     fn handler_responds_error_when_evaluate_arrives_after_runtime_drop() {
         let bindgen = WryBindgen::new(|_| {});
@@ -669,7 +832,30 @@ mod tests {
     }
 
     #[test]
-    fn handler_responds_error_when_top_level_respond_arrives_after_runtime_drop() {
+    fn lock_request_is_queued_until_webview_loads() {
+        let bindgen = WryBindgen::new(|_| {});
+        let app_builder = bindgen.app_builder();
+        let webview_id = app_builder.webview_id;
+
+        let evaluated_scripts = Rc::new(RefCell::new(Vec::new()));
+        let captured_scripts = evaluated_scripts.clone();
+        let _prepared_app = app_builder.build(
+            || async {},
+            move |script| captured_scripts.borrow_mut().push(script.to_string()),
+        );
+
+        bindgen.handle_user_event(WryBindgenEvent::acquire_lock(webview_id));
+        assert!(evaluated_scripts.borrow().is_empty());
+
+        bindgen.handle_user_event(WryBindgenEvent::webview_loaded(webview_id));
+        assert_eq!(
+            evaluated_scripts.borrow().as_slice(),
+            ["window.__wry_acquire_handler_lock()"]
+        );
+    }
+
+    #[test]
+    fn lock_request_while_js_xhr_is_parked_is_not_dropped_or_duplicated() {
         let bindgen = WryBindgen::new(|_| {});
         let app_builder = bindgen.app_builder();
         let webview_id = app_builder.webview_id;
@@ -677,23 +863,64 @@ mod tests {
 
         let evaluated_scripts = Rc::new(RefCell::new(Vec::new()));
         let captured_scripts = evaluated_scripts.clone();
-        let prepared_app = app_builder.build(
+        let _prepared_app = app_builder.build(
             || async {},
             move |script| captured_scripts.borrow_mut().push(script.to_string()),
         );
 
         bindgen.handle_user_event(WryBindgenEvent::webview_loaded(webview_id));
-        bindgen.handle_user_event(WryBindgenEvent::ipc(
-            webview_id,
-            OutboundIPCMessage::new(ipc_message(MessageType::Evaluate), true),
-        ));
-        assert_eq!(evaluated_scripts.borrow().len(), 1);
-
-        drop(prepared_app);
 
         let response = Rc::new(RefCell::new(None));
         let captured_response = response.clone();
-        let request = handler_request(MessageType::Respond);
+        let request = handler_request(MessageType::Evaluate);
+
+        let unhandled = protocol_handler.handle_request(
+            "wry",
+            |_| {},
+            &request,
+            move |response| *captured_response.borrow_mut() = Some(response),
+        );
+
+        assert!(unhandled.is_none());
+        assert!(
+            response.borrow().is_none(),
+            "JS callback XHR should stay parked while Rust handles it"
+        );
+
+        bindgen.handle_user_event(WryBindgenEvent::acquire_lock(webview_id));
+        assert_eq!(
+            evaluated_scripts.borrow().as_slice(),
+            ["window.__wry_acquire_handler_lock()"],
+            "lock script should be requested while the parked XHR is outstanding"
+        );
+
+        bindgen.handle_user_event(WryBindgenEvent::ipc(
+            webview_id,
+            OutboundIPCMessage::new(ipc_message(MessageType::Respond)),
+        ));
+
+        let response = response
+            .borrow_mut()
+            .take()
+            .expect("parked JS callback XHR should receive Rust's response");
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(
+            evaluated_scripts.borrow().as_slice(),
+            ["window.__wry_acquire_handler_lock()"],
+            "answering the parked XHR should not duplicate the in-flight lock request"
+        );
+    }
+
+    #[test]
+    fn handler_responds_error_when_lock_arrives_after_runtime_drop() {
+        let bindgen = WryBindgen::new(|_| {});
+        let app_builder = bindgen.app_builder();
+        let protocol_handler = app_builder.protocol_handler();
+        drop(app_builder);
+
+        let response = Rc::new(RefCell::new(None));
+        let captured_response = response.clone();
+        let request = lock_request();
 
         let unhandled = protocol_handler.handle_request(
             "wry",
