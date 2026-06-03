@@ -316,19 +316,6 @@ pub struct EncodedData {
 }
 
 impl EncodedData {
-    /// Create a new empty encoder.
-    pub(crate) fn new() -> Self {
-        Self {
-            u8_buf: Vec::new(),
-            u16_buf: Vec::new(),
-            u32_buf: Vec::new(),
-            str_buf: Vec::new(),
-            heap_ids_to_recycle_after_flush: Vec::new(),
-            pending_type_ids: Vec::new(),
-            needs_flush: false,
-        }
-    }
-
     /// Mark that this batch needs to be flushed before returning.
     /// Used for stack-allocated callbacks that require synchronous invocation.
     pub(crate) fn mark_needs_flush(&mut self) {
@@ -467,7 +454,7 @@ mod tests {
 
     #[test]
     fn message_header_only_carries_message_type() {
-        let mut encoder = EncodedData::new();
+        let mut encoder = EncodedData::default();
         encoder.push_u8(MessageType::Evaluate as u8);
         encoder.push_u32(99);
 
@@ -481,10 +468,10 @@ mod tests {
 
     #[test]
     fn deferred_recycle_ids_are_encoder_local() {
-        let mut queued = EncodedData::new();
+        let mut queued = EncodedData::default();
         queued.defer_heap_id_recycle_until_flush(10);
 
-        let mut unrelated = EncodedData::new();
+        let mut unrelated = EncodedData::default();
         unrelated.defer_heap_id_recycle_until_flush(20);
 
         assert_eq!(unrelated.take_heap_ids_to_recycle_after_flush(), vec![20]);
@@ -493,10 +480,10 @@ mod tests {
 
     #[test]
     fn deferred_recycle_ids_extend_with_encoder_data() {
-        let mut outer = EncodedData::new();
+        let mut outer = EncodedData::default();
         outer.defer_heap_id_recycle_until_flush(10);
 
-        let mut encoded_during_op = EncodedData::new();
+        let mut encoded_during_op = EncodedData::default();
         encoded_during_op.defer_heap_id_recycle_until_flush(20);
 
         outer.extend(&encoded_during_op);

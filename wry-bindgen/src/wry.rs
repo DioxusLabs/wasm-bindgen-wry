@@ -680,7 +680,7 @@ mod tests {
     use crate::ipc::{DecodedVariant, EncodedData, MessageType};
 
     fn ipc_message(message_type: MessageType) -> IPCMessage {
-        let mut data = EncodedData::new();
+        let mut data = EncodedData::default();
         data.push_u8(message_type as u8);
         IPCMessage::new(data.to_bytes())
     }

@@ -87,7 +87,7 @@ impl Runtime {
     }
 
     fn new_encoder_for_evaluate() -> EncodedData {
-        let mut encoder = EncodedData::new();
+        let mut encoder = EncodedData::default();
         encoder.push_u8(MessageType::Evaluate as u8);
         encoder
     }

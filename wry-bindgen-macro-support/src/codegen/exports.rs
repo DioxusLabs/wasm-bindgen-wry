@@ -53,7 +53,7 @@ pub(super) fn generate_export_struct(
                 decoder
             )?;
             #krate::__rt::object_store::drop_object(handle);
-            Ok(#krate::EncodedData::new())
+            Ok(#krate::EncodedData::default())
         },
         krate,
         span,
@@ -158,7 +158,7 @@ fn generate_field_accessor(
         quote_spanned! {span=>
             #krate::__rt::object_store::with_object::<#struct_name, _>(handle, |obj| {
                 let val = ::core::clone::Clone::clone(&obj.#field_name);
-                let mut encoder = #krate::EncodedData::new();
+                let mut encoder = #krate::EncodedData::default();
                 <#field_ty as #krate::BinaryEncode>::encode(val, &mut encoder);
                 Ok(encoder)
             })
@@ -167,7 +167,7 @@ fn generate_field_accessor(
         quote_spanned! {span=>
             #krate::__rt::object_store::with_object::<#struct_name, _>(handle, |obj| {
                 let val = obj.#field_name;
-                let mut encoder = #krate::EncodedData::new();
+                let mut encoder = #krate::EncodedData::default();
                 <#field_ty as #krate::BinaryEncode>::encode(val, &mut encoder);
                 Ok(encoder)
             })
@@ -196,7 +196,7 @@ fn generate_field_accessor(
                 #krate::__rt::object_store::with_object_mut::<#struct_name, _>(handle, |obj| {
                     obj.#field_name = val;
                 });
-                Ok(#krate::EncodedData::new())
+                Ok(#krate::EncodedData::default())
             },
             krate,
             span,
@@ -299,7 +299,7 @@ fn generate_inspectable(
                     json.pop();
                 }
                 json.push('}');
-                let mut encoder = #krate::EncodedData::new();
+                let mut encoder = #krate::EncodedData::default();
                 <::alloc::string::String as #krate::BinaryEncode>::encode(json, &mut encoder);
                 Ok(encoder)
             })
@@ -327,7 +327,7 @@ fn generate_inspectable(
             let handle = <#krate::__rt::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
             #krate::__rt::object_store::with_object::<#struct_name, _>(handle, |obj| {
                 let s = ::alloc::format!("[object {}]", #struct_name_str);
-                let mut encoder = #krate::EncodedData::new();
+                let mut encoder = #krate::EncodedData::default();
                 <::alloc::string::String as #krate::BinaryEncode>::encode(s, &mut encoder);
                 Ok(encoder)
             })
@@ -388,7 +388,7 @@ pub(super) fn generate_export_method(
                 #decode_args
                 let result = #class::#rust_name(#(#arg_names),*);
                 let handle = #krate::__rt::object_store::insert_object(result);
-                let mut encoder = #krate::EncodedData::new();
+                let mut encoder = #krate::EncodedData::default();
                 <#krate::__rt::object_store::ObjectHandle as #krate::BinaryEncode>::encode(handle, &mut encoder);
                 Ok(encoder)
             }
@@ -426,7 +426,7 @@ pub(super) fn generate_export_method(
                     let handle = <#krate::__rt::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #decode_args
                     let result = #call;
-                    let mut encoder = #krate::EncodedData::new();
+                    let mut encoder = #krate::EncodedData::default();
                     <#ret_ty as #krate::BinaryEncode>::encode(result, &mut encoder);
                     Ok(encoder)
                 }
@@ -435,7 +435,7 @@ pub(super) fn generate_export_method(
                     let handle = <#krate::__rt::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #decode_args
                     #call;
-                    Ok(#krate::EncodedData::new())
+                    Ok(#krate::EncodedData::default())
                 }
             }
         }
@@ -445,7 +445,7 @@ pub(super) fn generate_export_method(
                 quote_spanned! {span=>
                     #decode_args
                     let result = #class::#rust_name(#(#arg_names),*);
-                    let mut encoder = #krate::EncodedData::new();
+                    let mut encoder = #krate::EncodedData::default();
                     <#ret_ty as #krate::BinaryEncode>::encode(result, &mut encoder);
                     Ok(encoder)
                 }
@@ -453,7 +453,7 @@ pub(super) fn generate_export_method(
                 quote_spanned! {span=>
                     #decode_args
                     #class::#rust_name(#(#arg_names),*);
-                    Ok(#krate::EncodedData::new())
+                    Ok(#krate::EncodedData::default())
                 }
             }
         }
@@ -464,7 +464,7 @@ pub(super) fn generate_export_method(
                     let handle = <#krate::__rt::object_store::ObjectHandle as #krate::BinaryDecode>::decode(decoder)?;
                     #krate::__rt::object_store::with_object::<#class, _>(handle, |obj| {
                         let result = obj.#rust_name();
-                        let mut encoder = #krate::EncodedData::new();
+                        let mut encoder = #krate::EncodedData::default();
                         <#ret_ty as #krate::BinaryEncode>::encode(result, &mut encoder);
                         Ok(encoder)
                     })
@@ -488,7 +488,7 @@ pub(super) fn generate_export_method(
                 #krate::__rt::object_store::with_object_mut::<#class, _>(handle, |obj| {
                     obj.#rust_name(#arg_name);
                 });
-                Ok(#krate::EncodedData::new())
+                Ok(#krate::EncodedData::default())
             }
         }
     };

@@ -420,7 +420,7 @@ impl Drop for BorrowFrameGuard {
 }
 
 fn respond_encoder() -> crate::ipc::EncodedData {
-    let mut encoder = crate::ipc::EncodedData::new();
+    let mut encoder = crate::ipc::EncodedData::default();
     encoder.push_u8(MessageType::Respond as u8);
     encoder
 }
@@ -436,7 +436,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn ipc_message(message_type: MessageType) -> IPCMessage {
-        let mut data = EncodedData::new();
+        let mut data = EncodedData::default();
         data.push_u8(message_type as u8);
         IPCMessage::new(data.to_bytes())
     }
