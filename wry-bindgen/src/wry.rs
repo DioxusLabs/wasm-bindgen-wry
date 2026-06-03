@@ -1,7 +1,7 @@
 //! Per-webview wry-bindgen integration for existing wry applications.
 //!
 //! A [`WryBindgen`] session is split into an app-thread runtime endpoint and a
-//! main-thread driver future. Create one session for each webview/JavaScript
+//! main-thread driver. Create one session for each webview/JavaScript
 //! realm.
 
 use alloc::boxed::Box;
@@ -20,8 +20,8 @@ use crate::batch::{Runtime, in_runtime};
 use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{IPCMessage, OutboundIPCMessage, decode_data};
 use crate::runtime::{
-    DriverCommand, DriverCommandReceiver, DriverCommandSender, IPCSenders, Inbound,
-    InboundSendError, WryIPC, dispatch_inbound_message,
+    DriverCommand, DriverCommandReceiver, DriverCommandSender, DriverCommandWeakSender, IPCSenders,
+    Inbound, InboundSendError, WryIPC, dispatch_inbound_message,
 };
 
 struct WryBindgenResponder {
@@ -95,8 +95,6 @@ struct WebviewState {
     messages: WebviewMessageLayer,
     // The state of the webview. Either loading (with queued messages) or loaded.
     loading_state: WebviewLoadingState,
-    // A function that evaluates scripts in the webview
-    evaluate_script: Box<dyn FnMut(&str)>,
 }
 
 /// Transport-owned IPC routing state for one webview.
@@ -116,23 +114,24 @@ struct WebviewMessageLayer {
 
 impl WebviewState {
     /// Create a new webview state.
-    fn new(sender: IPCSenders, evaluate_script: impl FnMut(&str) + 'static) -> Self {
+    fn new(sender: IPCSenders) -> Self {
         Self {
             messages: WebviewMessageLayer::new(sender),
             loading_state: WebviewLoadingState::default(),
-            evaluate_script: Box::new(evaluate_script),
         }
     }
 
-    fn evaluate_script(&mut self, script: &str) {
-        (self.evaluate_script)(script);
-    }
-
-    fn handle_driver_command(&mut self, command: DriverCommand) {
+    fn handle_driver_command(&mut self, command: DriverCommand) -> DriverAction {
         match command {
             DriverCommand::AcquireLock => self.handle_acquire_lock(),
-            DriverCommand::SendIpc(ipc_msg) => self.handle_ipc_message(ipc_msg),
-            DriverCommand::ReleaseLock => self.messages.release_lock(),
+            DriverCommand::SendIpc(ipc_msg) => {
+                self.handle_ipc_message(ipc_msg);
+                DriverAction::None
+            }
+            DriverCommand::ReleaseLock => {
+                self.messages.release_lock();
+                DriverAction::None
+            }
         }
     }
 
@@ -148,16 +147,16 @@ impl WebviewState {
         self.messages.receive_rust_message(ipc_msg);
     }
 
-    fn handle_acquire_lock(&mut self) {
+    fn handle_acquire_lock(&mut self) -> DriverAction {
         if let WebviewLoadingState::Pending { acquire_lock, .. } = &mut self.loading_state {
             *acquire_lock = true;
-            return;
+            return DriverAction::None;
         }
 
-        self.request_js_lock();
+        DriverAction::RequestJsLock
     }
 
-    fn mark_loaded(&mut self) {
+    fn mark_loaded(&mut self) -> bool {
         if let WebviewLoadingState::Pending {
             pending_ipc,
             acquire_lock,
@@ -166,14 +165,26 @@ impl WebviewState {
             if let Some(msg) = pending_ipc {
                 self.messages.receive_rust_message(msg);
             }
-            if acquire_lock {
-                self.request_js_lock();
+            return acquire_lock;
+        }
+
+        false
+    }
+}
+
+enum DriverAction {
+    None,
+    RequestJsLock,
+}
+
+impl DriverAction {
+    fn run(self, evaluate_script: &mut impl FnMut(&str)) {
+        match self {
+            DriverAction::None => {}
+            DriverAction::RequestJsLock => {
+                evaluate_script("window.__wry_acquire_handler_lock()");
             }
         }
-    }
-
-    fn request_js_lock(&mut self) {
-        self.evaluate_script("window.__wry_acquire_handler_lock()");
     }
 }
 
@@ -236,6 +247,7 @@ impl WebviewMessageLayer {
 /// This struct is not `Send` because it holds main-thread webview state.
 pub struct ProtocolHandler {
     webview: Rc<RefCell<WebviewState>>,
+    driver_commands: DriverCommandWeakSender,
 }
 
 impl ProtocolHandler {
@@ -295,7 +307,10 @@ impl ProtocolHandler {
         }
 
         if path_without_wbg == "initialized" {
-            webviews.borrow_mut().mark_loaded();
+            let acquire_lock = webviews.borrow_mut().mark_loaded();
+            if acquire_lock {
+                self.driver_commands.send(DriverCommand::AcquireLock);
+            }
             let responder = WryBindgenResponder::from(responder);
             responder.respond(blank_response());
             return None;
@@ -334,23 +349,24 @@ fn init_script() -> String {
 /// Per-webview wry-bindgen session.
 ///
 /// Each session owns one JavaScript realm. Split it into a runtime endpoint for
-/// the app thread and a driver future that must be polled on the webview thread.
+/// the app thread and a driver that must be polled on the webview thread.
 pub struct WryBindgen {
     webview: Rc<RefCell<WebviewState>>,
     ipc: WryIPC,
     driver_commands: DriverCommandReceiver,
+    weak_driver_commands: DriverCommandWeakSender,
 }
 
 impl WryBindgen {
     /// Create a new per-webview session.
     pub fn new() -> Self {
         let (ipc, senders, driver_commands) = WryIPC::new();
+        let weak_driver_commands = ipc.command_sender().downgrade();
         Self {
-            webview: Rc::new(RefCell::new(WebviewState::new(senders, |_| {
-                unreachable!("evaluate_script will only be used after splitting the session")
-            }))),
+            webview: Rc::new(RefCell::new(WebviewState::new(senders))),
             ipc,
             driver_commands,
+            weak_driver_commands,
         }
     }
 
@@ -358,15 +374,12 @@ impl WryBindgen {
     pub fn protocol_handler(&self) -> ProtocolHandler {
         ProtocolHandler {
             webview: self.webview.clone(),
+            driver_commands: self.weak_driver_commands.clone(),
         }
     }
 
     /// Split the session into an app-thread runtime endpoint and a main-thread driver.
-    pub fn split(
-        self,
-        evaluate_script: impl FnMut(&str) + 'static,
-    ) -> (WryBindgenRuntime, WryBindgenDriver) {
-        self.webview.borrow_mut().evaluate_script = Box::new(evaluate_script);
+    pub fn split(self) -> (WryBindgenRuntime, WryBindgenDriver) {
         (
             WryBindgenRuntime { ipc: self.ipc },
             WryBindgenDriver {
@@ -527,17 +540,41 @@ pub struct WryBindgenDriver {
     commands: DriverCommandReceiver,
 }
 
-impl core::future::Future for WryBindgenDriver {
-    type Output = ();
+impl WryBindgenDriver {
+    /// Attach the driver to the webview's script evaluator.
+    ///
+    /// The evaluator is only used to ask JavaScript to acquire the synchronous
+    /// handler lock before polling the async runtime.
+    pub fn with_evaluate_script(
+        self,
+        evaluate_script: impl FnMut(&str) + 'static,
+    ) -> WryBindgenWebviewDriver {
+        WryBindgenWebviewDriver {
+            driver: self,
+            evaluate_script: Box::new(evaluate_script),
+        }
+    }
+}
 
-    fn poll(
-        self: core::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-    ) -> Poll<Self::Output> {
+/// Main-thread driver bound to the webview's script evaluator.
+pub struct WryBindgenWebviewDriver {
+    driver: WryBindgenDriver,
+    evaluate_script: Box<dyn FnMut(&str)>,
+}
+
+impl WryBindgenWebviewDriver {
+    /// Poll the main-thread driver and evaluate scripts only when acquiring the
+    /// JS lock for an async runtime poll.
+    pub fn poll(&mut self, cx: &mut core::task::Context<'_>) -> Poll<()> {
         loop {
-            match self.commands.poll_recv(cx) {
+            match self.driver.commands.poll_recv(cx) {
                 Poll::Ready(Some(command)) => {
-                    self.webview.borrow_mut().handle_driver_command(command);
+                    let action = self
+                        .driver
+                        .webview
+                        .borrow_mut()
+                        .handle_driver_command(command);
+                    action.run(&mut self.evaluate_script);
                 }
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Pending => return Poll::Pending,
@@ -633,10 +670,10 @@ mod tests {
         }
     }
 
-    fn poll_driver(driver: &mut Pin<Box<WryBindgenDriver>>) -> Poll<()> {
+    fn poll_driver(driver: &mut WryBindgenWebviewDriver) -> Poll<()> {
         let waker = std::task::Waker::from(Arc::new(NoopWake));
         let mut cx = std::task::Context::from_waker(&waker);
-        driver.as_mut().poll(&mut cx)
+        driver.poll(&mut cx)
     }
 
     #[test]
@@ -752,9 +789,10 @@ mod tests {
 
         let evaluated_scripts = Rc::new(RefCell::new(Vec::new()));
         let captured_scripts = evaluated_scripts.clone();
-        let (runtime, driver) =
-            bindgen.split(move |script| captured_scripts.borrow_mut().push(script.to_string()));
-        let mut driver = Box::pin(driver);
+        let (runtime, driver) = bindgen.split();
+        let mut driver = driver.with_evaluate_script(move |script| {
+            captured_scripts.borrow_mut().push(script.to_string());
+        });
 
         runtime.ipc.send_acquire_lock();
         assert!(matches!(poll_driver(&mut driver), Poll::Pending));
@@ -772,6 +810,7 @@ mod tests {
             response.borrow().as_ref().unwrap().status(),
             http::StatusCode::OK
         );
+        assert!(matches!(poll_driver(&mut driver), Poll::Pending));
         assert_eq!(
             evaluated_scripts.borrow().as_slice(),
             ["window.__wry_acquire_handler_lock()"]
@@ -785,9 +824,10 @@ mod tests {
 
         let evaluated_scripts = Rc::new(RefCell::new(Vec::new()));
         let captured_scripts = evaluated_scripts.clone();
-        let (runtime, driver) =
-            bindgen.split(move |script| captured_scripts.borrow_mut().push(script.to_string()));
-        let mut driver = Box::pin(driver);
+        let (runtime, driver) = bindgen.split();
+        let mut driver = driver.with_evaluate_script(move |script| {
+            captured_scripts.borrow_mut().push(script.to_string());
+        });
 
         let request = initialized_request();
         let unhandled = protocol_handler.handle_request("wry", &request, |_| {});

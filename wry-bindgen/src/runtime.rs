@@ -5,7 +5,7 @@
 
 use core::task::{Context, Poll};
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use atomic_waker::AtomicWaker;
 
@@ -50,6 +50,9 @@ pub(crate) enum DriverCommand {
 #[derive(Clone)]
 pub(crate) struct DriverCommandSender(Arc<DriverCommandSenderSet>);
 
+#[derive(Clone)]
+pub(crate) struct DriverCommandWeakSender(Weak<DriverCommandQueue>);
+
 pub(crate) struct DriverCommandReceiver {
     queue: Arc<DriverCommandQueue>,
 }
@@ -66,11 +69,23 @@ impl DriverCommandSender {
     pub(crate) fn send(&self, command: DriverCommand) {
         self.0.queue.send(command)
     }
+
+    pub(crate) fn downgrade(&self) -> DriverCommandWeakSender {
+        DriverCommandWeakSender(Arc::downgrade(&self.0.queue))
+    }
 }
 
 impl Drop for DriverCommandSenderSet {
     fn drop(&mut self) {
         self.queue.close();
+    }
+}
+
+impl DriverCommandWeakSender {
+    pub(crate) fn send(&self, command: DriverCommand) {
+        if let Some(queue) = self.0.upgrade() {
+            queue.send(command);
+        }
     }
 }
 

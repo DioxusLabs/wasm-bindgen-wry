@@ -6,12 +6,11 @@ use tao::{
 use wry::WebViewBuilder;
 
 use std::{
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll, Wake, Waker},
 };
 
-use wasm_bindgen::wry::{WryBindgen, WryBindgenDriver};
+use wasm_bindgen::wry::{WryBindgen, WryBindgenWebviewDriver};
 
 use crate::home::root_response;
 
@@ -50,13 +49,13 @@ impl Wake for DriverWake {
     }
 }
 
-fn poll_driver(driver: &mut Pin<Box<WryBindgenDriver>>, waker: &Waker, driver_done: &mut bool) {
+fn poll_driver(driver: &mut WryBindgenWebviewDriver, waker: &Waker, driver_done: &mut bool) {
     if *driver_done {
         return;
     }
 
     let mut cx = Context::from_waker(waker);
-    if matches!(driver.as_mut().poll(&mut cx), Poll::Ready(())) {
+    if matches!(driver.poll(&mut cx), Poll::Ready(())) {
         *driver_done = true;
     }
 }
@@ -101,10 +100,10 @@ pub(crate) fn run_event_loop<F>(
     #[cfg(not(target_os = "linux"))]
     let webview = builder.build(&window).unwrap();
 
-    let evaluate_script = move |script: &str| {
+    let (runtime, driver) = wry_bindgen.split();
+    let mut driver = driver.with_evaluate_script(move |script| {
         _ = webview.evaluate_script(script);
-    };
-    let (runtime, driver) = wry_bindgen.split(evaluate_script);
+    });
     let run_app = runtime.run(app);
 
     std::thread::spawn(move || {
@@ -117,7 +116,6 @@ pub(crate) fn run_event_loop<F>(
         let _ = proxy.send_event(WryEvent::Shutdown);
     });
 
-    let mut driver = Box::pin(driver);
     let driver_waker = Waker::from(Arc::new(DriverWake { proxy: proxy_clone }));
     let mut driver_done = false;
 
