@@ -130,16 +130,7 @@ impl LaunchBuilder {
         };
 
         let event_loop = EventLoopBuilder::<WryEvent>::with_user_event().build();
-        let proxy = event_loop.create_proxy();
-
-        let event_loop_proxy = {
-            let proxy = proxy.clone();
-            move |event| {
-                _ = proxy.send_event(WryEvent::App(event));
-            }
-        };
-
-        let wry_bindgen = WryBindgen::new(event_loop_proxy);
+        let wry_bindgen = WryBindgen::new();
 
         run_event_loop(event_loop, wry_bindgen, app, self.window, self.webview);
 

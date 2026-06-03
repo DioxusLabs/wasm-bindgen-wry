@@ -1,35 +1,65 @@
 use tao::{
     event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
+    event_loop::{ControlFlow, EventLoop, EventLoopProxy},
     window::WindowBuilder,
 };
 use wry::WebViewBuilder;
 
-use wasm_bindgen::wry::{WryBindgen, WryBindgenEvent};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, Wake, Waker},
+};
+
+use wasm_bindgen::wry::{WryBindgen, WryBindgenDriver};
 
 use crate::home::root_response;
 
 /// Event type for the wry-launch event loop.
-/// Wraps wry-bindgen's AppEvent and adds application-level events.
 #[derive(Debug)]
 pub(crate) enum WryEvent {
-    /// An event from wry-bindgen runtime
-    App(WryBindgenEvent),
+    /// Poll the wry-bindgen driver on the main thread.
+    DriverWake,
     /// Shutdown the event loop
     Shutdown,
 }
 
 // Each platform has a different custom protocol scheme
 #[cfg(target_os = "android")]
-pub const BASE_URL: &str = "https://wry.index.html";
+const BASE_URL: &str = "https://wry.index.html";
 
 #[cfg(target_os = "windows")]
-pub const BASE_URL: &str = "http://wry.index.html";
+const BASE_URL: &str = "http://wry.index.html";
 
 #[cfg(not(any(target_os = "android", target_os = "windows")))]
-pub const BASE_URL: &str = "wry://index.html";
+const BASE_URL: &str = "wry://index.html";
 
 const PROTOCOL_SCHEME: &str = "wry";
+
+struct DriverWake {
+    proxy: EventLoopProxy<WryEvent>,
+}
+
+impl Wake for DriverWake {
+    fn wake(self: Arc<Self>) {
+        let _ = self.proxy.send_event(WryEvent::DriverWake);
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        let _ = self.proxy.send_event(WryEvent::DriverWake);
+    }
+}
+
+fn poll_driver(driver: &mut Pin<Box<WryBindgenDriver>>, waker: &Waker, driver_done: &mut bool) {
+    if *driver_done {
+        return;
+    }
+
+    let mut cx = Context::from_waker(waker);
+    if matches!(driver.as_mut().poll(&mut cx), Poll::Ready(())) {
+        *driver_done = true;
+    }
+}
 
 pub(crate) fn run_event_loop<F>(
     event_loop: EventLoop<WryEvent>,
@@ -45,22 +75,13 @@ pub(crate) fn run_event_loop<F>(
     let proxy = event_loop.create_proxy();
     let proxy_clone = proxy.clone();
 
-    let app_builder = wry_bindgen.app_builder();
-    let protocol_handler = app_builder.protocol_handler();
+    let protocol_handler = wry_bindgen.protocol_handler();
 
     // Add the required protocol handler and URL to the user-provided webview builder
     let builder = webview_builder
         .with_asynchronous_custom_protocol(PROTOCOL_SCHEME.into(), move |_, request, responder| {
             let responder = |response| responder.respond(response);
-            let send_app_event = |event| {
-                proxy_clone.send_event(WryEvent::App(event)).unwrap();
-            };
-            let responder = protocol_handler.handle_request(
-                PROTOCOL_SCHEME,
-                send_app_event,
-                &request,
-                responder,
-            );
+            let responder = protocol_handler.handle_request(PROTOCOL_SCHEME, &request, responder);
             let Some(responder) = responder else {
                 return;
             };
@@ -83,7 +104,8 @@ pub(crate) fn run_event_loop<F>(
     let evaluate_script = move |script: &str| {
         _ = webview.evaluate_script(script);
     };
-    let run_app = app_builder.build(app, evaluate_script);
+    let (runtime, driver) = wry_bindgen.split(evaluate_script);
+    let run_app = runtime.run(app);
 
     std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
@@ -95,10 +117,20 @@ pub(crate) fn run_event_loop<F>(
         let _ = proxy.send_event(WryEvent::Shutdown);
     });
 
+    let mut driver = Box::pin(driver);
+    let driver_waker = Waker::from(Arc::new(DriverWake { proxy: proxy_clone }));
+    let mut driver_done = false;
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
+            Event::NewEvents(_) => {
+                poll_driver(&mut driver, &driver_waker, &mut driver_done);
+                if driver_done {
+                    *control_flow = ControlFlow::Exit;
+                }
+            }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
@@ -106,11 +138,14 @@ pub(crate) fn run_event_loop<F>(
                 std::process::exit(0);
             }
             Event::UserEvent(wry_event) => match wry_event {
+                WryEvent::DriverWake => {
+                    poll_driver(&mut driver, &driver_waker, &mut driver_done);
+                    if driver_done {
+                        *control_flow = ControlFlow::Exit;
+                    }
+                }
                 WryEvent::Shutdown => {
                     *control_flow = ControlFlow::Exit;
-                }
-                WryEvent::App(app_event) => {
-                    wry_bindgen.handle_user_event(app_event);
                 }
             },
             _ => {}
