@@ -7,7 +7,6 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::any::Any;
 use core::cell::RefCell;
-use core::marker::PhantomData;
 use std::boxed::Box;
 
 use crate::encode::{BatchableResult, BinaryDecode};
@@ -31,19 +30,11 @@ pub(crate) struct OperationFreeFrame {
     object_handles: Vec<u32>,
 }
 
-/// Marker for runtime state while no synchronous JS XHR is parked.
-pub(crate) struct Unlocked;
-
-/// Marker for runtime state while a synchronous JS XHR is parked and can be
-/// used as the response channel for Rust->JS calls.
-#[doc(hidden)]
-pub struct Locked;
-
 /// State for batching operations and object storage.
 /// Every evaluation is a batch - it may just have one operation.
 ///
 /// Also stores exported Rust structs and callback functions.
-pub struct Runtime<State = Locked> {
+pub struct Runtime {
     /// The encoder accumulating batched operations
     encoder: EncodedData,
     /// Heap IDs that mirror the JS runtime's reference slab.
@@ -73,10 +64,9 @@ pub struct Runtime<State = Locked> {
     webview_id: u64,
     /// Thread locals associated with the runtime
     thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
-    state: PhantomData<State>,
 }
 
-impl Runtime<Unlocked> {
+impl Runtime {
     pub(crate) fn new(ipc: WryIPC, webview_id: u64) -> Self {
         let encoder = Self::new_encoder_for_evaluate();
         Self {
@@ -93,30 +83,9 @@ impl Runtime<Unlocked> {
             ipc,
             webview_id,
             thread_locals: BTreeMap::new(),
-            state: PhantomData,
         }
     }
 
-    pub(crate) fn lock(self) -> Runtime<Locked> {
-        Runtime {
-            encoder: self.encoder,
-            heap_ids: self.heap_ids,
-            borrow_ids: self.borrow_ids,
-            object_handles: self.object_handles,
-            is_batching: self.is_batching,
-            type_cache: self.type_cache,
-            objects: self.objects,
-            pending_object_drops: self.pending_object_drops,
-            op_free_stack: self.op_free_stack,
-            ipc: self.ipc,
-            webview_id: self.webview_id,
-            thread_locals: self.thread_locals,
-            state: PhantomData,
-        }
-    }
-}
-
-impl<State> Runtime<State> {
     fn new_encoder_for_evaluate() -> EncodedData {
         let mut encoder = EncodedData::default();
         encoder.push_u8(MessageType::Evaluate as u8);
@@ -131,26 +100,6 @@ impl<State> Runtime<State> {
     /// Get the webview ID associated with this runtime.
     pub(crate) fn webview_id(&self) -> u64 {
         self.webview_id
-    }
-}
-
-impl Runtime<Locked> {
-    pub(crate) fn unlock(self) -> Runtime<Unlocked> {
-        Runtime {
-            encoder: self.encoder,
-            heap_ids: self.heap_ids,
-            borrow_ids: self.borrow_ids,
-            object_handles: self.object_handles,
-            is_batching: self.is_batching,
-            type_cache: self.type_cache,
-            objects: self.objects,
-            pending_object_drops: self.pending_object_drops,
-            op_free_stack: self.op_free_stack,
-            ipc: self.ipc,
-            webview_id: self.webview_id,
-            thread_locals: self.thread_locals,
-            state: PhantomData,
-        }
     }
 
     /// Record a JS-allocated heap ID from a response.
@@ -738,7 +687,7 @@ mod take_encoder_tests {
 
     fn test_runtime() -> Runtime {
         let (ipc, _senders) = WryIPC::new(Arc::new(|_| {}));
-        Runtime::<Unlocked>::new(ipc, 0).lock()
+        Runtime::new(ipc, 0)
     }
 
     #[test]
@@ -748,10 +697,7 @@ mod take_encoder_tests {
 
         let first = runtime.take_encoder();
         let bytes = IPCMessage::new(first.to_bytes());
-        assert!(matches!(
-            bytes.decoded().unwrap(),
-            DecodedVariant::Evaluate { .. }
-        ));
+        assert!(matches!(bytes.decoded().unwrap(), DecodedVariant::Evaluate { .. }));
         // The encoder holds only the single message-type byte — no per-message
         // request ID lives on the wire anymore.
         assert!(first.u32_buf.is_empty());
