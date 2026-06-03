@@ -60,14 +60,12 @@ pub struct Runtime {
     op_free_stack: Vec<OperationFreeFrame>,
     /// The ipc layer used to communicate with the JS runtime
     ipc: WryIPC,
-    /// The id of the webview this is associated with
-    webview_id: u64,
     /// Thread locals associated with the runtime
     thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
 }
 
 impl Runtime {
-    pub(crate) fn new(ipc: WryIPC, webview_id: u64) -> Self {
+    pub(crate) fn new(ipc: WryIPC) -> Self {
         let encoder = Self::new_encoder_for_evaluate();
         Self {
             encoder,
@@ -81,7 +79,6 @@ impl Runtime {
             pending_object_drops: BTreeSet::new(),
             op_free_stack: Vec::new(),
             ipc,
-            webview_id,
             thread_locals: BTreeMap::new(),
         }
     }
@@ -95,11 +92,6 @@ impl Runtime {
     /// Get a reference to the IPC layer.
     pub(crate) fn ipc(&self) -> &WryIPC {
         &self.ipc
-    }
-
-    /// Get the webview ID associated with this runtime.
-    pub(crate) fn webview_id(&self) -> u64 {
-        self.webview_id
     }
 
     /// Get the next heap ID for a return value placeholder.
@@ -604,15 +596,11 @@ pub(crate) fn flush_and_return<R: BinaryDecode>() -> R {
 }
 
 pub(crate) fn flush_and_then<R>(mut then: impl for<'a> FnMut(DecodedData<'a>) -> R) -> R {
-    use crate::runtime::WryBindgenEvent;
-
     let (batch_msg, heap_ids_to_recycle_after_flush) = with_runtime(|state| state.take_message());
 
     // Send and wait for the matching Respond. Under strict ping-pong the next
     // non-Evaluate inbound is necessarily the answer to this outbound.
-    with_runtime(|runtime| {
-        (runtime.ipc().proxy)(WryBindgenEvent::ipc(runtime.webview_id(), batch_msg))
-    });
+    with_runtime(|runtime| runtime.ipc().send_ipc(batch_msg));
     let mut heap_ids_to_recycle_after_flush = Some(heap_ids_to_recycle_after_flush);
     loop {
         if let Some(result) = crate::runtime::progress_js_with(&mut then) {
@@ -674,15 +662,13 @@ pub fn force_flush() {
 
 #[cfg(test)]
 mod take_encoder_tests {
-    use std::sync::Arc;
-
     use super::*;
     use crate::ipc::{DecodedVariant, IPCMessage};
     use crate::runtime::WryIPC;
 
     fn test_runtime() -> Runtime {
-        let (ipc, _senders) = WryIPC::new(Arc::new(|_| {}));
-        Runtime::new(ipc, 0)
+        let (ipc, _senders, _driver_commands) = WryIPC::new();
+        Runtime::new(ipc)
     }
 
     #[test]

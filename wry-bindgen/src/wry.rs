@@ -1,8 +1,8 @@
-//! Reusable wry-bindgen state for integrating with existing wry applications.
+//! Per-webview wry-bindgen integration for existing wry applications.
 //!
-//! This module provides [`WryBindgen`], a struct that manages the IPC protocol
-//! between Rust and JavaScript. It can be injected into any wry application
-//! to enable wry-bindgen functionality.
+//! A [`WryBindgen`] session is split into an app-thread runtime endpoint and a
+//! main-thread driver. Create one session for each webview/JavaScript
+//! realm.
 
 use alloc::boxed::Box;
 use alloc::rc::Rc;
@@ -12,10 +12,7 @@ use base64::Engine;
 use core::cell::RefCell;
 use core::future::poll_fn;
 use core::pin::Pin;
-use core::sync::atomic::AtomicU64;
 use core::task::Poll;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 use http::Response;
 
@@ -23,18 +20,12 @@ use crate::batch::{Runtime, in_runtime};
 use crate::function_registry::FUNCTION_REGISTRY;
 use crate::ipc::{IPCMessage, OutboundIPCMessage, decode_data};
 use crate::runtime::{
-    AppEventVariant, IPCSenders, Inbound, InboundSendError, WryIPC, dispatch_inbound_message,
+    DriverCommand, DriverCommandReceiver, DriverCommandSender, DriverCommandWeakSender, IPCSenders,
+    Inbound, InboundSendError, WryIPC, dispatch_inbound_message,
 };
 
-pub use crate::runtime::WryBindgenEvent;
-
-pub trait ImplWryBindgenResponder {
-    fn respond(self: Box<Self>, response: Response<Vec<u8>>);
-}
-
-/// Responder for wry-bindgen protocol requests.
-pub struct WryBindgenResponder {
-    respond: Box<dyn ImplWryBindgenResponder>,
+struct WryBindgenResponder {
+    respond: Box<dyn FnOnce(Response<Vec<u8>>)>,
 }
 
 impl<F> From<F> for WryBindgenResponder
@@ -42,34 +33,15 @@ where
     F: FnOnce(Response<Vec<u8>>) + 'static,
 {
     fn from(respond: F) -> Self {
-        struct FnOnceWrapper<F> {
-            f: F,
-        }
-
-        impl<F> ImplWryBindgenResponder for FnOnceWrapper<F>
-        where
-            F: FnOnce(Response<Vec<u8>>) + 'static,
-        {
-            fn respond(self: Box<Self>, response: Response<Vec<u8>>) {
-                (self.f)(response)
-            }
-        }
-
         Self {
-            respond: Box::new(FnOnceWrapper { f: respond }),
+            respond: Box::new(respond),
         }
     }
 }
 
 impl WryBindgenResponder {
-    pub fn new(f: impl ImplWryBindgenResponder + 'static) -> Self {
-        Self {
-            respond: Box::new(f),
-        }
-    }
-
     fn respond(self, response: Response<Vec<u8>>) {
-        self.respond.respond(response);
+        (self.respond)(response);
     }
 
     fn respond_ipc(self, response: IPCMessage) {
@@ -123,8 +95,6 @@ struct WebviewState {
     messages: WebviewMessageLayer,
     // The state of the webview. Either loading (with queued messages) or loaded.
     loading_state: WebviewLoadingState,
-    // A function that evaluates scripts in the webview
-    evaluate_script: Box<dyn FnMut(&str)>,
 }
 
 /// Transport-owned IPC routing state for one webview.
@@ -144,16 +114,77 @@ struct WebviewMessageLayer {
 
 impl WebviewState {
     /// Create a new webview state.
-    fn new(sender: IPCSenders, evaluate_script: impl FnMut(&str) + 'static) -> Self {
+    fn new(sender: IPCSenders) -> Self {
         Self {
             messages: WebviewMessageLayer::new(sender),
             loading_state: WebviewLoadingState::default(),
-            evaluate_script: Box::new(evaluate_script),
         }
     }
 
-    fn evaluate_script(&mut self, script: &str) {
-        (self.evaluate_script)(script);
+    fn handle_driver_command(&mut self, command: DriverCommand) -> DriverAction {
+        match command {
+            DriverCommand::AcquireLock => self.handle_acquire_lock(),
+            DriverCommand::SendIpc(ipc_msg) => {
+                self.handle_ipc_message(ipc_msg);
+                DriverAction::None
+            }
+            DriverCommand::ReleaseLock => {
+                self.messages.release_lock();
+                DriverAction::None
+            }
+        }
+    }
+
+    fn handle_ipc_message(&mut self, ipc_msg: OutboundIPCMessage) {
+        if let WebviewLoadingState::Pending { pending_ipc, .. } = &mut self.loading_state {
+            assert!(
+                pending_ipc.replace(ipc_msg).is_none(),
+                "multiple Rust IPC messages queued before webview load"
+            );
+            return;
+        }
+
+        self.messages.receive_rust_message(ipc_msg);
+    }
+
+    fn handle_acquire_lock(&mut self) -> DriverAction {
+        if let WebviewLoadingState::Pending { acquire_lock, .. } = &mut self.loading_state {
+            *acquire_lock = true;
+            return DriverAction::None;
+        }
+
+        DriverAction::RequestJsLock
+    }
+
+    fn mark_loaded(&mut self) -> bool {
+        if let WebviewLoadingState::Pending {
+            pending_ipc,
+            acquire_lock,
+        } = std::mem::replace(&mut self.loading_state, WebviewLoadingState::Loaded)
+        {
+            if let Some(msg) = pending_ipc {
+                self.messages.receive_rust_message(msg);
+            }
+            return acquire_lock;
+        }
+
+        false
+    }
+}
+
+enum DriverAction {
+    None,
+    RequestJsLock,
+}
+
+impl DriverAction {
+    fn run(self, evaluate_script: &mut impl FnMut(&str)) {
+        match self {
+            DriverAction::None => {}
+            DriverAction::RequestJsLock => {
+                evaluate_script("window.__wry_acquire_handler_lock()");
+            }
+        }
     }
 }
 
@@ -211,13 +242,12 @@ impl WebviewMessageLayer {
     }
 }
 
-/// Factory for creating a protocol handler for a specific webview.
+/// Protocol handler for one webview session.
 ///
-/// This struct is NOT `Send` because it holds a reference to shared webview state.
-/// Create the protocol handler on the main thread before spawning the app thread.
+/// This struct is not `Send` because it holds main-thread webview state.
 pub struct ProtocolHandler {
-    id: u64,
-    webview: Rc<RefCell<HashMap<u64, WebviewState>>>,
+    webview: Rc<RefCell<WebviewState>>,
+    driver_commands: DriverCommandWeakSender,
 }
 
 impl ProtocolHandler {
@@ -231,19 +261,16 @@ impl ProtocolHandler {
     ///
     /// # Arguments
     /// * `protocol` - The protocol scheme (e.g., "wry")
-    /// * `proxy` - Function to send events to the event loop
-    pub fn handle_request<F, R: Into<WryBindgenResponder>>(
+    pub fn handle_request<R>(
         &self,
         protocol: &str,
-        proxy: F,
         request: &http::Request<Vec<u8>>,
         responder: R,
     ) -> Option<R>
     where
-        F: Fn(WryBindgenEvent),
+        R: FnOnce(Response<Vec<u8>>) + 'static,
     {
         let webviews = &self.webview;
-        let webview_id = self.id;
 
         let protocol_prefix = format!("{protocol}://index.html");
         let android_prefix = format!("https://{protocol}.index.html");
@@ -264,7 +291,7 @@ impl ProtocolHandler {
 
         // Serve inline_js modules from __wbg__/snippets/
         if let Some(path_without_snippets) = path_without_wbg.strip_prefix("snippets/") {
-            let responder = responder.into();
+            let responder = WryBindgenResponder::from(responder);
             if let Some(content) = FUNCTION_REGISTRY.get_module(path_without_snippets) {
                 responder.respond(module_response(content));
                 return None;
@@ -274,26 +301,25 @@ impl ProtocolHandler {
         }
 
         if path_without_wbg == "init.js" {
-            let responder = responder.into();
+            let responder = WryBindgenResponder::from(responder);
             responder.respond(module_response(&init_script()));
             return None;
         }
 
         if path_without_wbg == "initialized" {
-            proxy(WryBindgenEvent::webview_loaded(webview_id));
-            let responder = responder.into();
+            let acquire_lock = webviews.borrow_mut().mark_loaded();
+            if acquire_lock {
+                self.driver_commands.send(DriverCommand::AcquireLock);
+            }
+            let responder = WryBindgenResponder::from(responder);
             responder.respond(blank_response());
             return None;
         }
 
         // Js sent us either an Evaluate or Respond message
         if path_without_wbg == "handler" {
-            let responder = responder.into();
-            let mut webviews = webviews.borrow_mut();
-            let Some(webview_state) = webviews.get_mut(&webview_id) else {
-                responder.respond(error_response());
-                return None;
-            };
+            let responder = WryBindgenResponder::from(responder);
+            let mut webview_state = webviews.borrow_mut();
             if request.headers().get("wry-bindgen-lock").is_some() {
                 webview_state.messages.receive_lock_request(responder);
                 return None;
@@ -320,152 +346,53 @@ fn init_script() -> String {
     format!("{INITIALIZATION_SCRIPT}\n{collect_functions}")
 }
 
-/// Reusable wry-bindgen state for integrating with existing wry applications.
+/// Per-webview wry-bindgen session.
 ///
-/// This struct manages the IPC protocol between Rust and JavaScript,
-/// handling message queuing, async responses, and JS function registration.
-///
-/// # Example
-///
-/// ```ignore
-/// let wry_bindgen = WryBindgen::new(move |event| { proxy.send_event(event).ok(); });
-///
-/// let (prepared_app, protocol_factory) = wry_bindgen.in_runtime(|| async { my_app().await });
-/// let protocol_handler = protocol_factory.create("wry", move |event| {
-///     proxy.send_event(event).ok();
-/// });
-///
-/// std::thread::spawn(move || {
-///     // Run prepared_app.into_future() in a tokio runtime
-/// });
-///
-/// let webview = WebViewBuilder::new()
-///     .with_asynchronous_custom_protocol("wry".into(), move |_, req, resp| {
-///         protocol_handler(&req, resp);
-///     })
-///     .with_url("wry://index")
-///     .build(&window)?;
-/// ```
+/// Each session owns one JavaScript realm. Split it into a runtime endpoint for
+/// the app thread and a driver that must be polled on the webview thread.
 pub struct WryBindgen {
-    event_loop_proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
-    max_id: AtomicU64,
-    // State that is unique to each webview
-    webview: Rc<RefCell<HashMap<u64, WebviewState>>>,
+    webview: Rc<RefCell<WebviewState>>,
+    ipc: WryIPC,
+    driver_commands: DriverCommandReceiver,
+    weak_driver_commands: DriverCommandWeakSender,
 }
 
 impl WryBindgen {
-    /// Create a new WryBindgen instance.
-    pub fn new(event_loop_proxy: impl Fn(WryBindgenEvent) + Send + Sync + 'static) -> Self {
+    /// Create a new per-webview session.
+    pub fn new() -> Self {
+        let (ipc, senders, driver_commands) = WryIPC::new();
+        let weak_driver_commands = ipc.command_sender().downgrade();
         Self {
-            event_loop_proxy: Arc::new(event_loop_proxy),
-            max_id: AtomicU64::new(0),
-            webview: Rc::new(RefCell::new(HashMap::new())),
-        }
-    }
-
-    /// Start the application thread with the given event loop proxy.
-    ///
-    /// Returns a tuple of:
-    /// - `PreparedApp`: The app future, which is `Send` and can be moved to a spawned thread
-    /// - `ProtocolHandlerFactory`: Factory for creating the protocol handler (not `Send`, use on main thread)
-    pub fn app_builder<'a>(&'a self) -> AppBuilder<'a> {
-        let event_loop_proxy = self.event_loop_proxy.clone();
-        let (ipc, senders) = WryIPC::new(event_loop_proxy);
-        let id = self
-            .max_id
-            .fetch_add(1, core::sync::atomic::Ordering::SeqCst);
-        self.webview.borrow_mut().insert(
-            id,
-            WebviewState::new(senders, |_| {
-                unreachable!("evaluate_script will only be used after spawning the app")
-            }),
-        );
-
-        AppBuilder {
-            webview_id: id,
-            bindgen: self,
+            webview: Rc::new(RefCell::new(WebviewState::new(senders))),
             ipc,
+            driver_commands,
+            weak_driver_commands,
         }
     }
 
-    /// Handle a user event from the event loop.
-    ///
-    /// This should be called from your ApplicationHandler::user_event implementation.
-    /// Returns `Some(exit_code)` if the application should shut down with that exit code.
-    ///
-    /// # Arguments
-    /// * `event` - The AppEvent to handle
-    /// * `webview` - Reference to the webview for script evaluation
-    pub fn handle_user_event(&self, event: WryBindgenEvent) {
-        let id = event.id();
-        match event.into_variant() {
-            // The rust thread sent us an IPCMessage to send to JS
-            AppEventVariant::Ipc(ipc_msg) => self.handle_ipc_message(id, ipc_msg),
-            AppEventVariant::WebviewLoaded => self.with_webview_state(id, |webview_state| {
-                if let WebviewLoadingState::Pending {
-                    pending_ipc,
-                    acquire_lock,
-                } = std::mem::replace(
-                    &mut webview_state.loading_state,
-                    WebviewLoadingState::Loaded,
-                ) {
-                    if let Some(msg) = pending_ipc {
-                        self.immediately_handle_ipc_message(webview_state, msg);
-                    }
-                    if acquire_lock {
-                        self.request_js_lock(webview_state);
-                    }
-                }
-            }),
-            AppEventVariant::AcquireLock => self.with_webview_state(id, |webview_state| {
-                if let WebviewLoadingState::Pending { acquire_lock, .. } =
-                    &mut webview_state.loading_state
-                {
-                    *acquire_lock = true;
-                    return;
-                }
-                self.request_js_lock(webview_state);
-            }),
-            AppEventVariant::ReleaseLock => self.with_webview_state(id, |webview_state| {
-                webview_state.messages.release_lock();
-            }),
+    /// Get the protocol handler for this webview.
+    pub fn protocol_handler(&self) -> ProtocolHandler {
+        ProtocolHandler {
+            webview: self.webview.clone(),
+            driver_commands: self.weak_driver_commands.clone(),
         }
     }
 
-    fn handle_ipc_message(&self, id: u64, ipc_msg: OutboundIPCMessage) {
-        self.with_webview_state(id, |webview_state| {
-            if let WebviewLoadingState::Pending { pending_ipc, .. } =
-                &mut webview_state.loading_state
-            {
-                assert!(
-                    pending_ipc.replace(ipc_msg).is_none(),
-                    "multiple Rust IPC messages queued before webview load"
-                );
-                return;
-            }
-
-            self.immediately_handle_ipc_message(webview_state, ipc_msg);
-        });
+    /// Split the session into an app-thread runtime endpoint and a main-thread driver.
+    pub fn split(self) -> (WryBindgenRuntime, WryBindgenDriver) {
+        (
+            WryBindgenRuntime { ipc: self.ipc },
+            WryBindgenDriver {
+                webview: self.webview,
+                commands: self.driver_commands,
+            },
+        )
     }
+}
 
-    fn with_webview_state(&self, id: u64, f: impl FnOnce(&mut WebviewState)) {
-        let mut state = self.webview.borrow_mut();
-        let Some(webview_state) = state.get_mut(&id) else {
-            return;
-        };
-        f(webview_state);
-    }
-
-    fn request_js_lock(&self, webview_state: &mut WebviewState) {
-        webview_state.evaluate_script("window.__wry_acquire_handler_lock()");
-    }
-
-    fn immediately_handle_ipc_message(
-        &self,
-        webview_state: &mut WebviewState,
-        ipc_msg: OutboundIPCMessage,
-    ) {
-        webview_state.messages.receive_rust_message(ipc_msg);
+impl Default for WryBindgen {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -476,97 +403,68 @@ impl WryBindgen {
 /// the JS event loop until the next wake. Tying release to the guard's scope
 /// keeps acquire and release paired.
 struct JsLockGuard {
-    proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
-    webview_id: u64,
+    commands: DriverCommandSender,
 }
 
 impl JsLockGuard {
-    fn acquire(ipc: &WryIPC, webview_id: u64) -> Self {
+    fn acquire(ipc: &WryIPC) -> Self {
         Self {
-            proxy: ipc.proxy.clone(),
-            webview_id,
+            commands: ipc.command_sender(),
         }
     }
 }
 
 impl Drop for JsLockGuard {
     fn drop(&mut self) {
-        (self.proxy)(WryBindgenEvent::release_lock(self.webview_id));
+        self.commands.send(DriverCommand::ReleaseLock);
     }
 }
 
-/// A builder for the application future and protocol handler.
-pub struct AppBuilder<'a> {
-    webview_id: u64,
-    bindgen: &'a WryBindgen,
+/// Runtime endpoint moved to the app thread.
+pub struct WryBindgenRuntime {
     ipc: WryIPC,
 }
 
-impl<'a> AppBuilder<'a> {
-    /// Get the protocol handler for this webview.
-    pub fn protocol_handler(&self) -> ProtocolHandler {
-        ProtocolHandler {
-            id: self.webview_id,
-            webview: self.bindgen.webview.clone(),
-        }
-    }
-
-    /// Consume the builder and get the prepared app future.
-    pub fn build<F, F2, F3>(
+impl WryBindgenRuntime {
+    /// Build a sendable wrapper that creates and runs the app future on the
+    /// thread where it is awaited.
+    pub fn run<F, Fut>(
         self,
         app: F,
-        evaluate_script: F2,
     ) -> impl IntoFuture<Output = (), IntoFuture: 'static> + Send + 'static
     where
-        F: FnOnce() -> F3 + Send + 'static,
-        F2: FnMut(&str) + 'static,
-        F3: core::future::Future<Output = ()> + 'static,
+        F: FnOnce() -> Fut + Send + 'static,
+        Fut: core::future::Future<Output = ()> + 'static,
     {
-        // First set up the evaluate_script function in the webview state
-        {
-            let mut webviews = self.bindgen.webview.borrow_mut();
-            let webview_state = webviews
-                .get_mut(&self.webview_id)
-                .expect("The webview state was created in WryBindgen::spawner");
-            webview_state.evaluate_script = Box::new(evaluate_script);
-        }
-
-        struct BuildFuture<F, F2> {
+        struct RuntimeFuture<F, Fut> {
             app: F,
-            webview_id: u64,
             ipc: WryIPC,
-            phantom: core::marker::PhantomData<fn(F2)>,
+            phantom: core::marker::PhantomData<fn(Fut)>,
         }
 
-        impl<F, F2> BuildFuture<F, F2> {
-            fn new(app: F, webview_id: u64, ipc: WryIPC) -> Self {
+        impl<F, Fut> RuntimeFuture<F, Fut> {
+            fn new(app: F, ipc: WryIPC) -> Self {
                 Self {
                     app,
-                    webview_id,
                     ipc,
                     phantom: core::marker::PhantomData,
                 }
             }
         }
 
-        impl<F, F2> IntoFuture for BuildFuture<F, F2>
+        impl<F, Fut> IntoFuture for RuntimeFuture<F, Fut>
         where
-            F: FnOnce() -> F2 + Send + 'static,
-            F2: core::future::Future<Output = ()> + 'static,
+            F: FnOnce() -> Fut + Send + 'static,
+            Fut: core::future::Future<Output = ()> + 'static,
         {
             type IntoFuture = Pin<Box<dyn core::future::Future<Output = ()>>>;
             type Output = ();
 
             fn into_future(self) -> Self::IntoFuture {
-                let Self {
-                    app,
-                    webview_id,
-                    ipc,
-                    ..
-                } = self;
-                let mut runtime = Some(Runtime::new(ipc, webview_id));
+                let Self { app, ipc, .. } = self;
+                let mut runtime = Some(Runtime::new(ipc));
                 let mut app = Some(app);
-                let mut run_app = None::<Pin<Box<F2>>>;
+                let mut run_app = None::<Pin<Box<Fut>>>;
 
                 // The runtime drives the JS event loop by parking a synchronous XHR
                 // (the "lock"). On each wake we drain inbound items from the shared
@@ -593,7 +491,7 @@ impl<'a> AppBuilder<'a> {
                             // A parked XHR is available: poll the app future while the
                             // guard holds the lock, releasing it when the poll returns.
                             Poll::Ready(Some(Inbound::LockReady)) => {
-                                let _guard = JsLockGuard::acquire(rt.ipc(), rt.webview_id());
+                                let _guard = JsLockGuard::acquire(rt.ipc());
                                 if run_app.is_none() {
                                     run_app = Some(Box::pin(app
                                         .take()
@@ -620,7 +518,7 @@ impl<'a> AppBuilder<'a> {
                                 // app future (it registered its own waker and is idle),
                                 // this wake means it wants to run: ask JS to park an XHR.
                                 if !just_polled_app {
-                                    rt.ipc().send_acquire_lock(rt.webview_id());
+                                    rt.ipc().send_acquire_lock();
                                 }
                                 return Poll::Pending;
                             }
@@ -632,12 +530,61 @@ impl<'a> AppBuilder<'a> {
             }
         }
 
-        BuildFuture::new(app, self.webview_id, self.ipc)
+        RuntimeFuture::new(app, self.ipc)
+    }
+}
+
+/// Main-thread driver for one webview session.
+pub struct WryBindgenDriver {
+    webview: Rc<RefCell<WebviewState>>,
+    commands: DriverCommandReceiver,
+}
+
+impl WryBindgenDriver {
+    /// Attach the driver to the webview's script evaluator.
+    ///
+    /// The evaluator is only used to ask JavaScript to acquire the synchronous
+    /// handler lock before polling the async runtime.
+    pub fn with_evaluate_script(
+        self,
+        evaluate_script: impl FnMut(&str) + 'static,
+    ) -> WryBindgenWebviewDriver {
+        WryBindgenWebviewDriver {
+            driver: self,
+            evaluate_script: Box::new(evaluate_script),
+        }
+    }
+}
+
+/// Main-thread driver bound to the webview's script evaluator.
+pub struct WryBindgenWebviewDriver {
+    driver: WryBindgenDriver,
+    evaluate_script: Box<dyn FnMut(&str)>,
+}
+
+impl WryBindgenWebviewDriver {
+    /// Poll the main-thread driver and evaluate scripts only when acquiring the
+    /// JS lock for an async runtime poll.
+    pub fn poll(&mut self, cx: &mut core::task::Context<'_>) -> Poll<()> {
+        loop {
+            match self.driver.commands.poll_recv(cx) {
+                Poll::Ready(Some(command)) => {
+                    let action = self
+                        .driver
+                        .webview
+                        .borrow_mut()
+                        .handle_driver_command(command);
+                    action.run(&mut self.evaluate_script);
+                }
+                Poll::Ready(None) => return Poll::Ready(()),
+                Poll::Pending => return Poll::Pending,
+            }
+        }
     }
 }
 
 /// Create a blank HTTP response.
-pub(crate) fn blank_response() -> http::Response<Vec<u8>> {
+fn blank_response() -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(200)
         .body(vec![])
@@ -645,7 +592,7 @@ pub(crate) fn blank_response() -> http::Response<Vec<u8>> {
 }
 
 /// Create an error HTTP response.
-pub(crate) fn error_response() -> http::Response<Vec<u8>> {
+fn error_response() -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(400)
         .body(vec![])
@@ -653,7 +600,7 @@ pub(crate) fn error_response() -> http::Response<Vec<u8>> {
 }
 
 /// Create a JavaScript module HTTP response.
-pub(crate) fn module_response(content: &str) -> http::Response<Vec<u8>> {
+fn module_response(content: &str) -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(200)
         .header("Content-Type", "application/javascript")
@@ -663,7 +610,7 @@ pub(crate) fn module_response(content: &str) -> http::Response<Vec<u8>> {
 }
 
 /// Create a not found HTTP response.
-pub(crate) fn not_found_response() -> http::Response<Vec<u8>> {
+fn not_found_response() -> http::Response<Vec<u8>> {
     http::Response::builder()
         .status(404)
         .body(b"Not Found".to_vec())
@@ -674,6 +621,7 @@ pub(crate) fn not_found_response() -> http::Response<Vec<u8>> {
 mod tests {
     use super::*;
     use crate::ipc::{DecodedVariant, EncodedData, MessageType};
+    use std::sync::Arc;
 
     fn ipc_message(message_type: MessageType) -> IPCMessage {
         let mut data = EncodedData::default();
@@ -700,6 +648,13 @@ mod tests {
             .expect("failed to build request")
     }
 
+    fn initialized_request() -> http::Request<Vec<u8>> {
+        http::Request::builder()
+            .uri("wry://index.html/__wbg__/initialized")
+            .body(Vec::new())
+            .expect("failed to build request")
+    }
+
     struct NoopWake;
 
     impl std::task::Wake for NoopWake {
@@ -715,9 +670,15 @@ mod tests {
         }
     }
 
+    fn poll_driver(driver: &mut WryBindgenWebviewDriver) -> Poll<()> {
+        let waker = std::task::Waker::from(Arc::new(NoopWake));
+        let mut cx = std::task::Context::from_waker(&waker);
+        driver.poll(&mut cx)
+    }
+
     #[test]
     fn js_respond_is_forwarded_and_parks_xhr() {
-        let (ipc, sender) = WryIPC::new(Arc::new(|_| {}));
+        let (ipc, sender, _driver_commands) = WryIPC::new();
         let mut layer = WebviewMessageLayer::new(sender);
         let responder_called = Rc::new(RefCell::new(false));
         let captured_responder_called = responder_called.clone();
@@ -743,7 +704,7 @@ mod tests {
 
     #[test]
     fn js_message_while_xhr_is_parked_panics() {
-        let (_ipc, sender) = WryIPC::new(Arc::new(|_| {}));
+        let (_ipc, sender, _driver_commands) = WryIPC::new();
         let mut layer = WebviewMessageLayer::new(sender);
         layer.current_xhr = Some(WryBindgenResponder::from(|_| {}));
 
@@ -759,7 +720,7 @@ mod tests {
 
     #[test]
     fn lock_request_while_xhr_is_parked_panics() {
-        let (_ipc, sender) = WryIPC::new(Arc::new(|_| {}));
+        let (_ipc, sender, _driver_commands) = WryIPC::new();
         let mut layer = WebviewMessageLayer::new(sender);
         layer.current_xhr = Some(WryBindgenResponder::from(|_| {}));
 
@@ -773,7 +734,7 @@ mod tests {
     #[test]
     fn rust_outbound_messages_use_same_parked_xhr_response_path() {
         for message_type in [MessageType::Evaluate, MessageType::Respond] {
-            let (_ipc, sender) = WryIPC::new(Arc::new(|_| {}));
+            let (_ipc, sender, _driver_commands) = WryIPC::new();
             let mut layer = WebviewMessageLayer::new(sender);
             let response = Rc::new(RefCell::new(None));
             let captured_response = response.clone();
@@ -801,21 +762,17 @@ mod tests {
 
     #[test]
     fn handler_responds_error_when_evaluate_arrives_after_runtime_drop() {
-        let bindgen = WryBindgen::new(|_| {});
-        let app_builder = bindgen.app_builder();
-        let protocol_handler = app_builder.protocol_handler();
-        drop(app_builder);
+        let bindgen = WryBindgen::new();
+        let protocol_handler = bindgen.protocol_handler();
+        drop(bindgen);
 
         let response = Rc::new(RefCell::new(None));
         let captured_response = response.clone();
         let request = handler_request(MessageType::Evaluate);
 
-        let unhandled = protocol_handler.handle_request(
-            "wry",
-            |_| {},
-            &request,
-            move |response| *captured_response.borrow_mut() = Some(response),
-        );
+        let unhandled = protocol_handler.handle_request("wry", &request, move |response| {
+            *captured_response.borrow_mut() = Some(response)
+        });
 
         assert!(unhandled.is_none());
         let response = response
@@ -827,21 +784,33 @@ mod tests {
 
     #[test]
     fn lock_request_is_queued_until_webview_loads() {
-        let bindgen = WryBindgen::new(|_| {});
-        let app_builder = bindgen.app_builder();
-        let webview_id = app_builder.webview_id;
+        let bindgen = WryBindgen::new();
+        let protocol_handler = bindgen.protocol_handler();
 
         let evaluated_scripts = Rc::new(RefCell::new(Vec::new()));
         let captured_scripts = evaluated_scripts.clone();
-        let _prepared_app = app_builder.build(
-            || async {},
-            move |script| captured_scripts.borrow_mut().push(script.to_string()),
-        );
+        let (runtime, driver) = bindgen.split();
+        let mut driver = driver.with_evaluate_script(move |script| {
+            captured_scripts.borrow_mut().push(script.to_string());
+        });
 
-        bindgen.handle_user_event(WryBindgenEvent::acquire_lock(webview_id));
+        runtime.ipc.send_acquire_lock();
+        assert!(matches!(poll_driver(&mut driver), Poll::Pending));
         assert!(evaluated_scripts.borrow().is_empty());
 
-        bindgen.handle_user_event(WryBindgenEvent::webview_loaded(webview_id));
+        let response = Rc::new(RefCell::new(None));
+        let captured_response = response.clone();
+        let request = initialized_request();
+        let unhandled = protocol_handler.handle_request("wry", &request, move |response| {
+            *captured_response.borrow_mut() = Some(response)
+        });
+
+        assert!(unhandled.is_none());
+        assert_eq!(
+            response.borrow().as_ref().unwrap().status(),
+            http::StatusCode::OK
+        );
+        assert!(matches!(poll_driver(&mut driver), Poll::Pending));
         assert_eq!(
             evaluated_scripts.borrow().as_slice(),
             ["window.__wry_acquire_handler_lock()"]
@@ -850,30 +819,27 @@ mod tests {
 
     #[test]
     fn lock_request_while_js_xhr_is_parked_is_not_dropped_or_duplicated() {
-        let bindgen = WryBindgen::new(|_| {});
-        let app_builder = bindgen.app_builder();
-        let webview_id = app_builder.webview_id;
-        let protocol_handler = app_builder.protocol_handler();
+        let bindgen = WryBindgen::new();
+        let protocol_handler = bindgen.protocol_handler();
 
         let evaluated_scripts = Rc::new(RefCell::new(Vec::new()));
         let captured_scripts = evaluated_scripts.clone();
-        let _prepared_app = app_builder.build(
-            || async {},
-            move |script| captured_scripts.borrow_mut().push(script.to_string()),
-        );
+        let (runtime, driver) = bindgen.split();
+        let mut driver = driver.with_evaluate_script(move |script| {
+            captured_scripts.borrow_mut().push(script.to_string());
+        });
 
-        bindgen.handle_user_event(WryBindgenEvent::webview_loaded(webview_id));
+        let request = initialized_request();
+        let unhandled = protocol_handler.handle_request("wry", &request, |_| {});
+        assert!(unhandled.is_none());
 
         let response = Rc::new(RefCell::new(None));
         let captured_response = response.clone();
         let request = handler_request(MessageType::Evaluate);
 
-        let unhandled = protocol_handler.handle_request(
-            "wry",
-            |_| {},
-            &request,
-            move |response| *captured_response.borrow_mut() = Some(response),
-        );
+        let unhandled = protocol_handler.handle_request("wry", &request, move |response| {
+            *captured_response.borrow_mut() = Some(response)
+        });
 
         assert!(unhandled.is_none());
         assert!(
@@ -881,17 +847,18 @@ mod tests {
             "JS callback XHR should stay parked while Rust handles it"
         );
 
-        bindgen.handle_user_event(WryBindgenEvent::acquire_lock(webview_id));
+        runtime.ipc.send_acquire_lock();
+        assert!(matches!(poll_driver(&mut driver), Poll::Pending));
         assert_eq!(
             evaluated_scripts.borrow().as_slice(),
             ["window.__wry_acquire_handler_lock()"],
             "lock script should be requested while the parked XHR is outstanding"
         );
 
-        bindgen.handle_user_event(WryBindgenEvent::ipc(
-            webview_id,
-            OutboundIPCMessage::new(ipc_message(MessageType::Respond)),
-        ));
+        runtime
+            .ipc
+            .send_ipc(OutboundIPCMessage::new(ipc_message(MessageType::Respond)));
+        assert!(matches!(poll_driver(&mut driver), Poll::Pending));
 
         let response = response
             .borrow_mut()
@@ -907,21 +874,17 @@ mod tests {
 
     #[test]
     fn handler_responds_error_when_lock_arrives_after_runtime_drop() {
-        let bindgen = WryBindgen::new(|_| {});
-        let app_builder = bindgen.app_builder();
-        let protocol_handler = app_builder.protocol_handler();
-        drop(app_builder);
+        let bindgen = WryBindgen::new();
+        let protocol_handler = bindgen.protocol_handler();
+        drop(bindgen);
 
         let response = Rc::new(RefCell::new(None));
         let captured_response = response.clone();
         let request = lock_request();
 
-        let unhandled = protocol_handler.handle_request(
-            "wry",
-            |_| {},
-            &request,
-            move |response| *captured_response.borrow_mut() = Some(response),
-        );
+        let unhandled = protocol_handler.handle_request("wry", &request, move |response| {
+            *captured_response.borrow_mut() = Some(response)
+        });
 
         assert!(unhandled.is_none());
         let response = response

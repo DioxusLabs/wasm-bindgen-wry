@@ -1,10 +1,11 @@
-//! Runtime setup and event loop management.
+//! Runtime IPC for one wry-bindgen session.
 //!
-//! This module handles the connection between the Rust runtime and the
-//! JavaScript environment via winit's event loop.
+//! This module owns the channel pair between the app-thread runtime and the
+//! main-thread driver. It has no dependency on a concrete window event loop.
 
 use core::task::{Context, Poll};
-use std::sync::{Arc, Condvar, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use atomic_waker::AtomicWaker;
 
@@ -36,71 +37,118 @@ pub(crate) enum InboundSendError {
     Occupied,
 }
 
-/// Application-level events that can be sent through the event loop.
-///
-/// This enum wraps both IPC messages from JavaScript and control messages
-/// from the application (like shutdown requests).
 #[derive(Debug, Clone)]
-pub struct WryBindgenEvent {
-    id: u64,
-    event: AppEventVariant,
-}
-
-impl WryBindgenEvent {
-    /// Get the id of the event
-    pub(crate) fn id(&self) -> u64 {
-        self.id
-    }
-
-    /// Create a new IPC event.
-    pub(crate) fn ipc(id: u64, msg: OutboundIPCMessage) -> Self {
-        Self {
-            id,
-            event: AppEventVariant::Ipc(msg),
-        }
-    }
-
-    /// Create a new webview loaded event.
-    pub(crate) fn webview_loaded(id: u64) -> Self {
-        Self {
-            id,
-            event: AppEventVariant::WebviewLoaded,
-        }
-    }
-
-    /// Ask the webview to synchronously enter the wry-bindgen handler and park
-    /// an XHR that Rust can use as its JS-call capability.
-    pub(crate) fn acquire_lock(id: u64) -> Self {
-        Self {
-            id,
-            event: AppEventVariant::AcquireLock,
-        }
-    }
-
-    /// Release the currently parked XHR without sending a JS payload.
-    pub(crate) fn release_lock(id: u64) -> Self {
-        Self {
-            id,
-            event: AppEventVariant::ReleaseLock,
-        }
-    }
-
-    /// Consume the event and return the inner variant.
-    pub(crate) fn into_variant(self) -> AppEventVariant {
-        self.event
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum AppEventVariant {
-    /// An IPC message from JavaScript
-    Ipc(OutboundIPCMessage),
-    /// The webview has finished loading
-    WebviewLoaded,
-    /// Ask JS to enter the synchronous handler and park an XHR.
+pub(crate) enum DriverCommand {
+    /// Ask the webview to synchronously enter the handler and park an XHR.
     AcquireLock,
-    /// Release the currently parked XHR with a blank reply.
+    /// Deliver a Rust-to-JS IPC payload through the parked XHR.
+    SendIpc(OutboundIPCMessage),
+    /// Release the currently parked XHR with a blank response.
     ReleaseLock,
+}
+
+#[derive(Clone)]
+pub(crate) struct DriverCommandSender(Arc<DriverCommandSenderSet>);
+
+#[derive(Clone)]
+pub(crate) struct DriverCommandWeakSender(Weak<DriverCommandQueue>);
+
+pub(crate) struct DriverCommandReceiver {
+    queue: Arc<DriverCommandQueue>,
+}
+
+struct DriverCommandSenderSet {
+    queue: Arc<DriverCommandQueue>,
+}
+
+impl DriverCommandSender {
+    fn new(queue: Arc<DriverCommandQueue>) -> Self {
+        Self(Arc::new(DriverCommandSenderSet { queue }))
+    }
+
+    pub(crate) fn send(&self, command: DriverCommand) {
+        self.0.queue.send(command)
+    }
+
+    pub(crate) fn downgrade(&self) -> DriverCommandWeakSender {
+        DriverCommandWeakSender(Arc::downgrade(&self.0.queue))
+    }
+}
+
+impl Drop for DriverCommandSenderSet {
+    fn drop(&mut self) {
+        self.queue.close();
+    }
+}
+
+impl DriverCommandWeakSender {
+    pub(crate) fn send(&self, command: DriverCommand) {
+        if let Some(queue) = self.0.upgrade() {
+            queue.send(command);
+        }
+    }
+}
+
+impl DriverCommandReceiver {
+    fn new(queue: Arc<DriverCommandQueue>) -> Self {
+        Self { queue }
+    }
+
+    pub(crate) fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Option<DriverCommand>> {
+        self.queue.poll_recv(cx)
+    }
+}
+
+struct DriverCommandQueue {
+    state: Mutex<DriverCommandQueueState>,
+    recv_waker: AtomicWaker,
+}
+
+#[derive(Default)]
+struct DriverCommandQueueState {
+    commands: VecDeque<DriverCommand>,
+    closed: bool,
+}
+
+impl DriverCommandQueue {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(DriverCommandQueueState::default()),
+            recv_waker: AtomicWaker::new(),
+        }
+    }
+
+    fn send(&self, command: DriverCommand) {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return;
+        }
+        state.commands.push_back(command);
+        drop(state);
+        self.recv_waker.wake();
+    }
+
+    fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Option<DriverCommand>> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(command) = state.commands.pop_front() {
+            Poll::Ready(Some(command))
+        } else if state.closed {
+            Poll::Ready(None)
+        } else {
+            self.recv_waker.register(cx.waker());
+            Poll::Pending
+        }
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap();
+        if state.closed {
+            return;
+        }
+        state.closed = true;
+        drop(state);
+        self.recv_waker.wake();
+    }
 }
 
 #[derive(Clone)]
@@ -217,30 +265,37 @@ impl IPCSingleSlots {
 
 /// The runtime environment for communicating with JavaScript.
 ///
-/// This struct holds the event loop proxy for sending messages to the
-/// WebView and manages the single pending IPC slot.
+/// This struct sends commands to the main-thread driver and manages the single
+/// pending inbound IPC slot.
 pub(crate) struct WryIPC {
-    pub(crate) proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>,
     slots: Arc<IPCSingleSlots>,
+    commands: DriverCommandSender,
 }
 
 impl WryIPC {
-    /// Create a new runtime with the given event loop proxy.
-    pub(crate) fn new(proxy: Arc<dyn Fn(WryBindgenEvent) + Send + Sync>) -> (Self, IPCSenders) {
+    /// Create a new runtime IPC pair and the driver command receiver.
+    pub(crate) fn new() -> (Self, IPCSenders, DriverCommandReceiver) {
         let slots = Arc::new(IPCSingleSlots::new());
         let senders = IPCSenders::new(slots.clone());
-        let ipc = Self { proxy, slots };
-        (ipc, senders)
+        let command_queue = Arc::new(DriverCommandQueue::new());
+        let commands = DriverCommandSender::new(command_queue.clone());
+        let driver_commands = DriverCommandReceiver::new(command_queue);
+        let ipc = Self { slots, commands };
+        (ipc, senders, driver_commands)
     }
 
-    /// Send a response back to JavaScript.
-    pub(crate) fn js_response(&self, id: u64, responder: OutboundIPCMessage) {
-        (self.proxy)(WryBindgenEvent::ipc(id, responder));
+    /// Send a Rust-to-JS IPC payload through the main-thread driver.
+    pub(crate) fn send_ipc(&self, message: OutboundIPCMessage) {
+        self.commands.send(DriverCommand::SendIpc(message));
     }
 
     /// Ask the main thread to have JS park an XHR (the acquire half of the lock).
-    pub(crate) fn send_acquire_lock(&self, id: u64) {
-        (self.proxy)(WryBindgenEvent::acquire_lock(id));
+    pub(crate) fn send_acquire_lock(&self) {
+        self.commands.send(DriverCommand::AcquireLock);
+    }
+
+    pub(crate) fn command_sender(&self) -> DriverCommandSender {
+        self.commands.clone()
     }
 
     pub(crate) fn poll_recv(&self, cx: &mut Context<'_>) -> Poll<Option<Inbound>> {
@@ -356,7 +411,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
         }
         _ => panic!("Unknown Rust callback function ID: {fn_id}"),
     };
-    with_runtime(|runtime| runtime.ipc().js_response(runtime.webview_id(), response));
+    with_runtime(|runtime| runtime.ipc().send_ipc(response));
 }
 
 /// Scopes a borrow frame for the duration of a callback. The frame is pushed on
@@ -472,7 +527,7 @@ mod tests {
 
     #[test]
     fn dropping_last_ipc_sender_closes_slots() {
-        let (ipc, senders) = WryIPC::new(Arc::new(|_| {}));
+        let (ipc, senders, _driver_commands) = WryIPC::new();
         let (waker, wakes) = counting_waker();
         let mut cx = Context::from_waker(&waker);
 
@@ -486,7 +541,7 @@ mod tests {
 
     #[test]
     fn ipc_sender_clone_lifetime() {
-        let (ipc, sender) = WryIPC::new(Arc::new(|_| {}));
+        let (ipc, sender, _driver_commands) = WryIPC::new();
         let sender_clone = sender.clone();
         let (waker, wakes) = counting_waker();
         let mut cx = Context::from_waker(&waker);
