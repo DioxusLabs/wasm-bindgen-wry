@@ -12,6 +12,7 @@ use base64::Engine;
 use core::cell::RefCell;
 use core::future::poll_fn;
 use core::pin::Pin;
+use core::sync::atomic::AtomicU64;
 use core::task::Poll;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -196,40 +197,6 @@ impl WebviewMessageLayer {
         // acquire this lock.
         let responder = self.take_parked_xhr();
         responder.respond_ipc(ipc_msg.message);
-    }
-
-    fn release_lock(&mut self) {
-        let responder = self.take_parked_xhr();
-        responder.respond(blank_response());
-    }
-
-    /// Take the JS XHR currently parked in this layer. Every caller runs only
-    /// while Rust holds the lock, so an XHR is always suspended here.
-    fn take_parked_xhr(&mut self) -> WryBindgenResponder {
-        self.current_xhr.take().unwrap()
-    }
-}
-
-fn unique_id() -> u64 {
-    use core::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
-/// A webview future that has a reserved id for use with wry-bindgen.
-///
-/// This struct is `Send` and can be moved to a spawned thread.
-/// Use `into_future()` to get the actual future to poll.
-pub struct PreparedApp {
-    id: u64,
-    future: Box<dyn FnOnce() -> Pin<Box<dyn core::future::Future<Output = ()> + 'static>> + Send>,
-}
-
-impl PreparedApp {
-    /// Get the unique id of this PreparedApp.
-    pub fn id(&self) -> u64 {
-        self.id
     }
 
     fn release_lock(&mut self) {
@@ -585,80 +552,15 @@ impl<'a> AppBuilder<'a> {
             webview_state.evaluate_script = Box::new(evaluate_script);
         }
 
-        let start_future = move || {
-            let mut runtime = Some(Runtime::new(self.ipc, self.webview_id));
-            let mut app = Some(app);
-            let mut run_app = None::<Pin<Box<F>>>;
-
-            // The runtime drives the JS event loop by parking a synchronous XHR
-            // (the "lock"). On each wake we drain inbound items from the shared
-            // channel; `just_polled_app` distinguishes "the app future just
-            // parked itself, stay idle" from "a wake means the app future wants
-            // to run, so ask JS to park an XHR for the next poll".
-            let poll_driver = poll_fn(move |ctx| {
-                let mut just_polled_app = false;
-                loop {
-                    let Some(rt) = runtime.as_ref() else {
-                        return Poll::Ready(());
-                    };
-                    match rt.ipc().poll_recv(ctx) {
-                        // An idle JS→Rust callback. It replies through its own
-                        // parked XHR, so we just dispatch it; the app future may
-                        // now want polling, which the next Pending below requests.
-                        Poll::Ready(Some(Inbound::Message(msg))) => {
-                            let owned = runtime.take().expect("runtime available");
-                            let (owned, _) = in_runtime(owned, || dispatch_inbound_message(&msg));
-                            runtime = Some(owned);
-                            just_polled_app = false;
-                        }
-                        // A parked XHR is available: poll the app future while the
-                        // guard holds the lock, releasing it when the poll returns.
-                        Poll::Ready(Some(Inbound::LockReady)) => {
-                            let _guard = JsLockGuard::acquire(rt.ipc(), rt.webview_id());
-                            if run_app.is_none() {
-                                run_app = Some(Box::pin(app
-                                    .take()
-                                    .expect("app constructor called once")(
-                                )));
-                            }
-                            let owned = runtime.take().expect("runtime available");
-                            let (owned, poll_result) = in_runtime(owned, || {
-                                run_app
-                                    .as_mut()
-                                    .expect("app future must exist")
-                                    .as_mut()
-                                    .poll(ctx)
-                            });
-                            runtime = Some(owned);
-                            if poll_result.is_ready() {
-                                return Poll::Ready(());
-                            }
-                            just_polled_app = true;
-                        }
-                        Poll::Ready(None) => return Poll::Ready(()),
-                        Poll::Pending => {
-                            // Woken with no parked XHR. Unless we just polled the
-                            // app future (it registered its own waker and is idle),
-                            // this wake means it wants to run: ask JS to park an XHR.
-                            if !just_polled_app {
-                                rt.ipc().send_acquire_lock(rt.webview_id());
-                            }
-                            return Poll::Pending;
-                        }
-                    }
-                }
-            });
-
-            Box::pin(poll_driver) as Pin<Box<dyn Future<Output = ()> + 'static>>
-        };
-
-        PreparedApp {
-            id: self.webview_id,
-            future: Box::new(start_future),
+        struct BuildFuture<F, F2> {
+            app: F,
+            webview_id: u64,
+            ipc: WryIPC,
+            phantom: core::marker::PhantomData<fn(F2)>,
         }
 
         impl<F, F2> BuildFuture<F, F2> {
-            fn new(app: F, webview_id: u64, ipc: WryIPC) -> Self {
+            fn new(app: F,  webview_id: u64, ipc: WryIPC) -> Self {
                 Self {
                     app,
                     webview_id,
@@ -854,7 +756,10 @@ mod tests {
             "JS response XHR should stay parked for Rust's next reply"
         );
         let received = poll_forwarded_message(&ipc);
-        assert!(matches!(received.decoded().unwrap(), DecodedVariant::Respond { .. }));
+        assert!(matches!(
+            received.decoded().unwrap(),
+            DecodedVariant::Respond { .. }
+        ));
     }
 
     #[test]

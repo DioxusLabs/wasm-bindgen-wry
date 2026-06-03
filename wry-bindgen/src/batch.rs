@@ -102,11 +102,6 @@ impl Runtime {
         self.webview_id
     }
 
-    /// Record a JS-allocated heap ID from a response.
-    pub fn observe_js_heap_id(&mut self, id: u64) {
-        self.heap_ids.observe_js_heap_id(id);
-    }
-
     /// Get the next heap ID for a return value placeholder.
     pub(crate) fn get_next_placeholder_id(&mut self) -> u64 {
         self.heap_ids.next_placeholder_id()
@@ -697,7 +692,10 @@ mod take_encoder_tests {
 
         let first = runtime.take_encoder();
         let bytes = IPCMessage::new(first.to_bytes());
-        assert!(matches!(bytes.decoded().unwrap(), DecodedVariant::Evaluate { .. }));
+        assert!(matches!(
+            bytes.decoded().unwrap(),
+            DecodedVariant::Evaluate { .. }
+        ));
         // The encoder holds only the single message-type byte — no per-message
         // request ID lives on the wire anymore.
         assert!(first.u32_buf.is_empty());
