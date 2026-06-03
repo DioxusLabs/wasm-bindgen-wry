@@ -47,7 +47,7 @@ extern "C" {
     pub fn heap_objects_alive() -> u32;
 }
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const TEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Copy)]
 enum BatchMode {
@@ -210,6 +210,7 @@ fn build_tests() -> Vec<TestCase> {
             BatchMode::Batched,
         ),
         BatchMode::Batched,
+        TEST_TIMEOUT,
         opaque_id_stress::test_opaque_id_double_free_stress,
     ));
     tests.push(async_test(
@@ -219,6 +220,7 @@ fn build_tests() -> Vec<TestCase> {
             BatchMode::Batched,
         ),
         BatchMode::Batched,
+        TEST_TIMEOUT,
         batch_stress::test_batch_stress_browser_event_callbacks,
     ));
 
