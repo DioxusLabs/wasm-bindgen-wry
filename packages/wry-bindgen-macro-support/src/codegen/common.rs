@@ -133,6 +133,48 @@ pub(super) fn generate_js_class_member_spec(
     }
 }
 
+pub(super) struct FreeFunctionSpec<'a> {
+    pub(super) static_name: &'a str,
+    pub(super) js_name: TokenStream,
+    pub(super) export_name: TokenStream,
+    pub(super) arg_count: TokenStream,
+    pub(super) type_helpers: TokenStream,
+}
+
+pub(super) fn generate_js_free_function_spec(
+    spec: FreeFunctionSpec<'_>,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let static_ident = format_ident!("{}", spec.static_name);
+    let FreeFunctionSpec {
+        js_name,
+        export_name,
+        arg_count,
+        type_helpers,
+        ..
+    } = spec;
+
+    quote_spanned! {span=>
+        const _: () = {
+            #type_helpers
+
+            #[allow(non_upper_case_globals)]
+            static #static_ident: #krate::__rt::JsFreeFunctionSpec = #krate::__rt::JsFreeFunctionSpec::new(
+                #js_name,
+                #export_name,
+                #arg_count,
+                __wry_arg_types,
+                __wry_return_type,
+            );
+
+            #krate::__rt::inventory::submit! {
+                #static_ident
+            }
+        };
+    }
+}
+
 pub(super) fn extract_result_ok_type(ty: &syn::Type) -> Option<syn::Type> {
     if let syn::Type::Path(type_path) = ty {
         let segment = type_path.path.segments.last()?;

@@ -393,6 +393,10 @@ fn handle_rust_callback(data: &mut DecodedData) {
                 .find_map(|export| export.call_if_name(&export_name, data))
                 .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
 
+            // Flush any JS operations queued while handling the export before
+            // returning encoded values that may reference their results.
+            crate::batch::force_flush();
+
             // Send response
             match result {
                 Ok(encoded) => finish_respond_message(encoded),

@@ -289,6 +289,7 @@ fn build_tests() -> Vec<TestCase> {
         structs::test_exported_struct_arg_before_heap_ref_arg,
         export_call::test_js_calls_exported_usize_js_thunk,
         export_call::test_js_calls_exported_usize_js_thunk_batched,
+        export_call::test_js_calls_exported_free_function_returning_struct,
         clamped::test_clamped_is_uint8clampedarray,
         clamped::test_clamped_vec_is_uint8clampedarray,
         clamped::test_jsvalue_from_clamped_vec_is_uint8clampedarray,

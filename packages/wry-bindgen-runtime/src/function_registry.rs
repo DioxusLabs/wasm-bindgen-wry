@@ -1,6 +1,8 @@
 //! Runtime-side JS registry generation.
 
-use crate::wire::{JsClassMemberKind, JsClassMemberSpec, JsFunctionSpec, ObjectHandle, TypeDef};
+use crate::wire::{
+    JsClassMemberKind, JsClassMemberSpec, JsFreeFunctionSpec, JsFunctionSpec, ObjectHandle, TypeDef,
+};
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -67,6 +69,14 @@ struct ClassMemberParts {
     kind: JsClassMemberKind,
 }
 
+struct FreeFunctionParts {
+    js_name: &'static str,
+    export_name: &'static str,
+    arg_count: usize,
+    arg_types: Vec<TypeDef>,
+    return_type: Option<TypeDef>,
+}
+
 fn class_member_parts(member: &JsClassMemberSpec) -> ClassMemberParts {
     let (class_name, member_name, export_name, arg_count, arg_types, return_type, kind) =
         member.parts();
@@ -81,14 +91,47 @@ fn class_member_parts(member: &JsClassMemberSpec) -> ClassMemberParts {
     }
 }
 
+fn free_function_parts(function: &JsFreeFunctionSpec) -> FreeFunctionParts {
+    let (js_name, export_name, arg_count, arg_types, return_type) = function.parts();
+    FreeFunctionParts {
+        js_name,
+        export_name,
+        arg_count,
+        arg_types,
+        return_type,
+    }
+}
+
+fn js_string_literal(value: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            ch if ch.is_control() => {
+                write!(&mut out, "\\u{:04x}", ch as u32).unwrap();
+            }
+            ch => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn call_export_expression(
     export_name: &str,
     arg_types: &[TypeDef],
     return_type: Option<TypeDef>,
     args_call: &str,
 ) -> String {
+    let export_name = js_string_literal(export_name);
     format!(
-        r#"window.__wryCallExport("{}", {}, {}, [{}])"#,
+        r#"window.__wryCallExport({}, {}, {}, [{}])"#,
         export_name,
         js_type_defs_literal(arg_types),
         js_optional_type_def_literal(return_type),
@@ -269,6 +312,24 @@ impl FunctionRegistry {
             }
 
             writeln!(&mut script, "  window.{class_name} = {class_name};").unwrap();
+        }
+
+        for function in inventory::iter::<JsFreeFunctionSpec>() {
+            let function = free_function_parts(function);
+            let args = generate_args(function.arg_count);
+            let args_call = if function.arg_count > 0 { &args } else { "" };
+            let call = call_export_expression(
+                function.export_name,
+                &function.arg_types,
+                function.return_type.clone(),
+                args_call,
+            );
+            let js_name = js_string_literal(function.js_name);
+            writeln!(
+                &mut script,
+                r#"  window[{js_name}] = function({args}) {{ return {call}; }};"#
+            )
+            .unwrap();
         }
 
         script.push_str("  fetch(`/__wbg__/initialized`, { method: 'POST', body: [] });\n");

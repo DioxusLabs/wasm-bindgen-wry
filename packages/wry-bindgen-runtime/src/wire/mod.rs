@@ -28,7 +28,8 @@ pub use ipc::{DecodeError, DecodedData, EncodedData};
 pub use js_ref::JsRef;
 pub use object_store::ObjectHandle;
 pub use registry::{
-    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunctionSpec, JsModuleSpec,
+    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFreeFunctionSpec, JsFunctionSpec,
+    JsModuleSpec,
 };
 
 /// The runtime handle, its accessor, the batching controls, and the

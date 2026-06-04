@@ -20,8 +20,8 @@ pub use wry_bindgen_core::RustCallback;
 pub use wry_bindgen_core::{CallbackKey, Runtime};
 #[doc(hidden)]
 pub use wry_bindgen_core::{
-    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunction, JsFunctionSpec, JsModuleSpec,
-    LazyCell,
+    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFreeFunctionSpec, JsFunction,
+    JsFunctionSpec, JsModuleSpec, LazyCell,
 };
 
 #[doc(hidden)]

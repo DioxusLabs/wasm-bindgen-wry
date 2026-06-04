@@ -171,6 +171,55 @@ impl JsClassMemberSpec {
 inventory::collect!(JsClassMemberSpec);
 
 #[derive(Clone, Copy)]
+pub struct JsFreeFunctionSpec {
+    js_name: &'static str,
+    export_name: &'static str,
+    arg_count: usize,
+    arg_types: fn() -> Vec<TypeDef>,
+    return_type: fn() -> Option<TypeDef>,
+}
+
+impl JsFreeFunctionSpec {
+    pub const fn new(
+        js_name: &'static str,
+        export_name: &'static str,
+        arg_count: usize,
+        arg_types: fn() -> Vec<TypeDef>,
+        return_type: fn() -> Option<TypeDef>,
+    ) -> Self {
+        Self {
+            js_name,
+            export_name,
+            arg_count,
+            arg_types,
+            return_type,
+        }
+    }
+}
+
+pub(super) type JsFreeFunctionParts = (
+    &'static str,
+    &'static str,
+    usize,
+    Vec<TypeDef>,
+    Option<TypeDef>,
+);
+
+impl JsFreeFunctionSpec {
+    pub(crate) fn parts(&self) -> JsFreeFunctionParts {
+        (
+            self.js_name,
+            self.export_name,
+            self.arg_count,
+            (self.arg_types)(),
+            (self.return_type)(),
+        )
+    }
+}
+
+inventory::collect!(JsFreeFunctionSpec);
+
+#[derive(Clone, Copy)]
 pub struct JsExportSpec {
     name: &'static str,
     handler: fn(&mut super::DecodedData) -> Result<super::EncodedData, String>,

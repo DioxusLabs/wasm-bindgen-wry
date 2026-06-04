@@ -1,10 +1,12 @@
-use crate::ast::{ExportMethod, ExportMethodKind, ExportStruct, SelfType, StructField};
+use crate::ast::{
+    ExportFunction, ExportMethod, ExportMethodKind, ExportStruct, SelfType, StructField,
+};
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
 
 use super::common::{
-    ClassMemberSpec, clippy_allows, generate_js_class_member_spec, generate_js_export_spec,
-    generate_member_type_helpers,
+    ClassMemberSpec, FreeFunctionSpec, clippy_allows, generate_js_class_member_spec,
+    generate_js_export_spec, generate_js_free_function_spec, generate_member_type_helpers,
 };
 
 pub(super) fn generate_export_struct(
@@ -354,6 +356,102 @@ fn generate_inspectable(
         #to_json_member_spec
         #to_string_export_spec
         #to_string_member_spec
+    })
+}
+
+/// Generate code for an exported free function.
+pub(super) fn generate_export_function(
+    function: &ExportFunction,
+    krate: &TokenStream,
+) -> syn::Result<TokenStream> {
+    let rust_name = &function.rust_name;
+    let js_name = &function.js_name;
+    let span = rust_name.span();
+    let export_name = js_name.clone();
+
+    let arg_names: Vec<_> = function.arguments.iter().map(|a| &a.name).collect();
+    let arg_types: Vec<_> = function.arguments.iter().map(|a| &a.ty).collect();
+
+    let decode_args = quote_spanned! {span=>
+        #(
+            let #arg_names = <#arg_types as #krate::__rt::BinaryDecode>::decode(decoder)?;
+        )*
+    };
+
+    let function_body = if let Some(ret_ty) = &function.ret {
+        quote_spanned! {span=>
+            #decode_args
+            let result = #rust_name(#(#arg_names),*);
+            let mut encoder = #krate::__rt::EncodedData::default();
+            <#ret_ty as #krate::__rt::BinaryEncode>::encode(result, &mut encoder);
+            Ok(encoder)
+        }
+    } else {
+        quote_spanned! {span=>
+            #decode_args
+            #rust_name(#(#arg_names),*);
+            Ok(#krate::__rt::EncodedData::default())
+        }
+    };
+
+    let vis = &function.vis;
+    let body = &function.body;
+    let rust_attrs = function.fn_rust_attrs();
+    let fn_args: Vec<_> = arg_names
+        .iter()
+        .zip(arg_types.iter())
+        .map(|(name, ty)| quote_spanned! {span=> #name: #ty })
+        .collect();
+    let ret_type = match &function.ret {
+        Some(ty) => quote_spanned! {span=> -> #ty },
+        None => quote_spanned! {span=> },
+    };
+
+    let allows = clippy_allows();
+    let function_def = quote_spanned! {span=>
+        #allows
+        #rust_attrs
+        #vis fn #rust_name(#(#fn_args),*) #ret_type #body
+    };
+
+    let export_spec = generate_js_export_spec(
+        "__EXPORT_SPEC",
+        quote_spanned! {span=> #export_name },
+        quote_spanned! {span=>
+            #function_body
+        },
+        krate,
+        span,
+    );
+
+    let arg_count = function.arguments.len();
+    let free_arg_types: Vec<TokenStream> = function
+        .arguments
+        .iter()
+        .map(|arg| {
+            let ty = &arg.ty;
+            quote_spanned! {span=> #ty }
+        })
+        .collect();
+    let free_return_type = function.ret.as_ref().map(|ty| quote_spanned! {span=> #ty });
+    let free_type_helpers =
+        generate_member_type_helpers(&free_arg_types, free_return_type, krate, span);
+    let free_function_spec = generate_js_free_function_spec(
+        FreeFunctionSpec {
+            static_name: "__FREE_FUNCTION_SPEC",
+            js_name: quote_spanned! {span=> #js_name },
+            export_name: quote_spanned! {span=> #export_name },
+            arg_count: quote_spanned! {span=> #arg_count },
+            type_helpers: free_type_helpers,
+        },
+        krate,
+        span,
+    );
+
+    Ok(quote_spanned! {span=>
+        #function_def
+        #export_spec
+        #free_function_spec
     })
 }
 

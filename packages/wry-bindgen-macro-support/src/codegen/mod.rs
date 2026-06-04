@@ -21,7 +21,7 @@ use crate::ast::Program;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote_spanned};
 
-use exports::{generate_export_method, generate_export_struct};
+use exports::{generate_export_function, generate_export_method, generate_export_struct};
 use imports::generate_function;
 use statics::generate_static;
 use string_enum::generate_string_enum;
@@ -131,6 +131,11 @@ pub(crate) fn generate(program: &Program) -> syn::Result<TokenStream> {
     // Generate exported struct definitions
     for export_struct in &program.structs {
         tokens.extend(generate_export_struct(export_struct, krate)?);
+    }
+
+    // Generate exported free function definitions
+    for export_function in &program.free_functions {
+        tokens.extend(generate_export_function(export_function, krate)?);
     }
 
     // Generate exported method definitions

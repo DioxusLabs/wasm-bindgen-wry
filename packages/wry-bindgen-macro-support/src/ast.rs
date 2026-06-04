@@ -50,6 +50,8 @@ pub(crate) struct Program {
     pub string_enums: Vec<StringEnum>,
     /// Exported structs
     pub structs: Vec<ExportStruct>,
+    /// Exported free functions
+    pub free_functions: Vec<ExportFunction>,
     /// Exported methods from impl blocks
     pub exports: Vec<ExportMethod>,
 }
@@ -252,6 +254,32 @@ pub(crate) struct StructField {
     pub getter_with_clone: bool,
 }
 
+/// An exported free Rust function.
+#[derive(Debug)]
+pub(crate) struct ExportFunction {
+    /// Visibility of the function
+    pub vis: syn::Visibility,
+    /// Rust function name
+    pub rust_name: Ident,
+    /// JavaScript function name (may differ from rust_name)
+    pub js_name: String,
+    /// Function arguments
+    pub arguments: Vec<FunctionArg>,
+    /// Return type
+    pub ret: Option<Type>,
+    /// User-provided attributes (like #[cfg(...)] and #[doc = "..."])
+    pub rust_attrs: Vec<syn::Attribute>,
+    /// The original function body
+    pub body: syn::Block,
+}
+
+impl ExportFunction {
+    /// Get the function rust attributes
+    pub(crate) fn fn_rust_attrs(&self) -> proc_macro2::TokenStream {
+        fn_rust_attrs(&self.rust_attrs, self.rust_name.span())
+    }
+}
+
 /// An exported method from an impl block
 #[derive(Debug)]
 pub(crate) struct ExportMethod {
@@ -331,6 +359,10 @@ pub(crate) fn parse_item(program: &mut Program, item: syn::Item) -> syn::Result<
             let export_struct = parse_struct(s, &program.attrs)?;
             program.structs.push(export_struct);
         }
+        syn::Item::Fn(f) => {
+            let export_function = parse_function(f, &program.attrs)?;
+            program.free_functions.push(export_function);
+        }
         syn::Item::Impl(i) => {
             let exports = parse_impl_block(i, &program.attrs)?;
             program.exports.extend(exports);
@@ -338,11 +370,100 @@ pub(crate) fn parse_item(program: &mut Program, item: syn::Item) -> syn::Result<
         _ => {
             return Err(syn::Error::new_spanned(
                 item,
-                "wasm_bindgen attribute must be on extern \"C\" block, enum, struct, or impl block",
+                "wasm_bindgen attribute must be on extern \"C\" block, enum, struct, function, or impl block",
             ));
         }
     }
     Ok(())
+}
+
+/// Parse a free function for export.
+fn parse_function(f: syn::ItemFn, attrs: &BindgenAttrs) -> syn::Result<ExportFunction> {
+    if !matches!(f.vis, syn::Visibility::Public(_)) {
+        return Err(syn::Error::new_spanned(
+            f.vis,
+            "can only #[wasm_bindgen] public functions",
+        ));
+    }
+    if f.sig.constness.is_some() {
+        return Err(syn::Error::new_spanned(
+            f.sig.constness,
+            "can only #[wasm_bindgen] non-const functions",
+        ));
+    }
+    if f.sig.asyncness.is_some() {
+        return Err(syn::Error::new_spanned(
+            f.sig.asyncness,
+            "async exported functions are not supported",
+        ));
+    }
+    if f.sig.variadic.is_some() {
+        return Err(syn::Error::new_spanned(
+            f.sig.variadic,
+            "can't #[wasm_bindgen] variadic functions",
+        ));
+    }
+    if !f.sig.generics.params.is_empty() {
+        return Err(syn::Error::new_spanned(
+            f.sig.generics,
+            "can't #[wasm_bindgen] functions with lifetime or type parameters",
+        ));
+    }
+
+    let rust_name = f.sig.ident.clone();
+    let js_name = attrs
+        .js_name()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| rust_name.to_string());
+
+    let mut arguments = Vec::new();
+    for arg in &f.sig.inputs {
+        match arg {
+            FnArg::Receiver(r) => {
+                return Err(syn::Error::new_spanned(
+                    r,
+                    "the `self` argument is only allowed for functions in `impl` blocks",
+                ));
+            }
+            FnArg::Typed(pat_type) => {
+                let name = match &*pat_type.pat {
+                    Pat::Ident(ident) => ident.ident.clone(),
+                    _ => {
+                        return Err(syn::Error::new_spanned(
+                            pat_type,
+                            "complex patterns not supported",
+                        ));
+                    }
+                };
+                arguments.push(FunctionArg {
+                    name,
+                    ty: (*pat_type.ty).clone(),
+                });
+            }
+        }
+    }
+
+    let ret = match &f.sig.output {
+        syn::ReturnType::Default => None,
+        syn::ReturnType::Type(_, ty) => Some((**ty).clone()),
+    };
+
+    let rust_attrs: Vec<syn::Attribute> = f
+        .attrs
+        .iter()
+        .filter(|attr| !attr.path().is_ident("wasm_bindgen"))
+        .cloned()
+        .collect();
+
+    Ok(ExportFunction {
+        vis: f.vis,
+        rust_name,
+        js_name,
+        arguments,
+        ret,
+        rust_attrs,
+        body: *f.block,
+    })
 }
 
 /// Parse a struct definition for export

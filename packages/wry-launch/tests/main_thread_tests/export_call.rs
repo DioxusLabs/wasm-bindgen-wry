@@ -23,6 +23,11 @@ export function call_exported_js_thunk_benchmark(n) {
 export function call_exported_js_thunk_benchmark_batched(n) {
     return window.JsThunkExportFixture.callJsThunkNTimesBatched(n);
 }
+
+export function call_format_file_export(contents, useTabs, indentSize) {
+    const block = window.format_file(contents, useTabs, indentSize);
+    return `${block.contents()}|${block.use_tabs()}|${block.indent_size()}`;
+}
 "#)]
 extern "C" {
     fn reset_thunk_calls();
@@ -35,6 +40,8 @@ extern "C" {
     fn call_exported_js_thunk_benchmark(n: u32) -> u32;
 
     fn call_exported_js_thunk_benchmark_batched(n: u32) -> u32;
+
+    fn call_format_file_export(contents: &str, use_tabs: bool, indent_size: usize) -> String;
 }
 
 #[wasm_bindgen]
@@ -61,6 +68,37 @@ impl JsThunkExportFixture {
     }
 }
 
+#[wasm_bindgen]
+pub struct FormatBlockInstance {
+    contents: String,
+    use_tabs: bool,
+    indent_size: usize,
+}
+
+#[wasm_bindgen]
+impl FormatBlockInstance {
+    pub fn contents(&self) -> String {
+        self.contents.clone()
+    }
+
+    pub fn use_tabs(&self) -> bool {
+        self.use_tabs
+    }
+
+    pub fn indent_size(&self) -> usize {
+        self.indent_size
+    }
+}
+
+#[wasm_bindgen]
+pub fn format_file(contents: String, use_tabs: bool, indent_size: usize) -> FormatBlockInstance {
+    FormatBlockInstance {
+        contents,
+        use_tabs,
+        indent_size,
+    }
+}
+
 pub(crate) fn test_js_calls_exported_usize_js_thunk() {
     reset_thunk_calls();
 
@@ -68,6 +106,12 @@ pub(crate) fn test_js_calls_exported_usize_js_thunk() {
 
     assert_eq!(result, 3);
     assert_eq!(thunk_calls(), 3);
+}
+
+pub(crate) fn test_js_calls_exported_free_function_returning_struct() {
+    let result = call_format_file_export("body", true, 4);
+
+    assert_eq!(result, "body|true|4");
 }
 
 pub(crate) fn test_js_calls_exported_usize_js_thunk_batched() {
