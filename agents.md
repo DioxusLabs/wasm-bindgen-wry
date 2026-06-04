@@ -13,7 +13,7 @@ This is a replacement for wasm bindgen in the wry-bindgen folder. Status:
 The wry-bindgen project is structured as follows:
 - `wry-bindgen`: The core crate that handles types for calls into and from the wry webview.
 - `wry-bindgen-macro`: The procedural macro crate that generates the bindings.
-- `wasm-bindgen`: A vendored copy of the patched upstream wasm-bindgen tree. Keep it generated from `patches/wasm-bindgen` and do not edit it by hand.
+- `vendored/wasm-bindgen`: A vendored copy of the patched upstream wasm-bindgen tree. Keep it generated from `vendored/patches/wasm-bindgen` and do not edit it by hand.
 
 ## Requirements
 - Tests are in the `wry-launch/tests` folder. Any new behavior should be covered by tests. Test should only take < 30 seconds to run. Run them with a timeout of 30 seconds.
@@ -30,4 +30,4 @@ CI runs the following checks with rust 1.88. When running these checks locally, 
 - `cargo +1.88 test --workspace --all-features -- --test-threads=1` - Test check
 
 To automatically fix issues, you can run the following commands:
-- `./automated-fix-tests.sh` - This script will automatically fix formatting and lint issues, then run all checks to ensure everything is still working.
+- `./scripts/automated-fix-tests.sh` - This script will automatically fix formatting and lint issues, then run all checks to ensure everything is still working.

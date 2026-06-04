@@ -112,7 +112,7 @@ jobs:
           latest="${{ steps.release.outputs.latest }}"
           report="$RUNNER_TEMP/wasm-bindgen-upgrade-report.md"
           log_dir="$RUNNER_TEMP/wasm-bindgen-upgrade-logs"
-          failure_file="patches/wasm-bindgen/UPGRADE_FAILURE.md"
+          failure_file="vendored/patches/wasm-bindgen/UPGRADE_FAILURE.md"
           status_file="$RUNNER_TEMP/wasm-bindgen-upgrade-status.env"
 
           set +e
@@ -168,14 +168,14 @@ jobs:
             automated
           add-paths: |
             Cargo.lock
-            wry-bindgen/Cargo.toml
-            wry-bindgen-macro/Cargo.toml
-            wry-bindgen-macro-support/Cargo.toml
-            shims/wasm-bindgen/Cargo.toml
-            shims/wasm-bindgen-macro/Cargo.toml
-            wry-launch/Cargo.toml
-            wasm-bindgen
-            patches/wasm-bindgen
+            packages/wry-bindgen/Cargo.toml
+            packages/wry-bindgen-macro/Cargo.toml
+            packages/wry-bindgen-macro-support/Cargo.toml
+            packages/wasm-bindgen/Cargo.toml
+            packages/wasm-bindgen-macro/Cargo.toml
+            packages/wry-launch/Cargo.toml
+            vendored/wasm-bindgen
+            vendored/patches/wasm-bindgen
 
       - name: Mark manual repair as failed
         if: steps.upgrade.outputs.failed == 'true' || steps.upgrade.outputs.api_check_failed == 'true'

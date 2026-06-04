@@ -29,7 +29,7 @@ wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-m
 
 # Desktop implementation
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wry-bindgen = { path = "../../wry-bindgen", version = "=0.2.122" }
+wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122" }
 
 # wasm32 implementation - commented out to avoid links conflict with crates.io version
 # [target.'cfg(target_arch = "wasm32")'.dependencies]

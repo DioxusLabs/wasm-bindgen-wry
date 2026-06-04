@@ -24,7 +24,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // `rename_baseline_package`) so the public paths line up (`wry_bindgen::JsValue` on
 // both sides).
 const PACKAGE: &str = "wry-bindgen";
-const CURRENT_MANIFEST: &str = "wry-bindgen/Cargo.toml";
+const CURRENT_MANIFEST: &str = "packages/wry-bindgen/Cargo.toml";
 const BASELINE_PACKAGE_NAME: &str = "wry-bindgen";
 const UPSTREAM_REMOTE: &str = "https://github.com/wasm-bindgen/wasm-bindgen.git";
 
@@ -98,7 +98,7 @@ fn main() {
 fn run() -> Result<()> {
     let args = parse_args()?;
     let repo_root = repo_root()?;
-    let wasm_bindgen_tree = repo_root.join("wasm-bindgen");
+    let wasm_bindgen_tree = repo_root.join("vendored/wasm-bindgen");
     if !wasm_bindgen_tree.is_dir() {
         return Err(Error::new(format!(
             "missing vendored wasm-bindgen tree at {}",
@@ -189,13 +189,13 @@ with `cargo semver-checks --baseline-root`. The shim itself cannot be diffed:
 cargo-semver-checks (rustdoc JSON) cannot see items through the shim's cross-crate
 re-exports, so the baseline package is renamed to `wry-bindgen` to line the paths up.
 
-If wasm-bindgen-ref is omitted, patches/wasm-bindgen/BASE is used when present.
-Otherwise the clean upstream tag matching wasm-bindgen/Cargo.toml is used."
+If wasm-bindgen-ref is omitted, vendored/patches/wasm-bindgen/BASE is used when present.
+Otherwise the clean upstream tag matching vendored/wasm-bindgen/Cargo.toml is used."
     );
 }
 
 fn default_upstream_ref(repo_root: &Path, wasm_bindgen_tree: &Path) -> Result<String> {
-    let patch_base = repo_root.join("patches/wasm-bindgen/BASE");
+    let patch_base = repo_root.join("vendored/patches/wasm-bindgen/BASE");
     if patch_base.is_file() {
         let text = fs::read_to_string(patch_base)?;
         if let Some(line) = text
@@ -338,8 +338,8 @@ fn repo_root() -> Result<PathBuf> {
     let current_dir = env::current_dir()?;
     for ancestor in current_dir.ancestors() {
         if ancestor.join("Cargo.toml").is_file()
-            && ancestor.join("wry-bindgen").is_dir()
-            && ancestor.join("shims/wasm-bindgen").is_dir()
+            && ancestor.join("packages/wry-bindgen").is_dir()
+            && ancestor.join("packages/wasm-bindgen").is_dir()
         {
             return Ok(ancestor.to_path_buf());
         }

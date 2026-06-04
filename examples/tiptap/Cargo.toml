@@ -13,7 +13,7 @@ web-sys = { version = "0.3", features = [
     "HtmlHeadElement",
     "DomTokenList",
 ] }
-wry-launch = { version = "0.1.0", path = "../../wry-launch" }
+wry-launch = { version = "0.1.0", path = "../../packages/wry-launch" }
 wasm-bindgen = { version = "0.2.106", package = "wasm-bindgen" }
 leptos-tiptap-build = "0.2.8"
 

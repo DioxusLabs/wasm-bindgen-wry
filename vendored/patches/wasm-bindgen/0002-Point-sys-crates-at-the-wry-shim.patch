@@ -22,7 +22,7 @@ index b355ca5de..949cbc795 100644
 -js-sys = { path = "../js-sys", version = "=0.3.99", default-features = false }
 -wasm-bindgen = { path = "../..", version = "=0.2.122", default-features = false }
 +js-sys = { path = "../js-sys", package = "js-sys", default-features = false }
-+wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
++wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
  
  [features]
  default = ["std"]
@@ -53,7 +53,7 @@ index 1da2a7e25..112842e09 100644
 -wasm-bindgen-futures = { path = '../futures' }
 -wasm-bindgen-test = { path = '../test' }
 -web-sys = { path = "../web-sys", features = ["Headers", "Response", "ResponseInit"] }
-+wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
++wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
  
  [lints.rust]
  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(js_sys_unstable_apis)'] }
@@ -89,7 +89,7 @@ index f621e9473..fb472bfff 100644
 -wasm-bindgen-futures = { path = '../futures', features = ["futures-core-03-stream"] }
 -wasm-bindgen-test = { path = '../test' }
 +js-sys = { path = '../js-sys', package = "js-sys", default-features = false }
-+wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
++wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
  
  [lints.rust]
  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
@@ -108,4 +108,3 @@ index 38cdb6732..ed019dda5 100644
  extern crate alloc;
 -- 
 2.49.0
-

@@ -34,7 +34,7 @@ current=""
 upstream_url="https://github.com/wasm-bindgen/wasm-bindgen.git"
 report=""
 log_dir=""
-failure_file="patches/wasm-bindgen/UPGRADE_FAILURE.md"
+failure_file="vendored/patches/wasm-bindgen/UPGRADE_FAILURE.md"
 status_file=""
 install_api_tool=false
 run_api_check=true
@@ -216,7 +216,7 @@ if [[ -z "$target_ref" ]]; then
 fi
 
 if [[ -z "$current" ]]; then
-  current="$(read_manifest_package_version wasm-bindgen/Cargo.toml)"
+  current="$(read_manifest_package_version vendored/wasm-bindgen/Cargo.toml)"
 fi
 
 tmp_root="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
@@ -231,7 +231,7 @@ if [[ -z "$log_dir" ]]; then
   log_dir="$work_dir/logs"
 fi
 
-mkdir -p "$log_dir" patches/wasm-bindgen
+mkdir -p "$log_dir" vendored/patches/wasm-bindgen
 mkdir -p "$(dirname "$report")" "$(dirname "$failure_file")"
 if [[ -n "$status_file" ]]; then
   mkdir -p "$(dirname "$status_file")"
@@ -289,7 +289,7 @@ write_status() {
   echo
   echo "## Result"
   echo
-  echo "The script applies patches/wasm-bindgen onto the target upstream release/ref, replaces the tracked wasm-bindgen directory with the patched result, regenerates patches against the new upstream base, and bumps local crate versions."
+  echo "The script applies vendored/patches/wasm-bindgen onto the target upstream release/ref, replaces the tracked vendored/wasm-bindgen directory with the patched result, regenerates patches against the new upstream base, and bumps local crate versions."
 } >"$report"
 
 clone_log="$log_dir/clone-upstream.log"
@@ -311,7 +311,7 @@ if [[ "$failed" == "false" ]]; then
 fi
 
 shopt -s nullglob
-patches=(patches/wasm-bindgen/*.patch)
+patches=(vendored/patches/wasm-bindgen/*.patch)
 shopt -u nullglob
 normalized_patches=()
 for patch in "${patches[@]}"; do
@@ -324,8 +324,8 @@ done
 if [[ "$failed" == "false" && "${#patches[@]}" -gt 0 ]]; then
   normalize_log="$log_dir/normalize-patches.log"
   base_commit=""
-  if [[ -f patches/wasm-bindgen/BASE ]]; then
-    base_commit="$(tr -d '[:space:]' <patches/wasm-bindgen/BASE)"
+  if [[ -f vendored/patches/wasm-bindgen/BASE ]]; then
+    base_commit="$(tr -d '[:space:]' <vendored/patches/wasm-bindgen/BASE)"
   fi
   if [[ -z "$base_commit" ]]; then
     base_commit="$current"
@@ -366,7 +366,7 @@ fi
 
 if [[ "$failed" == "false" ]]; then
   replace_log="$log_dir/replace-vendored-tree.log"
-  if rsync -a --delete --exclude .git "$upstream_dir/" wasm-bindgen/ >"$replace_log" 2>&1; then
+  if rsync -a --delete --exclude .git "$upstream_dir/" vendored/wasm-bindgen/ >"$replace_log" 2>&1; then
     append_log "Replaced vendored wasm-bindgen tree" "$replace_log"
   else
     fail_step "Failed to replace vendored wasm-bindgen tree" "$replace_log"
@@ -375,9 +375,9 @@ fi
 
 if [[ "$failed" == "false" ]]; then
   refresh_log="$log_dir/refresh-patches.log"
-  rm -f patches/wasm-bindgen/*.patch patches/wasm-bindgen/BASE
-  if git -C "$upstream_dir" format-patch --output-directory "$repo_root/patches/wasm-bindgen" "$target_ref..HEAD" >"$refresh_log" 2>&1; then
-    git -C "$upstream_dir" rev-parse "$target_ref^{commit}" >patches/wasm-bindgen/BASE
+  rm -f vendored/patches/wasm-bindgen/*.patch vendored/patches/wasm-bindgen/BASE
+  if git -C "$upstream_dir" format-patch --output-directory "$repo_root/vendored/patches/wasm-bindgen" "$target_ref..HEAD" >"$refresh_log" 2>&1; then
+    git -C "$upstream_dir" rev-parse "$target_ref^{commit}" >vendored/patches/wasm-bindgen/BASE
     append_log "Regenerated wasm-bindgen patches" "$refresh_log"
   else
     fail_step "Failed to regenerate wasm-bindgen patches" "$refresh_log"

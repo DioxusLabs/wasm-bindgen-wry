@@ -36,7 +36,7 @@ futures-core-03-stream = ["dep:futures-util", "dep:futures-core"]
 cfg-if = "1.0.0"
 futures-core = { version = "0.3.8", default-features = false, optional = true }
 futures-util = { version = "0.3.31", default-features = false, features = ["std"], optional = true }
-wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(js_sys_unstable_apis)'] }

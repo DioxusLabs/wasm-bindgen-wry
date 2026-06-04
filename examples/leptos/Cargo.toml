@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wry-launch = { version = "0.1.0", path = "../../wry-launch" }
+wry-launch = { version = "0.1.0", path = "../../packages/wry-launch" }
 leptos = { git = "https://github.com/leptos-rs/leptos", features = ["csr"] }
 console_error_panic_hook = "0.1.7"
 serde = { version = "1.0", features = ["derive"] }
