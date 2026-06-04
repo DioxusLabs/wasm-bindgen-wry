@@ -16,52 +16,55 @@ use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 
 const MARKER_FILE: &str = ".publish-wasm-bindgen-x-staging";
-const WEB_SYS_MANIFEST: &str = "wasm-bindgen/crates/web-sys/Cargo.toml";
+const WEB_SYS_MANIFEST: &str = "vendored/wasm-bindgen/crates/web-sys/Cargo.toml";
 const PUBLISHED_WEB_SYS_PACKAGE: &str = "web-sys-x";
 const CRATES_IO_FEATURE_LIMIT: usize = 300;
 
 const COPY_ENTRIES: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
-    "wry-bindgen",
-    "wry-bindgen-macro",
-    "wry-bindgen-macro-support",
-    "shims",
-    "wasm-bindgen/Cargo.toml",
-    "wasm-bindgen/LICENSE-APACHE",
-    "wasm-bindgen/LICENSE-MIT",
-    "wasm-bindgen/crates/js-sys",
-    "wasm-bindgen/crates/web-sys",
-    "wasm-bindgen/crates/futures",
+    "packages/wry-bindgen",
+    "packages/wry-bindgen-core",
+    "packages/wry-bindgen-runtime",
+    "packages/wry-bindgen-macro",
+    "packages/wry-bindgen-macro-support",
+    "packages/wasm-bindgen",
+    "packages/wasm-bindgen-macro",
+    "vendored/wasm-bindgen/Cargo.toml",
+    "vendored/wasm-bindgen/LICENSE-APACHE",
+    "vendored/wasm-bindgen/LICENSE-MIT",
+    "vendored/wasm-bindgen/crates/js-sys",
+    "vendored/wasm-bindgen/crates/web-sys",
+    "vendored/wasm-bindgen/crates/futures",
 ];
 
 const RENAMED_CRATES: &[RenamedCrate] = &[
     RenamedCrate {
-        manifest: "shims/wasm-bindgen/Cargo.toml",
+        manifest: "packages/wasm-bindgen/Cargo.toml",
         source_name: "wasm-bindgen",
         publish_name: "wasm-bindgen-x",
         lib_name: "wasm_bindgen",
     },
     RenamedCrate {
-        manifest: "shims/wasm-bindgen-macro/Cargo.toml",
+        manifest: "packages/wasm-bindgen-macro/Cargo.toml",
         source_name: "wasm-bindgen-macro",
         publish_name: "wasm-bindgen-macro-x",
         lib_name: "wasm_bindgen_macro",
     },
     RenamedCrate {
-        manifest: "wasm-bindgen/crates/js-sys/Cargo.toml",
+        manifest: "vendored/wasm-bindgen/crates/js-sys/Cargo.toml",
         source_name: "js-sys",
         publish_name: "js-sys-x",
         lib_name: "js_sys",
     },
     RenamedCrate {
-        manifest: "wasm-bindgen/crates/web-sys/Cargo.toml",
+        manifest: "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
         source_name: "web-sys",
         publish_name: "web-sys-x",
         lib_name: "web_sys",
     },
     RenamedCrate {
-        manifest: "wasm-bindgen/crates/futures/Cargo.toml",
+        manifest: "vendored/wasm-bindgen/crates/futures/Cargo.toml",
         source_name: "wasm-bindgen-futures",
         publish_name: "wasm-bindgen-futures-x",
         lib_name: "wasm_bindgen_futures",
@@ -70,15 +73,15 @@ const RENAMED_CRATES: &[RenamedCrate] = &[
 
 const UNRENAMED_PUBLISH_CRATES: &[PublishCrate] = &[
     PublishCrate {
-        manifest: "wry-bindgen-macro-support/Cargo.toml",
+        manifest: "packages/wry-bindgen-macro-support/Cargo.toml",
         publish_name: "wry-bindgen-macro-support",
     },
     PublishCrate {
-        manifest: "wry-bindgen-macro/Cargo.toml",
+        manifest: "packages/wry-bindgen-macro/Cargo.toml",
         publish_name: "wry-bindgen-macro",
     },
     PublishCrate {
-        manifest: "wry-bindgen/Cargo.toml",
+        manifest: "packages/wry-bindgen/Cargo.toml",
         publish_name: "wry-bindgen",
     },
 ];
@@ -265,8 +268,8 @@ fn repo_root() -> Result<PathBuf> {
     let current_dir = env::current_dir()?;
     for ancestor in current_dir.ancestors() {
         if ancestor.join("Cargo.toml").is_file()
-            && ancestor.join("wry-bindgen").is_dir()
-            && ancestor.join("shims/wasm-bindgen").is_dir()
+            && ancestor.join("packages/wry-bindgen").is_dir()
+            && ancestor.join("packages/wasm-bindgen").is_dir()
         {
             return Ok(ancestor.to_path_buf());
         }
@@ -352,35 +355,35 @@ fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
 fn publish_crates() -> Vec<PublishCrate> {
     vec![
         PublishCrate {
-            manifest: "wry-bindgen-macro-support/Cargo.toml",
+            manifest: "packages/wry-bindgen-macro-support/Cargo.toml",
             publish_name: "wry-bindgen-macro-support",
         },
         PublishCrate {
-            manifest: "wry-bindgen-macro/Cargo.toml",
+            manifest: "packages/wry-bindgen-macro/Cargo.toml",
             publish_name: "wry-bindgen-macro",
         },
         PublishCrate {
-            manifest: "wry-bindgen/Cargo.toml",
+            manifest: "packages/wry-bindgen/Cargo.toml",
             publish_name: "wry-bindgen",
         },
         PublishCrate {
-            manifest: "shims/wasm-bindgen-macro/Cargo.toml",
+            manifest: "packages/wasm-bindgen-macro/Cargo.toml",
             publish_name: "wasm-bindgen-macro-x",
         },
         PublishCrate {
-            manifest: "shims/wasm-bindgen/Cargo.toml",
+            manifest: "packages/wasm-bindgen/Cargo.toml",
             publish_name: "wasm-bindgen-x",
         },
         PublishCrate {
-            manifest: "wasm-bindgen/crates/js-sys/Cargo.toml",
+            manifest: "vendored/wasm-bindgen/crates/js-sys/Cargo.toml",
             publish_name: "js-sys-x",
         },
         PublishCrate {
-            manifest: "wasm-bindgen/crates/web-sys/Cargo.toml",
+            manifest: "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
             publish_name: "web-sys-x",
         },
         PublishCrate {
-            manifest: "wasm-bindgen/crates/futures/Cargo.toml",
+            manifest: "vendored/wasm-bindgen/crates/futures/Cargo.toml",
             publish_name: "wasm-bindgen-futures-x",
         },
     ]
@@ -682,7 +685,7 @@ fn retained_web_sys_features(
 }
 
 fn merge_vendored_workspace_lints(staging_dir: &Path) -> Result<()> {
-    let vendored_manifest = staging_dir.join("wasm-bindgen/Cargo.toml");
+    let vendored_manifest = staging_dir.join("vendored/wasm-bindgen/Cargo.toml");
     let text = fs::read_to_string(&vendored_manifest)?;
     let lines = Lines::from(&text);
     let mut lint_sections = String::new();
@@ -744,14 +747,16 @@ fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
         &[
             "[workspace]",
             "members = [",
-            "    \"wry-bindgen\",",
-            "    \"wry-bindgen-macro\",",
-            "    \"wry-bindgen-macro-support\",",
-            "    \"shims/wasm-bindgen\",",
-            "    \"shims/wasm-bindgen-macro\",",
-            "    \"wasm-bindgen/crates/js-sys\",",
-            "    \"wasm-bindgen/crates/web-sys\",",
-            "    \"wasm-bindgen/crates/futures\",",
+            "    \"packages/wry-bindgen\",",
+            "    \"packages/wry-bindgen-core\",",
+            "    \"packages/wry-bindgen-runtime\",",
+            "    \"packages/wry-bindgen-macro\",",
+            "    \"packages/wry-bindgen-macro-support\",",
+            "    \"packages/wasm-bindgen\",",
+            "    \"packages/wasm-bindgen-macro\",",
+            "    \"vendored/wasm-bindgen/crates/js-sys\",",
+            "    \"vendored/wasm-bindgen/crates/web-sys\",",
+            "    \"vendored/wasm-bindgen/crates/futures\",",
             "]",
             "resolver = \"2\"",
         ],

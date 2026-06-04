@@ -18,7 +18,7 @@ index 112842e09..51e01be5a 100644
  futures-core = { version = "0.3.8", default-features = false, optional = true }
  futures-util = { version = "0.3.31", default-features = false, features = ["std"], optional = true }
 -once_cell = { version = "1.12", default-features = false }
- wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
  
  [lints.rust]
 diff --git a/crates/js-sys/src/futures/queue.rs b/crates/js-sys/src/futures/queue.rs

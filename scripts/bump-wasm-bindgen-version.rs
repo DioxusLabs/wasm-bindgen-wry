@@ -16,14 +16,20 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 const LOCAL_MANIFESTS: &[(&str, &str)] = &[
-    ("wry-bindgen/Cargo.toml", "wry-bindgen"),
-    ("wry-bindgen-macro/Cargo.toml", "wry-bindgen-macro"),
+    ("packages/wry-bindgen/Cargo.toml", "wry-bindgen"),
     (
-        "wry-bindgen-macro-support/Cargo.toml",
+        "packages/wry-bindgen-macro/Cargo.toml",
+        "wry-bindgen-macro",
+    ),
+    (
+        "packages/wry-bindgen-macro-support/Cargo.toml",
         "wry-bindgen-macro-support",
     ),
-    ("shims/wasm-bindgen/Cargo.toml", "wasm-bindgen"),
-    ("shims/wasm-bindgen-macro/Cargo.toml", "wasm-bindgen-macro"),
+    ("packages/wasm-bindgen/Cargo.toml", "wasm-bindgen"),
+    (
+        "packages/wasm-bindgen-macro/Cargo.toml",
+        "wasm-bindgen-macro",
+    ),
 ];
 
 const LOCAL_CRATES: &[&str] = &[
@@ -35,10 +41,13 @@ const LOCAL_CRATES: &[&str] = &[
 ];
 const UPSTREAM_PACKAGE_NAMES: &[&str] = &["wasm-bindgen", "not-wasm-bindgen"];
 const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
-    ("wasm-bindgen/crates/js-sys/Cargo.toml", "js-sys"),
-    ("wasm-bindgen/crates/web-sys/Cargo.toml", "web-sys"),
+    ("vendored/wasm-bindgen/crates/js-sys/Cargo.toml", "js-sys"),
     (
-        "wasm-bindgen/crates/futures/Cargo.toml",
+        "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
+        "web-sys",
+    ),
+    (
+        "vendored/wasm-bindgen/crates/futures/Cargo.toml",
         "wasm-bindgen-futures",
     ),
 ];
@@ -46,7 +55,7 @@ const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x"];
 const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x"];
 const WASM_BINDGEN_FUTURES_PACKAGE_NAMES: &[&str] =
     &["wasm-bindgen-futures", "wasm-bindgen-futures-x"];
-const PINNED_UPSTREAM_DEPENDENCY_MANIFESTS: &[&str] = &["wry-launch/Cargo.toml"];
+const PINNED_UPSTREAM_DEPENDENCY_MANIFESTS: &[&str] = &["packages/wry-launch/Cargo.toml"];
 
 #[derive(Debug)]
 struct Error(String);
@@ -88,7 +97,7 @@ fn main() {
 fn run() -> Result<()> {
     let args = parse_args()?;
     let repo_root = repo_root()?;
-    let upstream_manifest = repo_root.join("wasm-bindgen/Cargo.toml");
+    let upstream_manifest = repo_root.join("vendored/wasm-bindgen/Cargo.toml");
     if !upstream_manifest.exists() {
         return Err(Error::new(format!(
             "missing {}; generate or restore the vendored wasm-bindgen tree first",
@@ -257,7 +266,7 @@ Options:
   --dry-run        Print files that would change without writing.
   --check          Exit nonzero if files are not already bumped.
 
-The default suffix is none. The upstream version is read from wasm-bindgen/Cargo.toml."
+The default suffix is none. The upstream version is read from vendored/wasm-bindgen/Cargo.toml."
     );
 }
 
@@ -278,8 +287,8 @@ fn repo_root() -> Result<PathBuf> {
     let current_dir = env::current_dir()?;
     for ancestor in current_dir.ancestors() {
         if ancestor.join("Cargo.toml").is_file()
-            && ancestor.join("wry-bindgen").is_dir()
-            && ancestor.join("shims/wasm-bindgen").is_dir()
+            && ancestor.join("packages/wry-bindgen").is_dir()
+            && ancestor.join("packages/wasm-bindgen").is_dir()
         {
             return Ok(ancestor.to_path_buf());
         }
@@ -924,7 +933,7 @@ name = "js-sys"
 version = "0.3.99"
 
 [dependencies]
-wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
 "#;
         let output =
             update_package_version_text(Path::new("Cargo.toml"), input, "js-sys", "0.3.99-alpha.2")

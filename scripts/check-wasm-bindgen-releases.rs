@@ -154,7 +154,7 @@ Usage:
 Options:
   --check            Exit 1 when a newer upstream release exists.
   --list             Print every newer release, not just the latest.
-  --current VERSION  Compare against VERSION instead of wasm-bindgen/Cargo.toml.
+  --current VERSION  Compare against VERSION instead of vendored/wasm-bindgen/Cargo.toml.
   --remote URL       Query a different git remote. Defaults to official upstream.
 
 The script reads stable release tags from upstream git refs and ignores prerelease tags."
@@ -163,7 +163,7 @@ The script reads stable release tags from upstream git refs and ignores prerelea
 
 fn read_current_version() -> Result<Version> {
     let repo_root = repo_root()?;
-    let manifest = repo_root.join("wasm-bindgen/Cargo.toml");
+    let manifest = repo_root.join("vendored/wasm-bindgen/Cargo.toml");
     let text = fs::read_to_string(&manifest)?;
     let package = find_section(&text, "package").ok_or_else(|| {
         Error::new(format!(
@@ -213,8 +213,8 @@ fn repo_root() -> Result<PathBuf> {
     let current_dir = env::current_dir()?;
     for ancestor in current_dir.ancestors() {
         if ancestor.join("Cargo.toml").is_file()
-            && ancestor.join("wry-bindgen").is_dir()
-            && ancestor.join("shims/wasm-bindgen").is_dir()
+            && ancestor.join("packages/wry-bindgen").is_dir()
+            && ancestor.join("packages/wasm-bindgen").is_dir()
         {
             return Ok(ancestor.to_path_buf());
         }
