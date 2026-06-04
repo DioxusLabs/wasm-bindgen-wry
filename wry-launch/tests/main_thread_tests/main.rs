@@ -12,7 +12,7 @@ use futures_channel::mpsc::{UnboundedReceiver, unbounded};
 use futures_util::{FutureExt, StreamExt, pin_mut, select};
 use libtest_mimic::{Arguments, Failed};
 use wasm_bindgen::{Closure, wasm_bindgen};
-use wry_bindgen_runtime::batch_async;
+use wry_bindgen_runtime::wire::batch_async;
 use wry_launch::set_on_error;
 
 mod add_number_js;

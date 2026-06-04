@@ -3,7 +3,7 @@
 //! These wrappers adapt the core object-store operations and the local JS-wrapper
 //! constructor for the generated `__rt` surface.
 
-use wry_bindgen_core::{ObjectHandleExt, with_runtime};
+use wry_bindgen_core::with_runtime;
 
 pub use wry_bindgen_core::ObjectHandle;
 

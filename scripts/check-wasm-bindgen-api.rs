@@ -735,7 +735,7 @@ fn is_ignored_constructible_field(line: &str) -> bool {
 }
 
 /// Whether a `Failed in:` detail line is a struct that remains re-exported from
-/// `wry-bindgen` but now has its ABI implementation in `wry-bindgen-abi`.
+/// `wry-bindgen` but now has its ABI implementation in `wry-bindgen-runtime`.
 fn is_ignored_relocated_struct(line: &str) -> bool {
     let Some(rest) = line.trim_start().strip_prefix("struct ") else {
         return false;

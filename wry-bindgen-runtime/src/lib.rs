@@ -1,5 +1,4 @@
-//! Wry runtime transport for `wry-bindgen`.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;
@@ -13,37 +12,39 @@ mod ipc;
 mod js_helpers;
 mod runtime;
 mod type_cache;
-pub mod wry;
+mod wry;
 
-pub use batch::{batch, batch_async, force_flush};
+/// The unstable runtime seam: the wire vocabulary (binary encode/decode, the
+/// opaque value/object handles, the IPC buffers, the generated-code
+/// registration specs) plus the runtime handle, its accessor, the batching
+/// controls, and the synchronous call primitive that drive it.
+///
+/// **Unstable.** Published for `wry-bindgen-core` (which wraps it in a stable,
+/// semantic boundary) and `wry-launch` (the host event-loop integration).
+/// Nothing here is covered by semver — application code should depend on
+/// `wry-bindgen-core` instead.
+#[doc(hidden)]
+pub mod wire;
 
-/// The runtime-support seam consumed by `wry-bindgen-core`. These expose the
-/// active runtime and its operations directly; `wry-bindgen-core` wraps them in
-/// semantic handles, so they never reach the stable public surface.
-pub use batch::{
-    Runtime, drop_js_object, drop_rust_object, invalidate_js_rust_function, run_js_sync,
-    with_runtime,
-};
 pub use wry::{
     ProtocolHandler, WryBindgen, WryBindgenDriver, WryBindgenRuntime, WryBindgenWebviewDriver,
 };
-pub use wry_bindgen_abi::BinaryDecode;
 
 mod encode {
-    pub use wry_bindgen_abi::BinaryDecode;
+    pub(crate) use crate::wire::BinaryDecode;
 }
 
 mod function {
     pub(crate) const DROP_NATIVE_REF_FN_ID: u32 = 0xFFFF_FFFF;
     pub(crate) const CALL_EXPORT_FN_ID: u32 = 0xFFFF_FFFE;
-    pub use wry_bindgen_abi::RustCallback;
+    pub(crate) use crate::wire::RustCallback;
 }
 
 mod object_store {
     use alloc::boxed::Box;
     use core::any::Any;
 
-    pub use wry_bindgen_abi::ObjectHandle;
+    pub(crate) use crate::wire::ObjectHandle;
 
     pub(crate) fn drop_object(handle: ObjectHandle) -> bool {
         let object: Option<Box<dyn Any>> =

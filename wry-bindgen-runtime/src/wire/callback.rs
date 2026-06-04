@@ -6,13 +6,14 @@ use alloc::boxed::Box;
 use alloc::rc::Rc;
 use core::cell::RefCell;
 
-use crate::{
+use super::{
     BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData, TypeDef,
     object_store::ObjectHandle,
 };
 
 type CallbackFn = dyn Fn(&mut DecodedData, &mut EncodedData) -> Result<(), DecodeError>;
 
+#[derive(Clone)]
 pub struct RustCallback {
     f: Rc<CallbackFn>,
 }
@@ -38,10 +39,12 @@ impl RustCallback {
         }
     }
 
-    pub fn clone_rc(
+    pub fn call(
         &self,
-    ) -> Rc<dyn Fn(&mut DecodedData, &mut EncodedData) -> Result<(), DecodeError>> {
-        self.f.clone()
+        data: &mut DecodedData,
+        encoder: &mut EncodedData,
+    ) -> Result<(), DecodeError> {
+        (self.f)(data, encoder)
     }
 }
 
@@ -70,7 +73,7 @@ macro_rules! callback_type_def_body {
 }
 
 macro_rules! insert_callback {
-    ($callback:expr) => {{ crate::runtime::insert_object(Box::new($callback)) }};
+    ($callback:expr) => {{ crate::batch::with_runtime(|rt| rt.insert_object_box(Box::new($callback))) }};
 }
 
 macro_rules! encode_callback_ref {
@@ -104,7 +107,7 @@ macro_rules! encode_callback_ref {
                 );
                 let handle = insert_callback!(callback);
                 encode_rust_owned_callback(handle, encoder);
-                crate::runtime::drop_rust_object(handle);
+                crate::batch::drop_rust_object(handle);
             }
         }
     };
@@ -138,7 +141,7 @@ macro_rules! encode_callback_ref {
                 );
                 let handle = insert_callback!(callback);
                 encode_rust_owned_callback(handle, encoder);
-                crate::runtime::drop_rust_object(handle);
+                crate::batch::drop_rust_object(handle);
             }
         }
     };

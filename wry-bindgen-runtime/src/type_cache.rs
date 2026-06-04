@@ -10,7 +10,7 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
-use wry_bindgen_abi::TypeDef;
+use crate::wire::TypeDef;
 
 /// Assigns stable IDs to type definitions for a runtime.
 pub(crate) struct TypeCache {

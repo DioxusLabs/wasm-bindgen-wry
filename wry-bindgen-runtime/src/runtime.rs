@@ -9,12 +9,11 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use atomic_waker::AtomicWaker;
 
-use crate::BinaryDecode;
 use crate::batch::with_runtime;
+use crate::wire::BinaryDecode;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 use crate::object_store::ObjectHandle;
-use wry_bindgen_abi::unstable::JsExportSpecRuntime;
 
 /// An inbound item arriving from JS on the single shared channel.
 ///
@@ -353,7 +352,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
             let callback = with_runtime(|state| {
                 let rust_callback = state.get_object::<RustCallback>(key);
 
-                rust_callback.clone_rc()
+                rust_callback.clone()
             });
 
             // Push a borrow frame before calling the callback - nested calls
@@ -365,7 +364,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
             // Call through the cloned Rc (uniform Fn interface). A decode error
             // surfaces here with context instead of an opaque `unwrap` panic
             // inside the callback trampoline (mirrors the export path below).
-            let result = (callback)(data, &mut encoder);
+            let result = callback.call(data, &mut encoder);
             // Flush any JS operations the callback queued before responding.
             crate::batch::force_flush();
             match result {
@@ -390,7 +389,7 @@ fn handle_rust_callback(data: &mut DecodedData) {
             let export_name: alloc::string::String =
                 crate::encode::BinaryDecode::decode(data).expect("Failed to decode export name");
 
-            let result = inventory::iter::<wry_bindgen_abi::JsExportSpec>()
+            let result = inventory::iter::<crate::wire::JsExportSpec>()
                 .find_map(|export| export.call_if_name(&export_name, data))
                 .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
 

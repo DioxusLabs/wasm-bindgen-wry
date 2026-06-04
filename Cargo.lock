@@ -6867,15 +6867,6 @@ dependencies = [
  "serde_json",
  "wry-bindgen-core",
  "wry-bindgen-macro",
- "wry-bindgen-runtime",
-]
-
-[[package]]
-name = "wry-bindgen-abi"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "inventory",
 ]
 
 [[package]]
@@ -6883,7 +6874,6 @@ name = "wry-bindgen-core"
 version = "0.1.0"
 dependencies = [
  "once_cell",
- "wry-bindgen-abi",
  "wry-bindgen-runtime",
 ]
 
@@ -6910,11 +6900,15 @@ version = "0.1.0"
 dependencies = [
  "atomic-waker",
  "base64",
+ "bytemuck",
+ "futures",
  "http 1.4.0",
  "inventory",
  "lazy-js-bundle 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "once_cell",
- "wry-bindgen-abi",
+ "tao",
+ "web-sys",
+ "wry",
 ]
 
 [[package]]

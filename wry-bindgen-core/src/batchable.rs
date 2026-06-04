@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use wry_bindgen_abi::{BinaryDecode, BinaryEncode, EncodedData, JsRef, ObjectHandle};
+use wry_bindgen_runtime::wire::{BinaryDecode, BinaryEncode, EncodedData, JsRef, ObjectHandle};
 
 use crate::Runtime;
 

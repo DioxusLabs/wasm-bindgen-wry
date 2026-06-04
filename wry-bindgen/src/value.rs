@@ -7,7 +7,7 @@ use crate::__rt::{JsRef, JsRefEncode};
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt;
 use core::ptr::NonNull;
-use wry_bindgen_core::{Clamped, JsRefExt};
+use wry_bindgen_core::Clamped;
 
 #[inline]
 fn is_special_value_id(id: JsRef) -> bool {

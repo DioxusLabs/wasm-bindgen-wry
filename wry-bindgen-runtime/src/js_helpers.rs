@@ -1,7 +1,7 @@
 use alloc::string::String;
 
 use crate::batch::{run_js_sync, with_runtime};
-use wry_bindgen_abi::{BinaryEncode, FunctionTypeInfo, JsFunctionSpec, TypeDef};
+use crate::wire::{BinaryEncode, FunctionTypeInfo, JsFunctionSpec, TypeDef};
 
 fn drop_heap_ref_js() -> String {
     "heapId => window.jsHeap.remove(heapId)".into()
@@ -47,7 +47,6 @@ fn call_heap_helper(spec: JsFunctionSpec, heap_id: u64) {
                 with_runtime(|runtime| runtime.get_or_create_type_id(&type_def));
             FunctionTypeInfo::new(type_id, can_use_cached, &type_def).encode(encoder);
             heap_id.encode(encoder);
-            false
         },
         |_| Some(()),
         |_| (),

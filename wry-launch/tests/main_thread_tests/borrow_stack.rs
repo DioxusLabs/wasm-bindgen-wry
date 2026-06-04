@@ -6,7 +6,7 @@
 use std::rc::Rc;
 
 use wasm_bindgen::{JsValue, wasm_bindgen};
-use wry_bindgen_runtime::force_flush;
+use wry_bindgen_runtime::wire::force_flush;
 
 /// Test borrowed refs with callbacks
 pub(crate) fn test_borrowed_ref_in_callback() {

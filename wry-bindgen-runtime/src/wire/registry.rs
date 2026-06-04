@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::TypeDef;
+use super::TypeDef;
 
 #[derive(Clone, Copy)]
 pub struct JsFunctionSpec {
@@ -59,21 +59,15 @@ impl JsModuleSpec {
     }
 }
 
-pub trait JsFunctionSpecRuntime {
-    fn module(&self) -> Option<&'static JsModuleSpec>;
-    fn render_js_code(&self) -> String;
-    fn identity_eq(&self, other: &JsFunctionSpec) -> bool;
-}
-
-impl JsFunctionSpecRuntime for JsFunctionSpec {
-    fn module(&self) -> Option<&'static JsModuleSpec> {
+impl JsFunctionSpec {
+    pub(crate) fn module(&self) -> Option<&'static JsModuleSpec> {
         match self.code {
             JsFunctionCode::Global(_) => None,
             JsFunctionCode::Module { module, .. } => Some(module),
         }
     }
 
-    fn render_js_code(&self) -> String {
+    pub(crate) fn render_js_code(&self) -> String {
         match self.code {
             JsFunctionCode::Global(js_code) => js_code(),
             JsFunctionCode::Module { module, js_code } => {
@@ -83,7 +77,7 @@ impl JsFunctionSpecRuntime for JsFunctionSpec {
         }
     }
 
-    fn identity_eq(&self, other: &JsFunctionSpec) -> bool {
+    pub(crate) fn identity_eq(&self, other: &JsFunctionSpec) -> bool {
         match (self.code, other.code) {
             (JsFunctionCode::Global(a), JsFunctionCode::Global(b)) => a as usize == b as usize,
             (
@@ -101,12 +95,8 @@ impl JsFunctionSpecRuntime for JsFunctionSpec {
     }
 }
 
-pub trait JsModuleSpecRuntime {
-    fn content(&self) -> &'static str;
-}
-
-impl JsModuleSpecRuntime for JsModuleSpec {
-    fn content(&self) -> &'static str {
+impl JsModuleSpec {
+    pub(crate) fn content(&self) -> &'static str {
         self.content
     }
 }
@@ -154,7 +144,7 @@ impl JsClassMemberSpec {
     }
 }
 
-pub type JsClassMemberParts = (
+pub(super) type JsClassMemberParts = (
     &'static str,
     &'static str,
     &'static str,
@@ -164,12 +154,8 @@ pub type JsClassMemberParts = (
     JsClassMemberKind,
 );
 
-pub trait JsClassMemberSpecRuntime {
-    fn parts(&self) -> JsClassMemberParts;
-}
-
-impl JsClassMemberSpecRuntime for JsClassMemberSpec {
-    fn parts(&self) -> JsClassMemberParts {
+impl JsClassMemberSpec {
+    pub(crate) fn parts(&self) -> JsClassMemberParts {
         (
             self.class_name,
             self.member_name,
@@ -187,32 +173,22 @@ inventory::collect!(JsClassMemberSpec);
 #[derive(Clone, Copy)]
 pub struct JsExportSpec {
     name: &'static str,
-    handler: fn(&mut crate::DecodedData) -> Result<crate::EncodedData, String>,
+    handler: fn(&mut super::DecodedData) -> Result<super::EncodedData, String>,
 }
 
 impl JsExportSpec {
     pub const fn new(
         name: &'static str,
-        handler: fn(&mut crate::DecodedData) -> Result<crate::EncodedData, String>,
+        handler: fn(&mut super::DecodedData) -> Result<super::EncodedData, String>,
     ) -> Self {
         Self { name, handler }
     }
-}
 
-pub trait JsExportSpecRuntime {
-    fn call_if_name(
+    pub(crate) fn call_if_name(
         &self,
         name: &str,
-        data: &mut crate::DecodedData<'_>,
-    ) -> Option<Result<crate::EncodedData, String>>;
-}
-
-impl JsExportSpecRuntime for JsExportSpec {
-    fn call_if_name(
-        &self,
-        name: &str,
-        data: &mut crate::DecodedData<'_>,
-    ) -> Option<Result<crate::EncodedData, String>> {
+        data: &mut super::DecodedData<'_>,
+    ) -> Option<Result<super::EncodedData, String>> {
         (self.name == name).then(|| (self.handler)(data))
     }
 }

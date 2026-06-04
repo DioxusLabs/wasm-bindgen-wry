@@ -5,12 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::Write;
 use once_cell::sync::Lazy;
-use wry_bindgen_abi::{
-    JsClassMemberKind, JsClassMemberSpec, JsFunctionSpec, ObjectHandle, TypeDef,
-    unstable::{
-        JsClassMemberSpecRuntime, JsFunctionSpecRuntime, JsModuleSpecRuntime, TypeDefBytes,
-    },
-};
+use crate::wire::{JsClassMemberKind, JsClassMemberSpec, JsFunctionSpec, ObjectHandle, TypeDef};
 
 /// Registry of JS functions collected via inventory.
 pub(crate) struct FunctionRegistry {
@@ -33,7 +28,7 @@ fn object_handle_type_def() -> TypeDef {
     TypeDef::of::<ObjectHandle>()
 }
 
-pub fn type_def_js_array_literal(def: &TypeDef) -> String {
+pub(crate) fn type_def_js_array_literal(def: &TypeDef) -> String {
     let mut out = String::from("[");
     for (index, byte) in def.bytes().iter().enumerate() {
         if index > 0 {
@@ -286,18 +281,18 @@ impl FunctionRegistry {
         }
     }
 
-    pub fn resolve_function(&self, spec: JsFunctionSpec) -> Option<u32> {
+    pub(crate) fn resolve_function(&self, spec: JsFunctionSpec) -> Option<u32> {
         self.function_specs
             .iter()
             .position(|s| s.identity_eq(&spec))
             .map(|index| index as u32)
     }
 
-    pub fn script(&self) -> &str {
+    pub(crate) fn script(&self) -> &str {
         &self.functions
     }
 
-    pub fn get_module(&self, path: &str) -> Option<&'static str> {
+    pub(crate) fn get_module(&self, path: &str) -> Option<&'static str> {
         self.modules.get(path).copied()
     }
 }

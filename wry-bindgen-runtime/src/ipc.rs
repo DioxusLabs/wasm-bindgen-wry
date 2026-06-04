@@ -1,9 +1,9 @@
 use alloc::vec::Vec;
 
 use base64::Engine;
-use wry_bindgen_abi::{BinaryDecode, DecodeError, unstable::DecodedDataBytes};
+use crate::wire::{BinaryDecode, DecodeError};
 
-pub(crate) use wry_bindgen_abi::{DecodedData, EncodedData};
+pub(crate) use crate::wire::{DecodedData, EncodedData};
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,7 @@ impl IPCMessage {
     }
 
     pub(crate) fn decoded(&self) -> Result<DecodedVariant<'_>, DecodeError> {
-        let mut decoded = DecodedData::from_bytes_unstable(&self.data)?;
+        let mut decoded = DecodedData::from_bytes(&self.data)?;
         let message_type = u8::decode(&mut decoded)?;
         match message_type {
             0 => Ok(DecodedVariant::Evaluate { data: decoded }),

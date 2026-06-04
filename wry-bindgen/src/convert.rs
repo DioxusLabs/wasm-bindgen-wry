@@ -474,7 +474,7 @@ impl<T: JsCast + 'static> RefFromBinaryDecode for T {
         // For borrowed refs, we use the borrow stack (indices 1-127) instead of heap IDs.
         // JS puts the value on its borrow stack without sending an ID, so we sync by
         // taking the next borrowed ref from the runtime.
-        let value = JsValue::from_ref(wry_bindgen_core::with_runtime(|rt| rt.next_borrowed_ref()));
+        let value = JsValue::from_ref(JsRef::next_borrowed_ref());
         Ok(JsCastAnchor {
             value,
             _marker: PhantomData,

@@ -47,7 +47,7 @@ fn parse_string_or_ident(input: ParseStream) -> syn::Result<String> {
 
 /// Parsed wasm_bindgen attributes
 #[derive(Debug, Default)]
-pub struct BindgenAttrs {
+pub(crate) struct BindgenAttrs {
     /// The `method` attribute - marks a function as an instance method
     pub method: Option<Span>,
     /// The `structural` attribute - use structural/duck typing
@@ -110,57 +110,57 @@ pub struct BindgenAttrs {
 
 impl BindgenAttrs {
     /// Check if this is a method (has the `method` attribute)
-    pub fn is_method(&self) -> bool {
+    pub(crate) fn is_method(&self) -> bool {
         self.method.is_some()
     }
 
     /// Check if this is a getter
-    pub fn is_getter(&self) -> bool {
+    pub(crate) fn is_getter(&self) -> bool {
         self.getter.is_some()
     }
 
     /// Check if this is a setter
-    pub fn is_setter(&self) -> bool {
+    pub(crate) fn is_setter(&self) -> bool {
         self.setter.is_some()
     }
 
     /// Check if this is a constructor
-    pub fn is_constructor(&self) -> bool {
+    pub(crate) fn is_constructor(&self) -> bool {
         self.constructor.is_some()
     }
 
     /// Get the effective JS name (js_name override or None)
-    pub fn js_name(&self) -> Option<&str> {
+    pub(crate) fn js_name(&self) -> Option<&str> {
         self.js_name.as_ref().map(|(_, s)| s.as_str())
     }
 
     /// Get the JS class name
-    pub fn js_class(&self) -> Option<&str> {
+    pub(crate) fn js_class(&self) -> Option<&str> {
         self.js_class.as_ref().map(|(_, s)| s.as_str())
     }
 
     /// Check if this is a thread-local static
-    pub fn is_thread_local_v2(&self) -> bool {
+    pub(crate) fn is_thread_local_v2(&self) -> bool {
         self.thread_local_v2.is_some()
     }
 
     /// Check if this is an indexing getter
-    pub fn is_indexing_getter(&self) -> bool {
+    pub(crate) fn is_indexing_getter(&self) -> bool {
         self.indexing_getter.is_some()
     }
 
     /// Check if this is an indexing setter
-    pub fn is_indexing_setter(&self) -> bool {
+    pub(crate) fn is_indexing_setter(&self) -> bool {
         self.indexing_setter.is_some()
     }
 
     /// Check if this is an indexing deleter
-    pub fn is_indexing_deleter(&self) -> bool {
+    pub(crate) fn is_indexing_deleter(&self) -> bool {
         self.indexing_deleter.is_some()
     }
 
     /// Get the crate path as a TokenStream, defaulting to `wasm_bindgen`
-    pub fn crate_path_tokens(&self) -> TokenStream {
+    pub(crate) fn crate_path_tokens(&self) -> TokenStream {
         match &self.crate_path {
             Some((_, path)) => path.to_token_stream(),
             None => {
@@ -389,7 +389,7 @@ impl Parse for BindgenAttrList {
 }
 
 /// Parse the attribute token stream into BindgenAttrs
-pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
+pub(crate) fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
     // Handle empty token stream - allows #[wasm_bindgen] without parentheses
     if attr.is_empty() {
         return Ok(BindgenAttrs::default());

@@ -10,8 +10,8 @@
 use core::marker::PhantomData;
 
 use once_cell::sync::OnceCell;
-use wry_bindgen_abi::{BinaryEncode, EncodeTypeDef, FunctionTypeInfo, TypeDef};
-use wry_bindgen_abi::{EncodedData, JsFunctionSpec};
+use wry_bindgen_runtime::wire::{BinaryEncode, EncodeTypeDef, FunctionTypeInfo, TypeDef};
+use wry_bindgen_runtime::wire::{EncodedData, JsFunctionSpec};
 
 use crate::BatchableResult;
 use crate::runtime::{run_js_sync, with_backend};

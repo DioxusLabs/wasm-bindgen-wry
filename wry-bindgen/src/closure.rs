@@ -9,7 +9,7 @@ use crate::JsValue;
 use crate::encode::{BinaryEncode, EncodeTypeDef};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::object_store::insert_object;
-use wry_bindgen_core::{CallbackKey, ObjectHandle, ObjectHandleExt, RustCallback};
+use wry_bindgen_core::{CallbackKey, ObjectHandle, RustCallback};
 
 pub(crate) type CallbackHandle = Rc<Cell<Option<OwnedCallback>>>;
 
@@ -40,7 +40,7 @@ trait CallbackKeyExt {
 
 impl<F: ?Sized> CallbackKeyExt for CallbackKey<F> {
     fn invalidate_js_callback(&self, js_ref: JsRef) {
-        wry_bindgen_runtime::invalidate_js_rust_function(js_ref);
+        js_ref.invalidate_js_rust_function();
     }
 }
 

@@ -37,7 +37,7 @@ fn extract_simple_type_name(ty: &Type) -> Option<String> {
 
 /// Top-level program containing all parsed items
 #[derive(Debug, Default)]
-pub struct Program {
+pub(crate) struct Program {
     /// Attributes
     pub attrs: BindgenAttrs,
     /// Imported types
@@ -56,7 +56,7 @@ pub struct Program {
 
 /// A string enum - an enum where each variant has a string discriminant
 #[derive(Debug)]
-pub struct StringEnum {
+pub(crate) struct StringEnum {
     /// Visibility of the enum
     pub vis: Visibility,
     /// Rust enum name
@@ -71,7 +71,7 @@ pub struct StringEnum {
 
 /// An imported JavaScript type
 #[derive(Debug)]
-pub struct ImportType {
+pub(crate) struct ImportType {
     /// Visibility of the type
     pub vis: Visibility,
     /// Rust type name
@@ -96,7 +96,7 @@ pub struct ImportType {
 
 /// An imported JavaScript function
 #[derive(Debug)]
-pub struct ImportFunction {
+pub(crate) struct ImportFunction {
     /// Visibility of the function
     pub vis: Visibility,
     /// Rust function name
@@ -132,14 +132,14 @@ fn fn_rust_attrs(
 
 impl ImportFunction {
     /// Get the function rust attributes
-    pub fn fn_rust_attrs(&self) -> proc_macro2::TokenStream {
+    pub(crate) fn fn_rust_attrs(&self) -> proc_macro2::TokenStream {
         fn_rust_attrs(&self.rust_attrs, self.rust_name.span())
     }
 }
 
 /// Argument to an imported function
 #[derive(Debug)]
-pub struct FunctionArg {
+pub(crate) struct FunctionArg {
     /// Argument name
     pub name: Ident,
     /// Argument type
@@ -148,7 +148,7 @@ pub struct FunctionArg {
 
 /// Kind of imported function
 #[derive(Debug)]
-pub enum ImportFunctionKind {
+pub(crate) enum ImportFunctionKind {
     /// Regular function (not a method)
     Normal,
     /// Instance method
@@ -199,7 +199,7 @@ pub enum ImportFunctionKind {
 
 /// An imported JavaScript static value (global)
 #[derive(Debug)]
-pub struct ImportStatic {
+pub(crate) struct ImportStatic {
     /// Visibility of the static
     pub vis: Visibility,
     /// Rust name for the static
@@ -220,7 +220,7 @@ pub struct ImportStatic {
 
 /// An exported Rust struct
 #[derive(Debug)]
-pub struct ExportStruct {
+pub(crate) struct ExportStruct {
     /// Visibility of the struct
     pub vis: Visibility,
     /// Rust struct name
@@ -237,7 +237,7 @@ pub struct ExportStruct {
 
 /// A field in an exported struct
 #[derive(Debug)]
-pub struct StructField {
+pub(crate) struct StructField {
     /// Visibility of the field
     pub vis: Visibility,
     /// Rust field name
@@ -254,7 +254,7 @@ pub struct StructField {
 
 /// An exported method from an impl block
 #[derive(Debug)]
-pub struct ExportMethod {
+pub(crate) struct ExportMethod {
     /// The struct this method belongs to
     pub class: Ident,
     /// Rust method name
@@ -277,14 +277,14 @@ pub struct ExportMethod {
 
 impl ExportMethod {
     /// Get the function rust attributes
-    pub fn fn_rust_attrs(&self) -> proc_macro2::TokenStream {
+    pub(crate) fn fn_rust_attrs(&self) -> proc_macro2::TokenStream {
         fn_rust_attrs(&self.rust_attrs, self.rust_name.span())
     }
 }
 
 /// Kind of exported method
 #[derive(Debug, Clone)]
-pub enum ExportMethodKind {
+pub(crate) enum ExportMethodKind {
     /// Constructor (creates new instance)
     Constructor,
     /// Instance method with a receiver
@@ -308,7 +308,7 @@ pub enum ExportMethodKind {
 
 /// How self is passed to a method
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SelfType {
+pub(crate) enum SelfType {
     /// &self - shared reference
     RefShared,
     /// &mut self - mutable reference
@@ -318,7 +318,7 @@ pub enum SelfType {
 }
 
 /// Parse a syn::Item into our AST
-pub fn parse_item(program: &mut Program, item: syn::Item) -> syn::Result<()> {
+pub(crate) fn parse_item(program: &mut Program, item: syn::Item) -> syn::Result<()> {
     match item {
         syn::Item::ForeignMod(foreign) => {
             parse_foreign_mod(program, foreign)?;

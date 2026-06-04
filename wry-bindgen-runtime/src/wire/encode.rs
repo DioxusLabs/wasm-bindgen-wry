@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::{DecodeError, DecodedData, EncodedData, JsRef};
+use super::{DecodeError, DecodedData, EncodedData, JsRef};
 
 pub trait BinaryEncode {
     fn encode(self, encoder: &mut EncodedData);
@@ -339,7 +339,7 @@ impl BinaryEncode for &str {
 
 impl<T: JsRefEncode + ?Sized> BinaryEncode for &T {
     fn encode(self, encoder: &mut EncodedData) {
-        self.js_ref().raw_inner().encode(encoder);
+        self.js_ref().raw().encode(encoder);
     }
 }
 
@@ -534,7 +534,7 @@ impl<T: JsRefEncode> BinaryEncode for &[T] {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.len() as u32);
         for val in self {
-            val.js_ref().raw_inner().encode(encoder);
+            val.js_ref().raw().encode(encoder);
         }
     }
 }
@@ -543,7 +543,7 @@ impl<T: JsRefEncode> BinaryEncode for &mut [T] {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.len() as u32);
         for val in self {
-            val.js_ref().raw_inner().encode(encoder);
+            val.js_ref().raw().encode(encoder);
         }
     }
 }

@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "wry-launch",
-    "wry-bindgen-abi",
     "wry-bindgen-core",
     "wry-bindgen",
     "wry-bindgen-runtime",

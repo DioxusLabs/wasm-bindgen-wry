@@ -1,4 +1,4 @@
-pub fn root_response() -> wry::http::Response<Vec<u8>> {
+pub(crate) fn root_response() -> wry::http::Response<Vec<u8>> {
     let html = r#"<!DOCTYPE html>
 <html>
 <head>

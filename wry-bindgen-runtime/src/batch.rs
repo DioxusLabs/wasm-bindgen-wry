@@ -17,9 +17,8 @@ use crate::ipc::{EncodedData, EncodedParts, IPCMessage, MessageType};
 use crate::object_store::ObjectHandle;
 use crate::runtime::WryIPC;
 use crate::type_cache::TypeCache;
-use wry_bindgen_abi::BinaryEncode as AbiBinaryEncode;
-use wry_bindgen_abi::unstable::{JsFunctionSpecRuntime, JsRefRaw, ObjectHandleRaw};
-use wry_bindgen_abi::{JsFunctionSpec, JsRef, TypeDef};
+use crate::wire::BinaryEncode as AbiBinaryEncode;
+use crate::wire::{JsFunctionSpec, JsRef, TypeDef};
 
 /// One operation's deferred cleanup: heap slots and Rust object handles whose
 /// release was requested while the operation was encoding. Both are flushed
@@ -100,7 +99,7 @@ impl Runtime {
     }
 
     /// Get the next heap ID for a return value placeholder.
-    pub fn get_next_placeholder_id(&mut self) -> u64 {
+    pub(crate) fn get_next_placeholder_id(&mut self) -> u64 {
         self.heap_ids.next_placeholder_id()
     }
 
@@ -113,7 +112,7 @@ impl Runtime {
     /// Get the next borrow ID from the borrow stack (indices 1-127).
     /// The borrow stack grows downward from JSIDX_OFFSET (128) toward 1.
     /// Panics if the borrow stack overflows (more than 127 borrowed refs in one operation).
-    pub fn get_next_borrow_id(&mut self) -> u64 {
+    pub(crate) fn get_next_borrow_id(&mut self) -> u64 {
         self.borrow_ids.next_borrow_id()
     }
 
@@ -326,8 +325,8 @@ fn push_ref_list(buf: &mut Vec<u32>, refs: &[JsRef]) {
     }
 }
 
-/// Operations the encoding layer (in `wry-bindgen-abi`) and the semantic
-/// boundary (in `wry-bindgen-core`) reach for on the active runtime.
+/// Operations the encoding layer (in the [`wire`](crate::wire) module) and the
+/// semantic boundary (in `wry-bindgen-core`) reach for on the active runtime.
 impl Runtime {
     pub fn resolve_function(&mut self, spec: JsFunctionSpec) -> u32 {
         crate::function_registry::FUNCTION_REGISTRY
@@ -371,6 +370,23 @@ impl Runtime {
     pub(crate) fn get_next_inbound_js_ref(&mut self) -> JsRef {
         JsRef::from_raw(self.get_next_inbound_js_heap_id())
     }
+
+    /// Reserve the next return-value placeholder as a [`JsRef`].
+    ///
+    /// Batched calls reserve the heap slot here so the typed result can be
+    /// produced without a round-trip; JS fills the slot on the next flush.
+    pub fn next_placeholder_ref(&mut self) -> JsRef {
+        JsRef::from_raw(self.get_next_placeholder_id())
+    }
+
+    /// Reserve the next borrowed reference as a [`JsRef`].
+    ///
+    /// Borrowed references occupy the borrow stack (indices 1-127) rather than a
+    /// heap slot; JS puts the value on its borrow stack without sending an id, so
+    /// Rust syncs by taking the next borrow ref here.
+    pub fn next_borrowed_ref(&mut self) -> JsRef {
+        JsRef::from_raw(self.get_next_borrow_id())
+    }
 }
 
 thread_local! {
@@ -380,7 +396,6 @@ thread_local! {
 /// Install `runtime` as the active runtime for the duration of `run`, returning
 /// it afterward. Nested calls stack, so re-entrant work sees the same runtime.
 pub(crate) fn in_runtime<O>(runtime: Runtime, run: impl FnOnce() -> O) -> (Runtime, O) {
-    install_hooks();
     RUNTIME.with(|state| state.borrow_mut().push(runtime));
     let out = run();
     let runtime = RUNTIME.with(|state| {
@@ -424,31 +439,9 @@ fn runtime_installed() -> bool {
         .unwrap_or(false)
 }
 
-fn hook_insert_object(obj: Box<dyn Any>) -> ObjectHandle {
-    with_runtime(|runtime| runtime.insert_object_box(obj))
-}
-
-fn hook_drop_rust_object(handle: ObjectHandle) {
-    drop_rust_object(handle);
-}
-
-fn hook_next_inbound_js_ref() -> JsRef {
-    with_runtime(|runtime| runtime.get_next_inbound_js_ref())
-}
-
-static HOOKS: wry_bindgen_abi::unstable::RuntimeHooks = wry_bindgen_abi::unstable::RuntimeHooks {
-    insert_object: hook_insert_object,
-    drop_rust_object: hook_drop_rust_object,
-    next_inbound_js_ref: hook_next_inbound_js_ref,
-};
-
-fn install_hooks() {
-    wry_bindgen_abi::unstable::install_runtime_hooks(&HOOKS);
-}
-
 /// Release a JS heap reference, notifying JS now if no operation is open to
 /// batch the drop into. A no-op if no runtime is installed (teardown).
-pub fn drop_js_object(js_ref: JsRef) {
+pub(crate) fn drop_js_object(js_ref: JsRef) {
     let Some(Some(id)) = try_with_runtime(|runtime| runtime.release_heap_id(js_ref.raw())) else {
         return;
     };
@@ -459,14 +452,14 @@ pub fn drop_js_object(js_ref: JsRef) {
 
 /// Mark the JS wrapper for a Rust callback as unusable. A no-op if no runtime
 /// is installed (teardown).
-pub fn invalidate_js_rust_function(js_ref: JsRef) {
+pub(crate) fn invalidate_js_rust_function(js_ref: JsRef) {
     if runtime_installed() {
         crate::js_helpers::js_invalidate_rust_function(js_ref.raw());
     }
 }
 
 /// Release a stored Rust object. A no-op if no runtime is installed (teardown).
-pub fn drop_rust_object(handle: ObjectHandle) {
+pub(crate) fn drop_rust_object(handle: ObjectHandle) {
     let Some(object) = try_with_runtime(|runtime| runtime.release_object_handle(handle)) else {
         return;
     };
@@ -492,21 +485,21 @@ fn recycle_heap_id_after_js_drop(js_ref: JsRef) {
 pub(crate) fn add_operation(
     encoder: &mut EncodedData,
     fn_id: u32,
-    add_args: impl FnOnce(&mut EncodedData) -> bool,
+    add_args: impl FnOnce(&mut EncodedData),
 ) -> bool {
     AbiBinaryEncode::encode(fn_id, encoder);
-    add_args(encoder)
+    add_args(encoder);
+    encoder.take_needs_flush()
 }
 
 /// Run one JS operation synchronously and decode its typed result.
 ///
-/// `add_args` encodes the call arguments and returns whether the batch must
-/// flush immediately. `reserve_placeholder` may return the result without a
-/// round-trip (for batched calls whose value JS reserves ahead of time);
-/// otherwise `decode_result` decodes the flushed response.
+/// `add_args` encodes the call arguments. `reserve_placeholder` may return the
+/// result without a round-trip (for batched calls whose value JS reserves ahead
+/// of time); otherwise `decode_result` decodes the flushed response.
 pub fn run_js_sync<R>(
     fn_id: u32,
-    add_args: impl FnOnce(&mut EncodedData) -> bool,
+    add_args: impl FnOnce(&mut EncodedData),
     reserve_placeholder: impl FnOnce(&mut Runtime) -> Option<R>,
     mut decode_result: impl for<'a> FnMut(DecodedData<'a>) -> R,
 ) -> R {

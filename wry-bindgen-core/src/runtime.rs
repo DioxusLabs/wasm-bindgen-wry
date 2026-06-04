@@ -5,15 +5,14 @@
 //! ([`JsFunction`](crate::JsFunction)), borrowing a stored object
 //! ([`Runtime::object`]), or dropping a value — are deliberately not methods here.
 //!
-//! The handle wraps the concrete [`wry_bindgen_runtime::Runtime`] but only
+//! The handle wraps the concrete [`wry_bindgen_runtime::wire::Runtime`] but only
 //! re-exposes the borrow-safe, semantic subset of its operations.
 
 use alloc::boxed::Box;
 use core::ops::{Deref, DerefMut};
 
-use wry_bindgen_abi::unstable::JsRefRaw;
-use wry_bindgen_abi::{DecodedData, EncodedData, JsRef, ObjectHandle};
-use wry_bindgen_runtime::Runtime as RuntimeState;
+use wry_bindgen_runtime::wire::Runtime as RuntimeState;
+use wry_bindgen_runtime::wire::{DecodedData, EncodedData, JsRef, ObjectHandle};
 
 use crate::BatchableResult;
 
@@ -105,21 +104,12 @@ impl Runtime<'_> {
         self.backend.reinsert_object_box(handle, Box::new(obj));
     }
 
-    /// Reserve the next borrowed JS reference.
-    ///
-    /// Borrowed references occupy the borrow stack rather than a heap slot; JS
-    /// puts the value on its borrow stack without sending an id, so Rust syncs
-    /// by taking the next borrow ref here.
-    pub fn next_borrowed_ref(&mut self) -> JsRef {
-        JsRef::from_abi(self.backend.get_next_borrow_id() as u32)
-    }
-
     /// Reserve the next return-value placeholder JS reference.
     ///
     /// Batched calls reserve the heap slot here so the typed result can be
     /// produced without a round-trip; JS fills the slot on the next flush.
     pub(crate) fn next_placeholder_ref(&mut self) -> JsRef {
-        JsRef::from_raw(self.backend.get_next_placeholder_id())
+        self.backend.next_placeholder_ref()
     }
 }
 
@@ -128,11 +118,11 @@ impl Runtime<'_> {
 /// Panics if no runtime is installed, or if one is already borrowed (e.g. a
 /// re-entrant call from inside another `with_runtime`).
 pub fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
-    wry_bindgen_runtime::with_runtime(|backend| f(&mut Runtime { backend }))
+    wry_bindgen_runtime::wire::with_runtime(|backend| f(&mut Runtime { backend }))
 }
 
 pub(crate) fn with_backend<R>(f: impl FnOnce(&mut RuntimeState) -> R) -> R {
-    wry_bindgen_runtime::with_runtime(f)
+    wry_bindgen_runtime::wire::with_runtime(f)
 }
 
 /// Call a JS function synchronously and decode its typed result.
@@ -143,12 +133,9 @@ pub(crate) fn run_js_sync<R: BatchableResult + 'static>(
     fn_id: u32,
     add_args: impl FnOnce(&mut EncodedData),
 ) -> R {
-    wry_bindgen_runtime::run_js_sync(
+    wry_bindgen_runtime::wire::run_js_sync(
         fn_id,
-        |encoder| {
-            add_args(encoder);
-            encoder.take_needs_flush()
-        },
+        add_args,
         |backend| R::try_placeholder(&mut Runtime { backend }),
         |mut data: DecodedData<'_>| R::decode(&mut data).expect("Failed to decode return value"),
     )

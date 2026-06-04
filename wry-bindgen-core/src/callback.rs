@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use wry_bindgen_abi::{BinaryEncode, EncodeTypeDef, EncodedData, ObjectHandle, TypeDef};
+use wry_bindgen_runtime::wire::{BinaryEncode, EncodeTypeDef, EncodedData, ObjectHandle, TypeDef};
 
 #[derive(Clone, Copy)]
 enum CallbackPolicy {

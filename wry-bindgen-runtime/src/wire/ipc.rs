@@ -197,7 +197,7 @@ impl EncodedData {
         self.needs_flush = true;
     }
 
-    pub fn take_needs_flush(&mut self) -> bool {
+    pub(crate) fn take_needs_flush(&mut self) -> bool {
         core::mem::take(&mut self.needs_flush)
     }
 
@@ -230,7 +230,7 @@ impl EncodedData {
     }
 
     /// Convert the encoded data to bytes.
-    pub fn into_bytes(self) -> Vec<u8> {
+    pub(crate) fn into_bytes(self) -> Vec<u8> {
         let u16_offset = 12 + self.u32_buf.len() * 4;
         let u8_offset = u16_offset + self.u16_buf.len() * 2;
         let str_offset = u8_offset + self.u8_buf.len();

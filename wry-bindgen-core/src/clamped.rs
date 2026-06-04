@@ -3,7 +3,7 @@
 use alloc::vec::Vec;
 use core::ops::{Deref, DerefMut};
 
-use wry_bindgen_abi::{
+use wry_bindgen_runtime::wire::{
     BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData, TypeDef,
 };
 

@@ -27,7 +27,7 @@ use statics::generate_static;
 use string_enum::generate_string_enum;
 use types::generate_type;
 
-pub fn generate(program: &Program) -> syn::Result<TokenStream> {
+pub(crate) fn generate(program: &Program) -> syn::Result<TokenStream> {
     let mut tokens = TokenStream::new();
     let krate = &program.attrs.crate_path_tokens();
 

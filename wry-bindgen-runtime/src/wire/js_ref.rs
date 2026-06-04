@@ -1,5 +1,5 @@
-use crate::encode::{BinaryDecode, BinaryEncode, EncodeTypeDef, JsRefEncode, TypeDef};
-use crate::ipc::{DecodeError, DecodedData, EncodedData};
+use super::encode::{BinaryDecode, BinaryEncode, EncodeTypeDef, JsRefEncode, TypeDef};
+use super::ipc::{DecodeError, DecodedData, EncodedData};
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,13 +38,36 @@ impl JsRef {
         Self(abi as u64)
     }
 
+    /// Reserve a handle to the next borrowed JS reference.
+    ///
+    /// Borrowed references occupy the borrow stack (indices 1-127) rather than a
+    /// heap slot; JS puts the value on its borrow stack without sending an id, so
+    /// Rust syncs by reserving the matching handle here.
     #[inline]
-    pub(crate) const fn from_raw_inner(raw: u64) -> Self {
+    pub fn next_borrowed_ref() -> Self {
+        crate::batch::with_runtime(|rt| rt.next_borrowed_ref())
+    }
+
+    /// Release this JS heap object.
+    #[inline]
+    pub fn drop_js_object(self) {
+        crate::batch::drop_js_object(self);
+    }
+
+    /// Mark the JS wrapper for the Rust callback behind this reference as
+    /// unusable.
+    #[inline]
+    pub fn invalidate_js_rust_function(self) {
+        crate::batch::invalidate_js_rust_function(self);
+    }
+
+    #[inline]
+    pub(crate) const fn from_raw(raw: u64) -> Self {
         Self(raw)
     }
 
     #[inline]
-    pub(crate) const fn raw_inner(self) -> u64 {
+    pub(crate) const fn raw(self) -> u64 {
         self.0
     }
 }
@@ -65,7 +88,7 @@ impl BinaryDecode for JsRef {
     fn decode(_decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         // JS heap references are sent out-of-band in the deferred heap-ref
         // batch. Decoding reserves the next Rust-side ID for that value.
-        Ok(crate::runtime::next_inbound_js_ref())
+        Ok(crate::batch::with_runtime(|rt| rt.get_next_inbound_js_ref()))
     }
 }
 
