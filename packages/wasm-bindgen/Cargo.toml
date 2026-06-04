@@ -31,9 +31,12 @@ wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-m
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122" }
 
-# wasm32 implementation - commented out to avoid links conflict with crates.io version
-# [target.'cfg(target_arch = "wasm32")'.dependencies]
-# wasm-bindgen = { git = "https://github.com/rustwasm/wasm-bindgen", tag = "0.2.106" }
+# wasm32 implementation: delegate to the real upstream wasm-bindgen. It is pulled
+# from git (not crates.io) so the workspace `[patch.crates-io]` that redirects
+# `wasm-bindgen` to this shim does not capture it (which would be a dependency
+# cycle). The tag matches the BASE commit the vendored tree is patched from.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-upstream = { package = "wasm-bindgen", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122" }
 
 [lints]
 workspace = true

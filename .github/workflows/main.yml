@@ -78,6 +78,22 @@ jobs:
           cache-all-crates: "true"
       - run: cargo check --workspace --all-features
 
+  wasm:
+    if: github.event.pull_request.draft == false
+    name: Wasm
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          cache-all-crates: "true"
+      # The wasm-bindgen shim must still compile for the browser target, where it
+      # delegates to the real upstream wasm-bindgen instead of wry-bindgen.
+      - run: cargo check --manifest-path packages/wasm-bindgen/Cargo.toml --target wasm32-unknown-unknown --all-features
+
   clippy:
     if: github.event.pull_request.draft == false
     name: Clippy
@@ -112,7 +128,12 @@ jobs:
         with:
           cache-all-crates: "true"
       # Only document workspace members, not vendored wasm-bindgen packages.
-      - run: cargo doc --no-deps --all-features -p wry-launch -p wasm-bindgen -p wry-bindgen-macro -p wry-bindgen-macro-support
+      # `wasm-bindgen` is documented by manifest path: the wasm32 build pulls a
+      # second crate also named `wasm-bindgen` (the real upstream), so a bare
+      # `-p wasm-bindgen` is ambiguous.
+      - run: |
+          cargo doc --no-deps --all-features -p wry-launch -p wry-bindgen-macro -p wry-bindgen-macro-support
+          cargo doc --no-deps --all-features --manifest-path packages/wasm-bindgen/Cargo.toml
         env:
           RUSTDOCFLAGS: -Dwarnings
 
