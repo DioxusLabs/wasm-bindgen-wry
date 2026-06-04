@@ -45,13 +45,15 @@ After the dry run passes, publish for real with:
 Real publish runs crate-by-crate in dependency order:
 
 1. `wry-bindgen-macro-support`
-2. `wry-bindgen-macro`
-3. `wry-bindgen`
-4. `wasm-bindgen-macro-x`
-5. `wasm-bindgen-x`
-6. `js-sys-x`
-7. `web-sys-x`
-8. `wasm-bindgen-futures-x`
+2. `wry-bindgen-runtime`
+3. `wry-bindgen-core`
+4. `wry-bindgen-macro`
+5. `wry-bindgen`
+6. `wasm-bindgen-macro-x`
+7. `wasm-bindgen-x`
+8. `js-sys-x`
+9. `web-sys-x`
+10. `wasm-bindgen-futures-x`
 
 ## Useful Options
 

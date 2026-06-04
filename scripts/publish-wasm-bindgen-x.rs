@@ -77,6 +77,14 @@ const UNRENAMED_PUBLISH_CRATES: &[PublishCrate] = &[
         publish_name: "wry-bindgen-macro-support",
     },
     PublishCrate {
+        manifest: "packages/wry-bindgen-runtime/Cargo.toml",
+        publish_name: "wry-bindgen-runtime",
+    },
+    PublishCrate {
+        manifest: "packages/wry-bindgen-core/Cargo.toml",
+        publish_name: "wry-bindgen-core",
+    },
+    PublishCrate {
         manifest: "packages/wry-bindgen-macro/Cargo.toml",
         publish_name: "wry-bindgen-macro",
     },
@@ -357,6 +365,14 @@ fn publish_crates() -> Vec<PublishCrate> {
         PublishCrate {
             manifest: "packages/wry-bindgen-macro-support/Cargo.toml",
             publish_name: "wry-bindgen-macro-support",
+        },
+        PublishCrate {
+            manifest: "packages/wry-bindgen-runtime/Cargo.toml",
+            publish_name: "wry-bindgen-runtime",
+        },
+        PublishCrate {
+            manifest: "packages/wry-bindgen-core/Cargo.toml",
+            publish_name: "wry-bindgen-core",
         },
         PublishCrate {
             manifest: "packages/wry-bindgen-macro/Cargo.toml",
