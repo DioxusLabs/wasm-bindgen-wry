@@ -88,7 +88,9 @@ impl BinaryDecode for JsRef {
     fn decode(_decoder: &mut DecodedData) -> Result<Self, DecodeError> {
         // JS heap references are sent out-of-band in the deferred heap-ref
         // batch. Decoding reserves the next Rust-side ID for that value.
-        Ok(crate::batch::with_runtime(|rt| rt.get_next_inbound_js_ref()))
+        Ok(crate::batch::with_runtime(|rt| {
+            rt.get_next_inbound_js_ref()
+        }))
     }
 }
 

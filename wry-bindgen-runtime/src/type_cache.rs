@@ -8,9 +8,9 @@
 //! IDs onto `awaiting_ack_stack`, and the matching JS Respond pops and acks
 //! them. No request IDs needed.
 
+use crate::wire::TypeDef;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
-use crate::wire::TypeDef;
 
 /// Assigns stable IDs to type definitions for a runtime.
 pub(crate) struct TypeCache {

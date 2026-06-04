@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
-use base64::Engine;
 use crate::wire::{BinaryDecode, DecodeError};
+use base64::Engine;
 
 pub(crate) use crate::wire::{DecodedData, EncodedData};
 

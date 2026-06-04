@@ -21,7 +21,9 @@ mod object_store;
 mod registry;
 
 pub use callback::RustCallback;
-pub use encode::{BinaryDecode, BinaryEncode, EncodeTypeDef, FunctionTypeInfo, JsRefEncode, TypeDef};
+pub use encode::{
+    BinaryDecode, BinaryEncode, EncodeTypeDef, FunctionTypeInfo, JsRefEncode, TypeDef,
+};
 pub use ipc::{DecodeError, DecodedData, EncodedData};
 pub use js_ref::JsRef;
 pub use object_store::ObjectHandle;

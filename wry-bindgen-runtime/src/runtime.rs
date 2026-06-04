@@ -10,10 +10,10 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use atomic_waker::AtomicWaker;
 
 use crate::batch::with_runtime;
-use crate::wire::BinaryDecode;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
 use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 use crate::object_store::ObjectHandle;
+use crate::wire::BinaryDecode;
 
 /// An inbound item arriving from JS on the single shared channel.
 ///

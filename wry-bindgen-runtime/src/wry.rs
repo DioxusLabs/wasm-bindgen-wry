@@ -853,9 +853,7 @@ mod tests {
             "lock script should be requested while the parked XHR is outstanding"
         );
 
-        runtime
-            .ipc
-            .send_ipc(ipc_message(MessageType::Respond));
+        runtime.ipc.send_ipc(ipc_message(MessageType::Respond));
         assert!(matches!(poll_driver(&mut driver), Poll::Pending));
 
         let response = response

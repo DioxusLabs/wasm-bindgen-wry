@@ -1,11 +1,11 @@
 //! Runtime-side JS registry generation.
 
+use crate::wire::{JsClassMemberKind, JsClassMemberSpec, JsFunctionSpec, ObjectHandle, TypeDef};
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::Write;
 use once_cell::sync::Lazy;
-use crate::wire::{JsClassMemberKind, JsClassMemberSpec, JsFunctionSpec, ObjectHandle, TypeDef};
 
 /// Registry of JS functions collected via inventory.
 pub(crate) struct FunctionRegistry {
