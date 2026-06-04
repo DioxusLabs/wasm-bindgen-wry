@@ -1,10 +1,16 @@
 use crate::ast::ImportType;
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
 
+use super::common::generate_wry_call_js_function;
 use super::erasure::add_static_bounds;
 
-pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result<TokenStream> {
+pub(super) fn generate_type(
+    ty: &ImportType,
+    krate: &TokenStream,
+    module: Option<&Ident>,
+    prefix: &str,
+) -> syn::Result<TokenStream> {
     let vis = &ty.vis;
     let rust_name = &ty.rust_name;
     let generics = &ty.generics;
@@ -26,10 +32,21 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
         quote_spanned! {span=> #krate::JsValue }
     };
     let type_params: Vec<_> = generics.type_params().map(|param| &param.ident).collect();
+    let js_option_inner = if rust_name == "JsOption"
+        && ty.js_name == "JsOption"
+        && ty.no_upcast
+        && ty.extends.is_empty()
+        && type_params.len() == 1
+    {
+        type_params.first().copied()
+    } else {
+        None
+    };
     let generic_field = if type_params.is_empty() {
         quote! {}
     } else {
         quote_spanned! {span=>
+            #[doc(hidden)]
             pub generics: ::core::marker::PhantomData<fn() -> (#(#type_params,)*)>,
         }
     };
@@ -54,6 +71,7 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
         #(#derives)*
         #[repr(transparent)]
         #vis struct #rust_name #generics #where_clause {
+            #[doc(hidden)]
             pub obj: #storage_ty,
             #generic_field
         }
@@ -85,12 +103,23 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
 
     // Generate Deref to the first parent or JsValue if no parents
     let deref_impls = {
-        let deref_to = &storage_ty;
-        quote_spanned! {span=>
-            impl #impl_generics ::core::ops::Deref for #rust_name #ty_generics #where_clause {
-                type Target = #deref_to;
-                fn deref(&self) -> &#deref_to {
-                    <Self as ::core::convert::AsRef<#deref_to>>::as_ref(self)
+        if let Some(inner) = js_option_inner {
+            quote_spanned! {span=>
+                impl<#inner: #krate::JsGeneric> ::core::ops::Deref for #rust_name<#inner> {
+                    type Target = #inner;
+                    fn deref(&self) -> &#inner {
+                        <#inner as #krate::JsCast>::unchecked_from_js_ref(&self.obj)
+                    }
+                }
+            }
+        } else {
+            let deref_to = &storage_ty;
+            quote_spanned! {span=>
+                impl #impl_generics ::core::ops::Deref for #rust_name #ty_generics #where_clause {
+                    type Target = #deref_to;
+                    fn deref(&self) -> &#deref_to {
+                        <Self as ::core::convert::AsRef<#deref_to>>::as_ref(self)
+                    }
                 }
             }
         }
@@ -140,26 +169,35 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
     // Generate EncodeTypeDef implementation
     // All JS types use HeapRef since they're references to JS heap objects
     let encode_type_def_impl = quote_spanned! {span=>
-        impl #impl_generics #krate::EncodeTypeDef for #rust_name #ty_generics #where_clause {
-            fn encode_type_def(buf: &mut #krate::alloc::vec::Vec<u8>) {
-                <#krate::JsValue as #krate::EncodeTypeDef>::encode_type_def(buf);
+        impl #impl_generics #krate::__rt::EncodeTypeDef for #rust_name #ty_generics #where_clause {
+            fn encode_type_def(type_def: &mut #krate::__rt::TypeDef) {
+                <#krate::JsValue as #krate::__rt::EncodeTypeDef>::encode_type_def(type_def);
             }
         }
     };
 
     // Generate BinaryEncode implementation
     let binary_encode_impl = quote_spanned! {span=>
-        impl #impl_generics #krate::BinaryEncode for #rust_name #ty_generics #where_clause {
-            fn encode(self, encoder: &mut #krate::EncodedData) {
+        impl #impl_generics #krate::__rt::BinaryEncode for #rust_name #ty_generics #where_clause {
+            fn encode(self, encoder: &mut #krate::__rt::EncodedData) {
                 self.obj.encode(encoder);
             }
         }
     };
 
+    let js_ref_encode_impl = quote_spanned! {span=>
+        impl #impl_generics #krate::__rt::JsRefEncode for #rust_name #ty_generics #where_clause {
+            fn js_ref(&self) -> #krate::__rt::JsRef {
+                self.obj.js_ref()
+            }
+        }
+
+    };
+
     // Generate BinaryDecode implementation
     let binary_decode_impl = quote_spanned! {span=>
-        impl #impl_generics #krate::BinaryDecode for #rust_name #ty_generics #where_clause {
-            fn decode(decoder: &mut #krate::DecodedData) -> ::core::result::Result<Self, #krate::DecodeError> {
+        impl #impl_generics #krate::__rt::BinaryDecode for #rust_name #ty_generics #where_clause {
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
                 ::core::result::Result::map(#krate::JsValue::decode(decoder), ::core::convert::Into::into)
             }
         }
@@ -167,9 +205,9 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
 
     // Generate BatchableResult implementation
     let batchable_impl = quote_spanned! {span=>
-        impl #impl_generics #krate::BatchableResult for #rust_name #ty_generics #where_clause {
+        impl #impl_generics #krate::__rt::BatchableResult for #rust_name #ty_generics #where_clause {
             fn try_placeholder(batch: &mut #krate::__rt::Runtime) -> ::core::option::Option<Self> {
-                ::core::option::Option::Some(::core::convert::Into::into(<#krate::JsValue as #krate::BatchableResult>::try_placeholder(batch)?))
+                ::core::option::Option::Some(::core::convert::Into::into(<#krate::JsValue as #krate::__rt::BatchableResult>::try_placeholder(batch)?))
             }
         }
     };
@@ -182,21 +220,24 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
     // matching wasm-bindgen's try-catch behavior
     let instanceof_js_code = if ty.vendor_prefixes.is_empty() {
         // Simple case: check if class exists before instanceof
-        format!("(a0) => typeof {js_name} !== 'undefined' && a0 instanceof {js_name}")
+        format!(
+            "(a0) => typeof {prefix}{js_name} !== 'undefined' && a0 instanceof {prefix}{js_name}"
+        )
     } else {
         // Generate vendor-prefixed fallback:
         // (a0) => a0 instanceof (typeof Foo !== 'undefined' ? Foo : (typeof webkitFoo !== 'undefined' ? webkitFoo : ...))
-        let mut class_expr = format!("(typeof {js_name} !== 'undefined' ? {js_name} : ");
-        for (i, prefix) in ty.vendor_prefixes.iter().enumerate() {
-            let prefixed = format!("{prefix}{js_name}");
+        let mut class_expr =
+            format!("(typeof {prefix}{js_name} !== 'undefined' ? {prefix}{js_name} : ");
+        for (i, vendor_prefix) in ty.vendor_prefixes.iter().enumerate() {
+            let prefixed = format!("{vendor_prefix}{js_name}");
             if i == ty.vendor_prefixes.len() - 1 {
                 // Last prefix - use Object as final fallback (which will make instanceof return false for non-objects)
                 class_expr.push_str(&format!(
-                    "(typeof {prefixed} !== 'undefined' ? {prefixed} : Object)"
+                    "(typeof {prefix}{prefixed} !== 'undefined' ? {prefix}{prefixed} : Object)"
                 ));
             } else {
                 class_expr.push_str(&format!(
-                    "(typeof {prefixed} !== 'undefined' ? {prefixed} : "
+                    "(typeof {prefix}{prefixed} !== 'undefined' ? {prefix}{prefixed} : "
                 ));
             }
         }
@@ -215,22 +256,51 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
             }
         }
     });
+    let instanceof_call = generate_wry_call_js_function(
+        krate,
+        module,
+        &instanceof_js_code,
+        quote_spanned! {span=> fn(&#krate::JsValue) -> bool },
+        quote_spanned! {span=> (__val) },
+        span,
+    );
 
-    let jscast_impl = quote_spanned! {span=>
-        impl #impl_generics #krate::JsCast for #rust_name #ty_generics #where_clause {
-            fn instanceof(__val: &#krate::JsValue) -> bool {
-                #krate::__wry_call_js_function!(#instanceof_js_code, fn(&#krate::JsValue) -> bool, (__val))
+    let jscast_impl = if let Some(inner) = js_option_inner {
+        quote_spanned! {span=>
+            impl<#inner: #krate::JsGeneric> #krate::JsCast for #rust_name<#inner> {
+                fn instanceof(__val: &#krate::JsValue) -> bool {
+                    <#inner as #krate::JsCast>::is_type_of(__val)
+                        || __val.is_null()
+                        || __val.is_undefined()
+                }
+
+                fn unchecked_from_js(val: #krate::JsValue) -> Self {
+                    ::core::convert::Into::into(val)
+                }
+
+                fn unchecked_from_js_ref(val: &#krate::JsValue) -> &Self {
+                    // SAFETY: #[repr(transparent)] guarantees same layout
+                    unsafe { &*(val as *const #krate::JsValue as *const Self) }
+                }
             }
+        }
+    } else {
+        quote_spanned! {span=>
+            impl #impl_generics #krate::JsCast for #rust_name #ty_generics #where_clause {
+                fn instanceof(__val: &#krate::JsValue) -> bool {
+                    #instanceof_call
+                }
 
-            #is_type_of_impl
+                #is_type_of_impl
 
-            fn unchecked_from_js(val: #krate::JsValue) -> Self {
-                ::core::convert::Into::into(val)
-            }
+                fn unchecked_from_js(val: #krate::JsValue) -> Self {
+                    ::core::convert::Into::into(val)
+                }
 
-            fn unchecked_from_js_ref(val: &#krate::JsValue) -> &Self {
-                // SAFETY: #[repr(transparent)] guarantees same layout
-                unsafe { &*(val as *const #krate::JsValue as *const Self) }
+                fn unchecked_from_js_ref(val: &#krate::JsValue) -> &Self {
+                    // SAFETY: #[repr(transparent)] guarantees same layout
+                    unsafe { &*(val as *const #krate::JsValue as *const Self) }
+                }
             }
         }
     };
@@ -255,7 +325,7 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
         quote! {}
     } else {
         quote_spanned! {span=>
-            impl #impl_generics #krate::Promising for #rust_name #ty_generics #where_clause {
+            impl #impl_generics #krate::sys::Promising for #rust_name #ty_generics #where_clause {
                 type Resolution = #rust_name #ty_generics;
             }
         }
@@ -265,14 +335,14 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
     if !ty.no_upcast {
         upcast_impls.extend(quote_spanned! {span=>
             impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::JsValue #where_clause {}
-            impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::JsOption<#krate::JsValue> #where_clause {}
+            impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::sys::JsOption<#krate::JsValue> #where_clause {}
         });
 
         let class_type_params: Vec<_> = generics.type_params().collect();
         if class_type_params.is_empty() {
             upcast_impls.extend(quote_spanned! {span=>
                 impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #rust_name #ty_generics #where_clause {}
-                impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::JsOption<#rust_name #ty_generics> #where_clause {}
+                impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::sys::JsOption<#rust_name #ty_generics> #where_clause {}
             });
         } else {
             let mut target_generics = generics.clone();
@@ -334,14 +404,14 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
 
             upcast_impls.extend(quote_spanned! {span=>
                 impl #target_impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #rust_name #target_ty_generics #target_where_clause {}
-                impl #target_impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::JsOption<#rust_name #target_ty_generics> #target_where_clause {}
+                impl #target_impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::sys::JsOption<#rust_name #target_ty_generics> #target_where_clause {}
             });
         }
 
         for parent in &ty.extends {
             upcast_impls.extend(quote_spanned! {span=>
                 impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #parent #where_clause {}
-                impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::JsOption<#parent> #where_clause {}
+                impl #impl_generics #krate::convert::UpcastFrom<#rust_name #ty_generics> for #krate::sys::JsOption<#parent> #where_clause {}
             });
         }
     }
@@ -354,6 +424,7 @@ pub(super) fn generate_type(ty: &ImportType, krate: &TokenStream) -> syn::Result
         #from_parents
         #encode_type_def_impl
         #binary_encode_impl
+        #js_ref_encode_impl
         #binary_decode_impl
         #batchable_impl
         #jscast_impl

@@ -73,40 +73,28 @@ pub(super) fn generate_string_enum(
 
     // Generate EncodeTypeDef implementation
     // String enums use StringEnum tag with embedded variant strings
-    let variant_count_u8 = variant_count as u8;
     let encode_type_def_impl = quote! {
-        impl #krate::EncodeTypeDef for #enum_name {
-            fn encode_type_def(buf: &mut #krate::alloc::vec::Vec<u8>) {
-                // Push StringEnum tag
-                buf.push(#krate::__rt::TypeTag::StringEnum as u8);
-                // Push variant count
-                buf.push(#variant_count_u8);
-                // Push each variant string (length as u32 + bytes)
-                #(
-                    let s: &str = #variant_values;
-                    let bytes = s.as_bytes();
-                    let len = bytes.len() as u32;
-                    buf.extend_from_slice(&len.to_le_bytes());
-                    buf.extend_from_slice(bytes);
-                )*
+        impl #krate::__rt::EncodeTypeDef for #enum_name {
+            fn encode_type_def(type_def: &mut #krate::__rt::TypeDef) {
+                type_def.string_enum(&[#(#variant_values),*]);
             }
         }
     };
 
     // Generate BinaryEncode implementation - encode as u32 discriminant
     let binary_encode_impl = quote! {
-        impl #krate::BinaryEncode for #enum_name {
-            fn encode(self, encoder: &mut #krate::EncodedData) {
-                <u32 as #krate::BinaryEncode>::encode(self as u32, encoder);
+        impl #krate::__rt::BinaryEncode for #enum_name {
+            fn encode(self, encoder: &mut #krate::__rt::EncodedData) {
+                <u32 as #krate::__rt::BinaryEncode>::encode(self as u32, encoder);
             }
         }
     };
 
     // Generate BinaryDecode implementation - decode u32 to variant
     let binary_decode_impl = quote! {
-        impl #krate::BinaryDecode for #enum_name {
-            fn decode(decoder: &mut #krate::DecodedData) -> ::core::result::Result<Self, #krate::DecodeError> {
-                let discriminant = <u32 as #krate::BinaryDecode>::decode(decoder)?;
+        impl #krate::__rt::BinaryDecode for #enum_name {
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
+                let discriminant = <u32 as #krate::__rt::BinaryDecode>::decode(decoder)?;
                 match discriminant {
                     #(#variant_indices => ::core::result::Result::Ok(#variant_paths),)*
                     _ => ::core::result::Result::Ok(#enum_name::__Invalid),
@@ -117,7 +105,7 @@ pub(super) fn generate_string_enum(
 
     // Generate BatchableResult implementation
     let batchable_impl = quote! {
-        impl #krate::BatchableResult for #enum_name {}
+        impl #krate::__rt::BatchableResult for #enum_name {}
     };
 
     // Generate From<EnumName> for JsValue

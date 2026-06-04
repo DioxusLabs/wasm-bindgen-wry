@@ -1,0 +1,20 @@
+[package]
+name = "wry-bindgen-runtime"
+version = "0.1.0"
+edition = "2024"
+description = "Wry runtime transport for wry-bindgen semantic bindings"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
+
+[dependencies]
+base64 = "0.22"
+http = "1.4.0"
+inventory = "0.3.21"
+once_cell = { version = "1.21.3", features = ["critical-section"] }
+wry-bindgen-abi = { path = "../wry-bindgen-abi", version = "0.1.0" }
+
+[build-dependencies]
+lazy-js-bundle = "0.7.2"
+
+[lints]
+workspace = true

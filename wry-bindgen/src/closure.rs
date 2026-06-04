@@ -3,10 +3,10 @@
 use alloc::boxed::Box;
 
 use crate::JsValue;
-use crate::encode::{BinaryEncode, CallbackKey, EncodeTypeDef};
-use crate::function::RustCallback;
+use crate::encode::{BinaryEncode, EncodeTypeDef};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::object_store::insert_object;
+use wry_bindgen_core::{CallbackKey, JsRefExt, ObjectHandleExt, RustCallback};
 
 /// Borrowed or owned closure handle for passing Rust closures to JavaScript.
 pub struct ScopedClosure<'a, T: ?Sized> {
@@ -107,19 +107,21 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
     where
         CallbackKey<FnPtr>: BinaryEncode + EncodeTypeDef,
     {
-        let handle_cell = alloc::rc::Rc::new(core::cell::Cell::new(None));
+        let handle_cell = alloc::rc::Rc::new(core::cell::Cell::new(
+            None::<wry_bindgen_core::ObjectHandle>,
+        ));
         let handle_for_callback = handle_cell.clone();
         let key = insert_object(RustCallback::new_fn_mut(move |decoder, encoder| {
             let result = encode_decode(decoder, encoder);
             // Dispose the one-shot callback whether or not decoding succeeded.
             if let Some(handle) = handle_for_callback.take() {
-                crate::batch::queue_rust_object_drop(handle);
+                handle.try_queue_drop();
             }
             result
         }));
         handle_cell.set(Some(key));
         let value = crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(
-            CallbackKey::new_with_policy(key, crate::encode::CallbackPolicy::JsOwnedOnce),
+            CallbackKey::js_owned_once(key),
         );
         // Once-cells dispose themselves after the first call, but they still
         // need Rust-side ownership while a `Closure` handle exists. Promise
@@ -146,7 +148,8 @@ where
 impl<T: ?Sized> Drop for ScopedClosure<'_, T> {
     fn drop(&mut self) {
         if let crate::closure::CallbackOwnership::Owned = self.callback {
-            crate::batch::queue_js_dispose_rust_function(self.value.id());
+            let js_ref = self.value.js_ref();
+            js_ref.try_queue_dispose_rust_function();
         }
         // JsValue::drop runs after this (via field drop glue) and queues
         // the heap-ref release.

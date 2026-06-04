@@ -1,4 +1,4 @@
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
 
 pub(super) fn clippy_allows() -> TokenStream {
@@ -11,6 +11,29 @@ pub(super) fn clippy_allows() -> TokenStream {
     }
 }
 
+pub(super) fn generate_wry_call_js_function(
+    krate: &TokenStream,
+    module: Option<&Ident>,
+    js_code: &str,
+    fn_type: TokenStream,
+    args: TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    match module {
+        Some(module) if js_code.contains("{__wry_module}") => quote_spanned! {span=>
+            #krate::__wry_call_js_function!(
+                module = &#module,
+                #js_code,
+                #fn_type,
+                #args
+            )
+        },
+        _ => quote_spanned! {span=>
+            #krate::__wry_call_js_function!(#js_code, #fn_type, #args)
+        },
+    }
+}
+
 pub(super) fn generate_member_type_helpers(
     arg_types: &[TokenStream],
     return_type: Option<TokenStream>,
@@ -19,27 +42,19 @@ pub(super) fn generate_member_type_helpers(
 ) -> TokenStream {
     let return_body = match return_type {
         Some(ty) => quote_spanned! {span=>
-            let mut ty = #krate::alloc::vec::Vec::new();
-            <#ty as #krate::EncodeTypeDef>::encode_type_def(&mut ty);
-            ::core::option::Option::Some(ty)
+            ::core::option::Option::Some(#krate::__rt::TypeDef::of::<#ty>())
         },
         None => quote_spanned! {span=> ::core::option::Option::None },
     };
 
     quote_spanned! {span=>
-        fn __wry_arg_types() -> #krate::alloc::vec::Vec<#krate::alloc::vec::Vec<u8>> {
+        fn __wry_arg_types() -> #krate::alloc::vec::Vec<#krate::__rt::TypeDef> {
             #krate::alloc::vec![
-                #(
-                {
-                    let mut ty = #krate::alloc::vec::Vec::new();
-                    <#arg_types as #krate::EncodeTypeDef>::encode_type_def(&mut ty);
-                    ty
-                }
-                ),*
+                #(#krate::__rt::TypeDef::of::<#arg_types>()),*
             ]
         }
 
-        fn __wry_return_type() -> ::core::option::Option<#krate::alloc::vec::Vec<u8>> {
+        fn __wry_return_type() -> ::core::option::Option<#krate::__rt::TypeDef> {
             #return_body
         }
     }

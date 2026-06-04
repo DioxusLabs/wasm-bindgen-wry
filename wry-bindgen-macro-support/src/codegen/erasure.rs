@@ -170,8 +170,8 @@ pub(super) fn add_js_call_bounds_to_generics(
                 generics,
                 ret,
                 &[
-                    quote! { #krate::EncodeTypeDef },
-                    quote! { #krate::BatchableResult },
+                    quote! { #krate::__rt::EncodeTypeDef },
+                    quote! { #krate::__rt::BatchableResult },
                 ],
             );
         }
@@ -192,7 +192,7 @@ fn push_arg_type_bounds(generics: &mut syn::Generics, ty: &syn::Type, krate: &To
                     generics,
                     &slice.elem,
                     &[
-                        quote! { #krate::EncodeTypeDef },
+                        quote! { #krate::__rt::EncodeTypeDef },
                         quote! { #krate::JsGeneric },
                     ],
                 );
@@ -200,7 +200,7 @@ fn push_arg_type_bounds(generics: &mut syn::Generics, ty: &syn::Type, krate: &To
             syn::Type::Path(path) if path_is_scoped_closure(path) => {}
             syn::Type::Path(path) if path.path.segments.len() == 1 => {
                 let elem = &reference.elem;
-                push_type_bound(generics, elem, &[quote! { #krate::EncodeTypeDef }]);
+                push_type_bound(generics, elem, &[quote! { #krate::__rt::EncodeTypeDef }]);
                 push_reference_binary_encode_bound(generics, reference, krate);
             }
             _ => {
@@ -208,8 +208,8 @@ fn push_arg_type_bounds(generics: &mut syn::Generics, ty: &syn::Type, krate: &To
                     generics,
                     ty,
                     &[
-                        quote! { #krate::EncodeTypeDef },
-                        quote! { #krate::BinaryEncode },
+                        quote! { #krate::__rt::EncodeTypeDef },
+                        quote! { #krate::__rt::BinaryEncode },
                     ],
                 );
             }
@@ -219,8 +219,8 @@ fn push_arg_type_bounds(generics: &mut syn::Generics, ty: &syn::Type, krate: &To
                 generics,
                 ty,
                 &[
-                    quote! { #krate::EncodeTypeDef },
-                    quote! { #krate::BinaryEncode },
+                    quote! { #krate::__rt::EncodeTypeDef },
+                    quote! { #krate::__rt::BinaryEncode },
                 ],
             );
         }
@@ -273,12 +273,12 @@ fn push_reference_binary_encode_bound(
     let predicate = if let Some(lifetime) = &reference.lifetime {
         let mutability = &reference.mutability;
         syn::parse_quote! {
-            &#lifetime #mutability #elem: #krate::BinaryEncode
+            &#lifetime #mutability #elem: #krate::__rt::BinaryEncode
         }
     } else {
         let mutability = &reference.mutability;
         syn::parse_quote! {
-            for<'__wry_bindgen> &'__wry_bindgen #mutability #elem: #krate::BinaryEncode
+            for<'__wry_bindgen> &'__wry_bindgen #mutability #elem: #krate::__rt::BinaryEncode
         }
     };
     generics.make_where_clause().predicates.push(predicate);

@@ -3,8 +3,6 @@
  */
 import { DeferredHeapRefs } from "./heap";
 
-const CACHED_STRING_SENTINEL = 0xffffffff;
-
 class DataEncoder {
   declare private u8Buf: number[];
   declare private u16Buf: number[];
@@ -220,15 +218,6 @@ class DataDecoder {
 
   takeStr(): string {
     const len = this.takeU32();
-    if (len === CACHED_STRING_SENTINEL) {
-      const id = this.takeU64();
-      const value = window.jsHeap.get(id);
-      if (typeof value !== "string") {
-        throw new Error(`Cached string ID ${id} does not refer to a string`);
-      }
-      return value;
-    }
-
     const str = this.strBuf.substring(this.strOffset, this.strOffset + len);
     this.strOffset += len;
     return str;

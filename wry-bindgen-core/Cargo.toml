@@ -1,0 +1,15 @@
+[package]
+name = "wry-bindgen-core"
+version = "0.1.0"
+edition = "2024"
+description = "Stable runtime-support boundary consumed by wry-bindgen"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
+
+[dependencies]
+wry-bindgen-abi = { path = "../wry-bindgen-abi", version = "0.1.0" }
+wry-bindgen-runtime = { path = "../wry-bindgen-runtime", version = "0.1.0" }
+once_cell = { version = "1.21.3", features = ["critical-section"] }
+
+[lints]
+workspace = true

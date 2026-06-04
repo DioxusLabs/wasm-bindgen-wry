@@ -33,6 +33,7 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
 
     // First generate the module for inline_js or module attribute if needed
     let mut prefix = String::new();
+    let mut module_ident = None;
 
     // Determine the module content expression: either inline_js or include_str!(module_path)
     let module_content: Option<(proc_macro2::Span, TokenStream)> = if let Some((
@@ -59,20 +60,15 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
 
             s.hash_one(content_expr.to_string())
         };
-        let unique_ident = format_ident!("__WRY_BINDGEN_INLINE_JS_MODULE_HASH_{}", unique_hash);
-        // Create a static and submit it to the inventory
+        let unique_ident = format_ident!("__WRY_BINDGEN_JS_MODULE_{}", unique_hash);
+        // Create a shared module spec for all generated functions in this extern block.
         tokens.extend(quote_spanned! {span=>
-            static #unique_ident: u64 = {
-                static __WRY_BINDGEN_INLINE_JS_MODULE: #krate::__rt::InlineJsModule = #krate::__rt::InlineJsModule::new(
-                    #content_expr
-                );
-                #krate::__rt::inventory::submit! {
-                    __WRY_BINDGEN_INLINE_JS_MODULE
-                }
-                __WRY_BINDGEN_INLINE_JS_MODULE.const_hash()
-            };
+            static #unique_ident: #krate::__rt::JsModuleSpec = #krate::__rt::JsModuleSpec::new(
+                #content_expr
+            );
         });
-        prefix = format!("module_{{{unique_ident}:x}}.");
+        prefix = "{__wry_module}.".to_string();
+        module_ident = Some(unique_ident);
     }
 
     // Collect type names being defined in this block
@@ -98,10 +94,15 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
             )
         })
         .collect();
-
     // Generate type definitions
     for ty in &program.types {
-        tokens.extend(generate_type(ty, krate)?);
+        let type_module = if module_ident.is_some() {
+            module_ident.as_ref()
+        } else {
+            None
+        };
+        let type_prefix = if module_ident.is_some() { &prefix } else { "" };
+        tokens.extend(generate_type(ty, krate, type_module, type_prefix)?);
     }
 
     // Generate function definitions
@@ -112,13 +113,14 @@ pub fn generate(program: &Program) -> syn::Result<TokenStream> {
             &type_generics,
             &vendor_prefixes,
             krate,
+            module_ident.as_ref(),
             &prefix,
         )?);
     }
 
     // Generate static definitions
     for st in &program.statics {
-        tokens.extend(generate_static(st, krate, &prefix)?);
+        tokens.extend(generate_static(st, krate, module_ident.as_ref(), &prefix)?);
     }
 
     // Generate string enum definitions

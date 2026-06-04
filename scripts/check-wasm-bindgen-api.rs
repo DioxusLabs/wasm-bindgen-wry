@@ -53,6 +53,12 @@ const IGNORED_DERIVE_TRAITS: &[&str] = &[
 // field). A `constructible_struct_adds_private_field` finding for one of these is ignored.
 const IGNORED_CONSTRUCTIBLE_TYPES: &[&str] = &["JsThreadLocal"];
 
+// Types still re-exported by `wry-bindgen` but defined in support crates.
+// cargo-semver-checks reports these as missing because it resolves the defining crate
+// rather than the re-exported import path.
+const IGNORED_RELOCATED_STRUCTS: &[&str] =
+    &["wry_bindgen::Clamped", "wry_bindgen::JsThreadLocal"];
+
 #[derive(Debug)]
 struct Error(String);
 
@@ -588,7 +594,7 @@ fn run_semver_checks(repo_root: &Path, baseline_root: &Path, target: Option<&str
     if suppressed > 0 {
         println!(
             "note: ignored {suppressed} known intentional difference(s): wasm-ABI-trait derives \
-             (convert/describe) and JsThreadLocal's private fields."
+             (convert/describe), JsThreadLocal's private fields, and relocated re-exports."
         );
     }
 
@@ -698,6 +704,7 @@ fn ignored_finding_predicate(lint: &str) -> Option<fn(&str) -> bool> {
     match lint {
         "derive_trait_impl_removed" => Some(is_ignored_derive_failure),
         "constructible_struct_adds_private_field" => Some(is_ignored_constructible_field),
+        "struct_missing" => Some(is_ignored_relocated_struct),
         _ => None,
     }
 }
@@ -725,6 +732,16 @@ fn is_ignored_constructible_field(line: &str) -> bool {
     };
     let type_name = rest.split('.').next().unwrap_or("");
     IGNORED_CONSTRUCTIBLE_TYPES.contains(&type_name)
+}
+
+/// Whether a `Failed in:` detail line is a struct that remains re-exported from
+/// `wry-bindgen` but now has its ABI implementation in `wry-bindgen-abi`.
+fn is_ignored_relocated_struct(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix("struct ") else {
+        return false;
+    };
+    let type_name = rest.split(',').next().unwrap_or("");
+    IGNORED_RELOCATED_STRUCTS.contains(&type_name)
 }
 
 struct TempDir {
@@ -758,7 +775,7 @@ impl Drop for TempDir {
 mod tests {
     use super::{
         filter_ignored_failures, hide_convert_module_text, is_ignored_constructible_field,
-        is_ignored_derive_failure, rename_package_text,
+        is_ignored_derive_failure, is_ignored_relocated_struct, rename_package_text,
     };
 
     #[test]
@@ -786,6 +803,19 @@ mod tests {
         // A different type's added private field stays a failure.
         assert!(!is_ignored_constructible_field(
             "  field SomeOther.inner in /p/x.rs:1"
+        ));
+    }
+
+    #[test]
+    fn detects_ignored_relocated_struct() {
+        assert!(is_ignored_relocated_struct(
+            "  struct wry_bindgen::Clamped, previously in file /p/src/lib.rs:1742"
+        ));
+        assert!(is_ignored_relocated_struct(
+            "  struct wry_bindgen::JsThreadLocal, previously in file /p/src/lib.rs:1742"
+        ));
+        assert!(!is_ignored_relocated_struct(
+            "  struct wry_bindgen::JsValue, previously in file /p/src/lib.rs:1742"
         ));
     }
 
@@ -840,6 +870,20 @@ Failed in:
         assert_eq!(suppressed, 2);
         assert_eq!(remaining, 0);
         assert!(!out.contains("constructible_struct_adds_private_field"));
+    }
+
+    #[test]
+    fn drops_struct_missing_block_for_ignored_reexport() {
+        let input = "\
+--- failure struct_missing: pub struct removed or renamed ---
+
+Failed in:
+  struct wry_bindgen::Clamped, previously in file /p/src/lib.rs:1742
+";
+        let (out, suppressed, remaining) = filter_ignored_failures(input);
+        assert_eq!(suppressed, 1);
+        assert_eq!(remaining, 0);
+        assert!(!out.contains("struct_missing"));
     }
 
     #[test]

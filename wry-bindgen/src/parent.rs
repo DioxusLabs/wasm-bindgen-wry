@@ -1,6 +1,6 @@
 //! Shared parent storage for generated extended Rust types.
 
-use crate::{Ref, RefMut};
+use crate::__rt::{Ref, RefMut};
 
 /// Storage wrapper for the auto-injected parent field on extended Rust types.
 pub struct Parent<T> {

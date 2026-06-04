@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{ImportFunction, ImportFunctionKind};
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote_spanned};
 
-use super::common::{clippy_allows, extract_result_ok_type, is_unit_type};
+use super::common::{
+    clippy_allows, extract_result_ok_type, generate_wry_call_js_function, is_unit_type,
+};
 use super::erasure::{
     GeneratedArgs, GenericEraseContext, add_js_call_bounds, add_js_call_bounds_to_generics,
     collect_constraining_type_params, generate_args, receiver_impl_type, split_method_generics,
@@ -17,6 +19,7 @@ pub(super) fn generate_function(
     type_generics: &HashMap<String, syn::Generics>,
     vendor_prefixes: &std::collections::HashMap<String, Vec<String>>,
     krate: &TokenStream,
+    module: Option<&Ident>,
     prefix: &str,
 ) -> syn::Result<TokenStream> {
     let vis = &func.vis;
@@ -44,7 +47,7 @@ pub(super) fn generate_function(
     if func.is_async {
         let js_code_str = generate_js_code(func, vendor_prefixes, prefix, true);
         let js_code_str = async_promise_guard_js_code(&js_code_str);
-        return generate_async_function(func, type_generics, krate, &js_code_str, &args);
+        return generate_async_function(func, type_generics, krate, module, &js_code_str, &args);
     }
 
     // For non-async functions, generate a simple closure that returns a constant string
@@ -66,12 +69,16 @@ pub(super) fn generate_function(
         .as_ref()
         .is_some_and(|ty| erase.type_uses_erased_params(ty))
     {
+        let js_call = generate_wry_call_js_function(
+            krate,
+            module,
+            &js_code_str,
+            quote_spanned! {span=> fn(#(#fn_types),*) -> #call_ret_type },
+            quote_spanned! {span=> (#(#call_values),*) },
+            span,
+        );
         quote_spanned! {span=>
-            let __wry_ret = #krate::__wry_call_js_function!(
-                #js_code_str,
-                fn(#(#fn_types),*) -> #call_ret_type,
-                (#(#call_values),*)
-            );
+            let __wry_ret = #js_call;
             unsafe {
                 ::core::mem::transmute_copy(
                     &::core::mem::ManuallyDrop::new(__wry_ret)
@@ -79,8 +86,16 @@ pub(super) fn generate_function(
             }
         }
     } else {
+        let js_call = generate_wry_call_js_function(
+            krate,
+            module,
+            &js_code_str,
+            quote_spanned! {span=> fn(#(#fn_types),*) -> #call_ret_type },
+            quote_spanned! {span=> (#(#call_values),*) },
+            span,
+        );
         quote_spanned! {span=>
-            #krate::__wry_call_js_function!(#js_code_str, fn(#(#fn_types),*) -> #call_ret_type, (#(#call_values),*))
+            #js_call
         }
     };
 
@@ -234,6 +249,7 @@ fn generate_async_function(
     func: &ImportFunction,
     type_generics: &HashMap<String, syn::Generics>,
     krate: &TokenStream,
+    module: Option<&Ident>,
     js_code_str: &str,
     args: &GeneratedArgs,
 ) -> syn::Result<TokenStream> {
@@ -247,13 +263,17 @@ fn generate_async_function(
     let fn_params = &args.fn_params;
     let fn_types = &args.fn_type_list;
     let call_values = &args.call_value_list;
+    let js_call = generate_wry_call_js_function(
+        krate,
+        module,
+        js_code_str,
+        quote_spanned! {span=> fn(#(#fn_types),*) -> ::js_sys::Promise },
+        quote_spanned! {span=> (#(#call_values),*) },
+        span,
+    );
     let async_body = quote_spanned! {span=>
         {
-            let __wry_promise = #krate::__wry_call_js_function!(
-                #js_code_str,
-                fn(#(#fn_types),*) -> ::js_sys::Promise,
-                (#(#call_values),*)
-            );
+            let __wry_promise = #js_call;
             ::wasm_bindgen_futures::JsFuture::from(__wry_promise).await
         }
     };

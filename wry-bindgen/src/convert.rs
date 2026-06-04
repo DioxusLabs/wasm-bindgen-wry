@@ -3,9 +3,8 @@
 //! These traits provide compatibility with code that uses wasm-bindgen's
 //! low-level ABI conversion types.
 
+use crate::__rt::{BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, JsRef};
 use crate::JsValue;
-use crate::batch::with_runtime;
-use crate::encode::{BinaryDecode, BinaryEncode, EncodeTypeDef};
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
 
@@ -109,9 +108,9 @@ where
 {
     #[inline]
     fn into_abi_id(self) -> u32 {
-        let id = self.as_ref().id();
+        let id = self.as_ref().js_ref().into_abi();
         core::mem::forget(self);
-        id as u32
+        id
     }
 }
 
@@ -121,7 +120,7 @@ where
 {
     #[inline]
     unsafe fn from_abi_id(js: u32) -> Self {
-        T::unchecked_from_js(JsValue::from_id(js as u64))
+        T::unchecked_from_js(JsValue::from_ref(JsRef::from_abi(js)))
     }
 }
 
@@ -141,7 +140,6 @@ pub trait TryFromJsValue: Sized {
     fn try_from_js_value_ref(value: &JsValue) -> Option<Self>;
 }
 
-use crate::ipc::{DecodeError, DecodedData};
 use crate::{__rt::marker::ErasableGeneric, JsCast};
 use core::marker::PhantomData;
 
@@ -388,10 +386,11 @@ pub trait JsGeneric:
     + Upcast<Self>
     + Upcast<JsValue>
     + JsCast
-    + crate::encode::EncodeTypeDef
-    + crate::encode::BinaryEncode
-    + crate::encode::BinaryDecode
-    + crate::encode::BatchableResult
+    + crate::__rt::JsRefEncode
+    + crate::__rt::EncodeTypeDef
+    + crate::__rt::BinaryEncode
+    + crate::__rt::BinaryDecode
+    + crate::__rt::BatchableResult
     + 'static
 {
 }
@@ -401,10 +400,11 @@ impl<T> JsGeneric for T where
         + UpcastFrom<T>
         + Upcast<JsValue>
         + JsCast
-        + crate::encode::EncodeTypeDef
-        + crate::encode::BinaryEncode
-        + crate::encode::BinaryDecode
-        + crate::encode::BatchableResult
+        + crate::__rt::JsRefEncode
+        + crate::__rt::EncodeTypeDef
+        + crate::__rt::BinaryEncode
+        + crate::__rt::BinaryDecode
+        + crate::__rt::BatchableResult
         + 'static
 {
 }
@@ -473,9 +473,8 @@ impl<T: JsCast + 'static> RefFromBinaryDecode for T {
     fn ref_decode(_decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
         // For borrowed refs, we use the borrow stack (indices 1-127) instead of heap IDs.
         // JS puts the value on its borrow stack without sending an ID, so we sync by
-        // getting the next borrow ID from our batch state.
-        let id = with_runtime(|runtime| runtime.get_next_borrow_id());
-        let value = JsValue::from_id(id);
+        // taking the next borrowed ref from the runtime.
+        let value = JsValue::from_ref(wry_bindgen_core::with_runtime(|rt| rt.next_borrowed_ref()));
         Ok(JsCastAnchor {
             value,
             _marker: PhantomData,

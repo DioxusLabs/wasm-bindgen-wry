@@ -159,8 +159,8 @@ export function is_error(x: any): boolean {
 // Heap management - clone a value in the JS heap
 // Returns the value itself. HeapRefType.encode handles inserting it and
 // encoding the assigned ID when this is returned to Rust.
-export function clone_heap_ref(heapId: number): unknown {
-  return window.jsHeap.get(heapId);
+export function clone_heap_ref(value: unknown): unknown {
+  return value;
 }
 
 // Heap management - drop a value from the JS heap

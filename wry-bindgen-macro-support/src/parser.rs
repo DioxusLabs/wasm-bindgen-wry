@@ -333,7 +333,7 @@ impl Parse for BindgenAttr {
                 Ok(BindgenAttr::Module(span, path))
             }
 
-            "crate" => {
+            "crate" | "wasm_bindgen" => {
                 input.parse::<Token![=]>()?;
                 // Handle `crate` keyword specially since it's not a valid Path
                 let path = if input.peek(Token![crate]) {
@@ -548,7 +548,10 @@ pub fn parse_attrs(attr: TokenStream) -> syn::Result<BindgenAttrs> {
             }
             BindgenAttr::Crate(span, path) => {
                 if result.crate_path.is_some() {
-                    return Err(syn::Error::new(span, "duplicate `crate` attribute"));
+                    return Err(syn::Error::new(
+                        span,
+                        "duplicate `crate`/`wasm_bindgen` attribute",
+                    ));
                 }
                 result.crate_path = Some((span, path));
             }

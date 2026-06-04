@@ -1,9 +1,10 @@
 use wasm_bindgen::{
-    JsError, JsValue, Promising,
+    JsCast, JsError, JsValue,
     convert::{
         FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi, RefFromWasmAbi,
         TryFromJsValue, WasmAbi,
     },
+    sys::{JsOption, Promising},
     wasm_bindgen,
 };
 
@@ -83,7 +84,6 @@ pub(crate) fn test_interned_string_roundtrip() {
 
     let interned = wasm_bindgen::intern("cached string");
     assert_eq!(api_echo_string(interned), "cached string");
-
     wasm_bindgen::unintern("cached string");
     assert_eq!(api_echo_string("cached string"), "cached string");
 }
@@ -302,4 +302,46 @@ pub(crate) fn test_try_from_js_value_signed_numbers_preserve_negative_values() {
         <Vec<i32> as TryFromJsValue>::try_from_js_value(api_signed_i32_array()).unwrap(),
         vec![-1, -2, i32::MIN, i32::MAX]
     );
+}
+
+pub(crate) fn test_js_option_custom_cast_semantics() {
+    #[wasm_bindgen(inline_js = r#"
+        export function api_null_value() {
+            return null;
+        }
+
+        export function api_undefined_value() {
+            return undefined;
+        }
+
+        export function api_array_value() {
+            return [11, 22];
+        }
+    "#)]
+    extern "C" {
+        fn api_null_value() -> JsValue;
+        fn api_undefined_value() -> JsValue;
+        fn api_array_value() -> JsValue;
+    }
+
+    let null_option = api_null_value()
+        .dyn_into::<JsOption<js_sys::Array>>()
+        .expect("null should cast to JsOption<T>");
+    assert!(null_option.is_empty());
+
+    let undefined_option = api_undefined_value()
+        .dyn_into::<JsOption<js_sys::Array>>()
+        .expect("undefined should cast to JsOption<T>");
+    assert!(undefined_option.is_empty());
+
+    let array_option = api_array_value()
+        .dyn_into::<JsOption<js_sys::Array>>()
+        .expect("array should cast to JsOption<Array>");
+    assert_eq!(array_option.length(), 2);
+    assert!(array_option.as_option().is_some());
+
+    let try_from_null =
+        <JsOption<js_sys::Array> as TryFromJsValue>::try_from_js_value(JsValue::NULL)
+            .expect("TryFromJsValue should accept null");
+    assert!(try_from_null.is_empty());
 }

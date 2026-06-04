@@ -1,23 +1,30 @@
 //! Runtime compatibility hooks used by generated wasm-bindgen-style code.
 
-use crate::{
-    __wry_submit_js_function, JsValue,
-    encode::{BatchableResult, BinaryEncode, EncodeTypeDef},
-};
+use crate::{__wry_submit_js_function, JsValue};
 
 #[doc(hidden)]
-pub use crate::batch::Runtime;
-#[doc(hidden)]
-pub use crate::encode::TypeTag;
-#[doc(hidden)]
-pub use crate::function_registry::{
-    InlineJsModule, JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunctionSpec,
-    LazyJsFunction,
+pub use crate::encode::{
+    BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef, JsRef, JsRefEncode, TypeDef,
 };
+#[doc(hidden)]
+pub use crate::ipc::{DecodeError, DecodedData, EncodedData};
+#[doc(hidden)]
+pub use crate::js_helpers::js_dispose_rust_function as dispose_rust_function;
+#[doc(hidden)]
+pub use crate::js_helpers::js_drop_heap_ref as drop_heap_ref;
 #[doc(hidden)]
 pub use crate::js_helpers::js_extract_rust_handle as extract_rust_handle;
 #[doc(hidden)]
 pub use inventory;
+#[doc(hidden)]
+pub use wry_bindgen_core::RustCallback;
+#[doc(hidden)]
+pub use wry_bindgen_core::{CallbackKey, Runtime};
+#[doc(hidden)]
+pub use wry_bindgen_core::{
+    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunctionSpec, JsModuleSpec,
+    JsFunction,
+};
 
 #[doc(hidden)]
 pub mod object_store {
@@ -138,11 +145,19 @@ pub mod marker {
 pub fn wbg_cast<From, To>(value: From) -> To
 where
     From: BinaryEncode + EncodeTypeDef,
-    To: BatchableResult + EncodeTypeDef,
+    To: BatchableResult + EncodeTypeDef + 'static,
 {
-    let func: LazyJsFunction<fn(From) -> To> = __wry_submit_js_function!("(a0) => a0");
+    let func: JsFunction<fn(From) -> To> = __wry_submit_js_function!("(a0) => a0");
     func.call(value)
 }
+
+#[doc(hidden)]
+pub fn set_on_abort(_f: fn()) -> Option<fn()> {
+    None
+}
+
+#[doc(hidden)]
+pub fn schedule_reinit() {}
 
 /// Convert a panic value into a JsValue error.
 ///

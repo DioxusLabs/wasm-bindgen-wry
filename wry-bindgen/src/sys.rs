@@ -1,123 +1,117 @@
 //! JavaScript system value wrappers and promise compatibility traits.
 
-use core::{fmt, marker::PhantomData, ops::Deref};
+use core::fmt;
 
 use crate::{
-    __rt::marker::ErasableGeneric, IntoJsGeneric, JsCast, JsError, JsGeneric, JsValue,
-    convert::UpcastFrom,
+    __rt::marker::ErasableGeneric, JsCast, JsError, JsGeneric, JsValue, convert::UpcastFrom,
 };
+use wry_bindgen_macro::wasm_bindgen;
 
 /// Marker trait for values that are either a resolution value or a promise-like value.
 pub trait Promising {
     type Resolution;
 }
 
-macro_rules! js_primitive {
-        ($name:ident, $const_name:ident, $value:expr, $display:literal, $check:expr) => {
-            #[derive(Clone, PartialEq)]
-            #[repr(transparent)]
-            pub struct $name {
-                pub obj: JsValue,
-            }
+#[wasm_bindgen(wasm_bindgen = crate)]
+extern "C" {
+    /// The JavaScript `undefined` value.
+    ///
+    /// This type represents the JavaScript `undefined` primitive value and can be
+    /// used as a generic type parameter to indicate that a value is `undefined`.
+    #[wasm_bindgen(is_type_of = JsValue::is_undefined, typescript_type = "undefined", no_upcast)]
+    #[derive(Clone, PartialEq)]
+    pub type Undefined;
+}
 
-            impl $name {
-                pub const $const_name: $name = Self { obj: $value };
-            }
+impl Undefined {
+    /// The undefined constant.
+    pub const UNDEFINED: Undefined = Self {
+        obj: JsValue::UNDEFINED,
+    };
+}
 
-            impl Eq for $name {}
+impl Eq for Undefined {}
 
-            impl Default for $name {
-                fn default() -> Self {
-                    Self::$const_name
-                }
-            }
-
-            impl fmt::Debug for $name {
-                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    f.write_str($display)
-                }
-            }
-
-            impl fmt::Display for $name {
-                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    f.write_str($display)
-                }
-            }
-
-            impl AsRef<JsValue> for $name {
-                fn as_ref(&self) -> &JsValue {
-                    &self.obj
-                }
-            }
-
-            impl From<$name> for JsValue {
-                fn from(value: $name) -> JsValue {
-                    value.obj
-                }
-            }
-
-            impl From<JsValue> for $name {
-                fn from(obj: JsValue) -> Self {
-                    Self { obj }
-                }
-            }
-
-            impl JsCast for $name {
-                fn instanceof(value: &JsValue) -> bool {
-                    $check(value)
-                }
-
-                fn is_type_of(value: &JsValue) -> bool {
-                    $check(value)
-                }
-
-                fn unchecked_from_js(value: JsValue) -> Self {
-                    Self { obj: value }
-                }
-
-                fn unchecked_from_js_ref(value: &JsValue) -> &Self {
-                    unsafe { &*(value as *const JsValue as *const Self) }
-                }
-            }
-
-            impl_js_value_wire!(for $name, field obj);
-
-            unsafe impl crate::__rt::marker::ErasableGeneric for $name {
-                type Repr = JsValue;
-            }
-
-            impl IntoJsGeneric for $name {
-                type JsCanon = Self;
-
-                fn to_js(self) -> Self {
-                    self
-                }
-            }
-
-            impl UpcastFrom<$name> for $name {}
-            impl UpcastFrom<$name> for JsValue {}
-        };
+impl Default for Undefined {
+    fn default() -> Self {
+        Self::UNDEFINED
     }
+}
 
-js_primitive!(
-    Undefined,
-    UNDEFINED,
-    JsValue::UNDEFINED,
-    "undefined",
-    JsValue::is_undefined
-);
-js_primitive!(Null, NULL, JsValue::NULL, "null", JsValue::is_null);
+impl fmt::Debug for Undefined {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("undefined")
+    }
+}
 
+impl fmt::Display for Undefined {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("undefined")
+    }
+}
+
+#[wasm_bindgen(wasm_bindgen = crate)]
+extern "C" {
+    /// The JavaScript `null` value.
+    ///
+    /// This type represents the JavaScript `null` primitive value and can be
+    /// used as a generic type parameter to indicate that a value is `null`.
+    #[wasm_bindgen(is_type_of = JsValue::is_null, typescript_type = "null", no_upcast)]
+    #[derive(Clone, PartialEq)]
+    pub type Null;
+}
+
+impl Null {
+    /// The null constant.
+    pub const NULL: Null = Self { obj: JsValue::NULL };
+}
+
+impl Eq for Null {}
+
+impl Default for Null {
+    fn default() -> Self {
+        Self::NULL
+    }
+}
+
+impl fmt::Debug for Null {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("null")
+    }
+}
+
+impl fmt::Display for Null {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("null")
+    }
+}
+
+impl UpcastFrom<Undefined> for Undefined {}
 impl UpcastFrom<()> for Undefined {}
 impl UpcastFrom<Undefined> for () {}
+impl UpcastFrom<Undefined> for JsValue {}
+impl UpcastFrom<Null> for Null {}
+impl UpcastFrom<Null> for JsValue {}
 impl UpcastFrom<()> for JsValue {}
 impl UpcastFrom<()> for () {}
 
-#[derive(Clone, PartialEq)]
-#[repr(transparent)]
-pub struct JsOption<T = JsValue> {
-    pub obj: JsValue,
-    pub generics: PhantomData<fn() -> T>,
+#[wasm_bindgen(wasm_bindgen = crate)]
+extern "C" {
+    /// A nullable JS value of type `T`.
+    ///
+    /// Unlike `Option<T>`, which is a Rust-side construct, `JsOption<T>` represents
+    /// a JS value that may be `T`, `null`, or `undefined`, where the null status is
+    /// not yet known in Rust. The value remains in JS until inspected via methods
+    /// like [`is_empty`](Self::is_empty), [`as_option`](Self::as_option), or
+    /// [`into_option`](Self::into_option).
+    ///
+    /// `T` must implement [`JsGeneric`], meaning it is any type that can be
+    /// represented as a `JsValue` (e.g., `JsString`, `Number`, `Object`, etc.).
+    /// `JsOption<T>` itself implements `JsGeneric`, so it can be used in all
+    /// generic positions that accept JS types.
+    #[wasm_bindgen(typescript_type = "any", no_upcast)]
+    #[derive(Clone, PartialEq)]
+    pub type JsOption<T = JsValue>;
 }
 
 impl<T: JsGeneric> JsOption<T> {
@@ -141,7 +135,7 @@ impl<T: JsGeneric> JsOption<T> {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.obj.is_null() || self.obj.is_undefined()
+        AsRef::<JsValue>::as_ref(self).is_null_or_undefined()
     }
 
     #[inline]
@@ -149,7 +143,7 @@ impl<T: JsGeneric> JsOption<T> {
         if self.is_empty() {
             None
         } else {
-            Some(T::unchecked_from_js(self.obj.clone()))
+            Some(T::unchecked_from_js(AsRef::<JsValue>::as_ref(self).clone()))
         }
     }
 
@@ -217,63 +211,6 @@ impl<T: JsGeneric + fmt::Display> fmt::Display for JsOption<T> {
             None => f.write_str("null")?,
         }
         f.write_str(")")
-    }
-}
-
-impl<T> AsRef<JsValue> for JsOption<T> {
-    fn as_ref(&self) -> &JsValue {
-        &self.obj
-    }
-}
-
-impl<T: JsGeneric> Deref for JsOption<T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        T::unchecked_from_js_ref(&self.obj)
-    }
-}
-
-impl<T> From<JsOption<T>> for JsValue {
-    fn from(value: JsOption<T>) -> JsValue {
-        value.obj
-    }
-}
-
-impl<T> From<JsValue> for JsOption<T> {
-    fn from(obj: JsValue) -> Self {
-        Self {
-            obj,
-            generics: PhantomData,
-        }
-    }
-}
-
-impl<T: JsGeneric> JsCast for JsOption<T> {
-    fn instanceof(value: &JsValue) -> bool {
-        T::is_type_of(value) || value.is_null() || value.is_undefined()
-    }
-
-    fn unchecked_from_js(value: JsValue) -> Self {
-        value.into()
-    }
-
-    fn unchecked_from_js_ref(value: &JsValue) -> &Self {
-        unsafe { &*(value as *const JsValue as *const Self) }
-    }
-}
-
-impl_js_value_wire!(impl<T> for JsOption<T>, field obj);
-
-unsafe impl<T> crate::__rt::marker::ErasableGeneric for JsOption<T> {
-    type Repr = JsValue;
-}
-
-impl<T: JsGeneric> IntoJsGeneric for JsOption<T> {
-    type JsCanon = Self;
-
-    fn to_js(self) -> Self {
-        self
     }
 }
 
