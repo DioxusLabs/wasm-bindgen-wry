@@ -4,8 +4,8 @@ Date: Fri, 29 May 2026 10:56:07 -0500
 Subject: [PATCH 1/4] Prepare root workspace for wry patching
 
 ---
- Cargo.toml | 57 +++++++++++-------------------------------------------
- 1 file changed, 11 insertions(+), 46 deletions(-)
+ Cargo.toml | 59 +++++++++++++-----------------------------------------
+ 1 file changed, 13 insertions(+), 46 deletions(-)
 
 diff --git a/Cargo.toml b/Cargo.toml
 index cc5ca3aaa..1cd28e0c5 100644
@@ -20,7 +20,7 @@ index cc5ca3aaa..1cd28e0c5 100644
  readme = "README.md"
  repository = "https://github.com/wasm-bindgen/wasm-bindgen"
  rust-version = "1.77"
-@@ -93,58 +93,23 @@ type_complexity = "allow"
+@@ -93,58 +93,25 @@ type_complexity = "allow"
  uninlined_format_args = "warn"
  
  [workspace]
@@ -80,6 +80,8 @@ index cc5ca3aaa..1cd28e0c5 100644
 +  "crates/js-sys",
 +  "crates/web-sys",
 +  "crates/futures",
++  "crates/test-macro",
++  "crates/test-shared",
 +]
  resolver = "2"
 -
