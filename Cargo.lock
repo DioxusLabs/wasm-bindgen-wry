@@ -6230,8 +6230,6 @@ dependencies = [
 [[package]]
 name = "web-sys"
 version = "0.3.99"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d621441cfc37b84979402712047321980c178f299193a3589d05b99e8763436"
 dependencies = [
  "js-sys",
  "wasm-bindgen 0.2.122",
