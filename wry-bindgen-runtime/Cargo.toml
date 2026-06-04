@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 
 [dependencies]
+atomic-waker = "1.1.2"
 base64 = "0.22"
 http = "1.4.0"
 inventory = "0.3.21"

@@ -13597,7 +13597,7 @@ pub fn global() -> Object {
     #[cfg(not(target_arch = "wasm32"))]
     {
         static GLOBAL: wasm_bindgen::JsThreadLocal<Object> =
-            wasm_bindgen::JsThreadLocal::new(get_global_object, 0);
+            wasm_bindgen::JsThreadLocal::new(get_global_object);
 
         return GLOBAL.with(Clone::clone);
     }

@@ -24,7 +24,9 @@ pub use batch::{
     Runtime, queue_rust_object_drop, run_js_sync, try_queue_js_dispose_rust_function,
     try_queue_js_drop, try_queue_rust_object_drop, with_runtime,
 };
-pub use wry::{AppBuilder, ProtocolHandler, WryBindgen, WryBindgenEvent, WryBindgenResponder};
+pub use wry::{
+    ProtocolHandler, WryBindgen, WryBindgenDriver, WryBindgenRuntime, WryBindgenWebviewDriver,
+};
 pub use wry_bindgen_abi::BinaryDecode;
 
 mod encode {

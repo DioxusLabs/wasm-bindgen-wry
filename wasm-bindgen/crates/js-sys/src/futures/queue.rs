@@ -133,7 +133,7 @@ impl Queue {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
         static QUEUE: wasm_bindgen::JsThreadLocal<Queue> =
-            wasm_bindgen::JsThreadLocal::new(Queue::new, 0);
+            wasm_bindgen::JsThreadLocal::new(Queue::new);
 
         QUEUE.with(f)
     }

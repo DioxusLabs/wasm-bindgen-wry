@@ -70,30 +70,11 @@ pub struct Runtime {
     /// The ipc layer used to communicate with the JS runtime
     ipc: WryIPC,
     /// Thread locals associated with the runtime
-<<<<<<< /tmp/ours_batch.rs
     thread_locals: BTreeMap<*const (), Box<dyn Any>>,
-||||||| /tmp/base_batch.rs
-    thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
-    /// How many JS→Rust callbacks (inbound Evaluates) are currently executing
-    /// on the stack. Zero means any outbound Evaluate is a fresh top-level call
-    /// from the app future; non-zero means it is a nested response inside a
-    /// callback and must travel back through the parked JS XHR.
-    inbound_evaluate_depth: u32,
-=======
-    thread_locals: BTreeMap<ThreadLocalKey<'static>, Box<dyn Any>>,
->>>>>>> /tmp/theirs_batch.rs
 }
 
 impl Runtime {
-<<<<<<< /tmp/ours_batch.rs
     pub(crate) fn new(ipc: WryIPC) -> Self {
-||||||| /tmp/base_batch.rs
-    pub(crate) fn new(ipc: WryIPC, webview_id: u64) -> Self {
-        let encoder = Self::new_encoder_for_evaluate();
-=======
-    pub(crate) fn new(ipc: WryIPC) -> Self {
-        let encoder = Self::new_encoder_for_evaluate();
->>>>>>> /tmp/theirs_batch.rs
         Self {
             encoder: EncodedParts::default(),
             encoder_has_pending_ops: false,
@@ -113,52 +94,13 @@ impl Runtime {
         }
     }
 
-<<<<<<< /tmp/ours_batch.rs
     /// Get a reference to the IPC layer.
     pub(crate) fn ipc(&self) -> &WryIPC {
         &self.ipc
-||||||| /tmp/base_batch.rs
-    /// Mark that a JS→Rust callback (inbound Evaluate) has started executing.
-    pub(crate) fn enter_inbound_evaluate(&mut self) {
-        self.inbound_evaluate_depth += 1;
-    }
-
-    /// Mark that a JS→Rust callback has finished executing.
-    pub(crate) fn leave_inbound_evaluate(&mut self) {
-        self.inbound_evaluate_depth -= 1;
-    }
-
-    /// Whether we are currently executing inside a JS→Rust callback. When true,
-    /// outbound Evaluates are nested responses to the parked JS XHR rather than
-    /// fresh top-level calls.
-    fn in_inbound_evaluate(&self) -> bool {
-        self.inbound_evaluate_depth > 0
-    }
-
-    fn new_encoder_for_evaluate() -> EncodedData {
-        let mut encoder = EncodedData::new();
-        encoder.push_u8(MessageType::Evaluate as u8);
-        encoder
-    }
-
-    /// Record a JS-allocated heap ID from a response.
-    pub fn observe_js_heap_id(&mut self, id: u64) {
-        self.heap_ids.observe_js_heap_id(id);
-=======
-    fn new_encoder_for_evaluate() -> EncodedData {
-        let mut encoder = EncodedData::default();
-        encoder.push_u8(MessageType::Evaluate as u8);
-        encoder
-    }
-
-    /// Get a reference to the IPC layer.
-    pub(crate) fn ipc(&self) -> &WryIPC {
-        &self.ipc
->>>>>>> /tmp/theirs_batch.rs
     }
 
     /// Get the next heap ID for a return value placeholder.
-    pub(crate) fn get_next_placeholder_id(&mut self) -> u64 {
+    pub fn get_next_placeholder_id(&mut self) -> u64 {
         self.heap_ids.next_placeholder_id()
     }
 
@@ -171,7 +113,7 @@ impl Runtime {
     /// Get the next borrow ID from the borrow stack (indices 1-127).
     /// The borrow stack grows downward from JSIDX_OFFSET (128) toward 1.
     /// Panics if the borrow stack overflows (more than 127 borrowed refs in one operation).
-    pub(crate) fn get_next_borrow_id(&mut self) -> u64 {
+    pub fn get_next_borrow_id(&mut self) -> u64 {
         self.borrow_ids.next_borrow_id()
     }
 
@@ -209,17 +151,9 @@ impl Runtime {
         self.heap_ids.recycle_heap_id_if_released(id)
     }
 
-<<<<<<< /tmp/ours_batch.rs
     pub(crate) fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
         self.heap_ids_to_recycle_after_flush
             .push(JsRef::from_raw(id));
-||||||| /tmp/base_batch.rs
-    pub fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
-        self.encoder.defer_heap_id_recycle_until_flush(id);
-=======
-    pub(crate) fn defer_heap_id_recycle_until_flush(&mut self, id: u64) {
-        self.encoder.defer_heap_id_recycle_until_flush(id);
->>>>>>> /tmp/theirs_batch.rs
     }
 
     /// Take the message data and reset the batch for reuse.
@@ -276,16 +210,7 @@ impl Runtime {
         } else {
             self.type_cache.ack_type_ids(&pending_type_ids);
         }
-<<<<<<< /tmp/ours_batch.rs
         encoder.into_message(message_type, &prelude)
-||||||| /tmp/base_batch.rs
-        // Only Evaluates (reserved_ids is Some) can be top-level; they are
-        // top-level exactly when no callback is currently on the stack.
-        let top_level = reserved_ids.is_some() && !self.in_inbound_evaluate();
-        OutboundIPCMessage::new(crate::ipc::IPCMessage::new(encoder.to_bytes()), top_level)
-=======
-        OutboundIPCMessage::new(crate::ipc::IPCMessage::new(encoder.to_bytes()))
->>>>>>> /tmp/theirs_batch.rs
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -475,7 +400,6 @@ pub fn with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> R {
     })
 }
 
-<<<<<<< /tmp/ours_batch.rs
 /// Run `f` with the active runtime, or return `None` if none is installed or it
 /// is already borrowed — the non-panicking path for `Drop` impls during
 /// teardown.
@@ -487,15 +411,6 @@ fn try_with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> Option<R> {
         })
         .ok()
         .flatten()
-||||||| /tmp/base_batch.rs
-/// Check if we're currently inside a batch() call
-pub fn is_batching() -> bool {
-    with_runtime(|state| state.is_batching())
-=======
-/// Check if we're currently inside a batch() call
-pub(crate) fn is_batching() -> bool {
-    with_runtime(|state| state.is_batching())
->>>>>>> /tmp/theirs_batch.rs
 }
 
 fn runtime_installed() -> bool {
@@ -695,27 +610,14 @@ pub fn force_flush() {
 
 #[cfg(test)]
 mod take_encoder_tests {
+
     use super::*;
-<<<<<<< /tmp/ours_batch.rs
     use crate::ipc::DecodedVariant;
-||||||| /tmp/base_batch.rs
-    use crate::ipc::IPCMessage;
-=======
-    use crate::ipc::{DecodedVariant, IPCMessage};
->>>>>>> /tmp/theirs_batch.rs
     use crate::runtime::WryIPC;
 
     fn test_runtime() -> Runtime {
-<<<<<<< /tmp/ours_batch.rs
-        let (ipc, _senders) = WryIPC::new(Arc::new(|_| {}), 0);
-        Runtime::new(ipc)
-||||||| /tmp/base_batch.rs
-        let (ipc, _senders) = WryIPC::new(Arc::new(|_| {}));
-        Runtime::new(ipc, 0)
-=======
         let (ipc, _senders, _driver_commands) = WryIPC::new();
         Runtime::new(ipc)
->>>>>>> /tmp/theirs_batch.rs
     }
 
     #[test]
@@ -723,23 +625,10 @@ mod take_encoder_tests {
         let mut runtime = test_runtime();
         assert!(runtime.is_empty());
 
-<<<<<<< /tmp/ours_batch.rs
         let (message, _) = runtime.take_message();
         let DecodedVariant::Evaluate { .. } = message.decoded().unwrap() else {
             panic!("expected Evaluate message");
         };
-||||||| /tmp/base_batch.rs
-        let first = runtime.take_encoder();
-        let bytes = IPCMessage::new(first.to_bytes());
-        assert_eq!(bytes.ty().unwrap(), MessageType::Evaluate);
-=======
-        let first = runtime.take_encoder();
-        let bytes = IPCMessage::new(first.to_bytes());
-        assert!(matches!(
-            bytes.decoded().unwrap(),
-            DecodedVariant::Evaluate { .. }
-        ));
->>>>>>> /tmp/theirs_batch.rs
         // The encoder holds only the single message-type byte — no per-message
         // request ID lives on the wire anymore.
     }

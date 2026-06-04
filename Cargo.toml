@@ -1,7 +1,10 @@
 [workspace]
 members = [
     "wry-launch",
+    "wry-bindgen-abi",
+    "wry-bindgen-core",
     "wry-bindgen",
+    "wry-bindgen-runtime",
     "wry-bindgen-macro",
     "wry-bindgen-macro-support",
     "shims/wasm-bindgen-macro",
