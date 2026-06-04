@@ -24,7 +24,7 @@ pub use call::JsFunction;
 pub use callback::CallbackKey;
 pub use clamped::Clamped;
 pub use runtime::{Runtime, with_runtime};
-pub use thread_local::JsThreadLocal;
+pub use thread_local::{JsThreadLocal, LazyCell};
 
 pub use wry_bindgen_runtime::wire::{
     BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData,

@@ -22,7 +22,7 @@ with_runtime(|rt| {
 
 - `JsFunction<F>` — a typed handle to a JavaScript function. `.call(args)` runs the round-trip and returns the typed result.
 - `Runtime` and `with_runtime` — a typed object store: insert a Rust value for an `ObjectHandle`, borrow it back, or remove it.
-- `JsThreadLocal<T>` — typed thread-local JavaScript values, such as the global `window`.
+- `LazyCell<T>` / `JsThreadLocal<T>` — typed runtime-local JavaScript values, such as the global `window`.
 - `CallbackKey<F>` — registers a Rust closure with JavaScript, with Rust-owned, JS-owned, and JS-owned-once policies.
 - `Clamped`, `BatchableResult`, and `RequireFlush` — markers used when encoding arguments and return values.
 

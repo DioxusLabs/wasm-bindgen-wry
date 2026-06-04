@@ -100,17 +100,23 @@ class RustFunction {
     return decoded;
   }
 
-  invalidateFromRust(): void {
+  disposeFromRust(): void {
     if (this.disposed) {
       return;
     }
 
     this.disposed = true;
-    this.dropNativeWhenIdle = false;
-    if (this.finalizerToken) {
-      nativeRefRegistry.unregister(this.finalizerToken);
-      this.finalizerToken = null;
+
+    if (this.dropAfterCall && this.activeCalls !== 0) {
+      if (this.finalizerToken) {
+        nativeRefRegistry.unregister(this.finalizerToken);
+        this.finalizerToken = null;
+      }
+      return;
     }
+
+    this.dropNativeWhenIdle = true;
+    this.dropNativeRefIfIdle();
   }
 
   private dropNativeRefIfIdle(): void {

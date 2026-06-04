@@ -1,10 +1,10 @@
 use wasm_bindgen::{
-    JsCast, JsError, JsValue,
+    JsError, JsValue,
     convert::{
         FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi, RefFromWasmAbi,
         TryFromJsValue, WasmAbi,
     },
-    sys::{JsOption, Promising},
+    sys::Promising,
     wasm_bindgen,
 };
 

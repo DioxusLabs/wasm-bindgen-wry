@@ -2954,7 +2954,6 @@ version = "0.3.99"
 dependencies = [
  "cfg-if",
  "futures-util",
- "once_cell",
  "wasm-bindgen",
 ]
 

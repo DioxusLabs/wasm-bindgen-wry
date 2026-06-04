@@ -54,11 +54,17 @@ impl JsRef {
         crate::batch::drop_js_object(self);
     }
 
+    /// Dispose the JS wrapper for the Rust callback behind this reference.
+    #[inline]
+    pub fn dispose_js_rust_function(self) {
+        crate::batch::dispose_js_rust_function(self);
+    }
+
     /// Mark the JS wrapper for the Rust callback behind this reference as
     /// unusable.
     #[inline]
     pub fn invalidate_js_rust_function(self) {
-        crate::batch::invalidate_js_rust_function(self);
+        crate::batch::dispose_js_rust_function(self);
     }
 
     #[inline]

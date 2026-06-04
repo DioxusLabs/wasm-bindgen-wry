@@ -1,15 +1,14 @@
-//! Lazily-initialized, cached thread-local JavaScript values.
+//! Lazily-initialized, cached runtime-local JavaScript values.
 
 use alloc::boxed::Box;
 use core::mem::ManuallyDrop;
 
 use crate::runtime::with_backend;
 
-/// A thread-local accessor for lazily initialized JavaScript values.
+/// A runtime-local accessor for lazily initialized JavaScript values.
 ///
-/// This type provides safe access to cached JavaScript global values,
-/// ensuring the value is initialized on first access. You can access
-/// the value directly via `Deref`.
+/// This type provides safe access to cached JavaScript global values, ensuring
+/// the value is initialized on first access in the active runtime.
 ///
 /// # Example
 ///
@@ -20,15 +19,16 @@ use crate::runtime::with_backend;
 ///     pub static WINDOW: Window;
 /// }
 ///
-/// // Access the cached window value directly
-/// let doc = WINDOW.document();
+/// WINDOW.with(|window| {
+///     let doc = window.document();
+/// });
 /// ```
-pub struct JsThreadLocal<T: 'static> {
+pub struct LazyCell<T: 'static> {
     init: fn() -> T,
 }
 
-impl<T> JsThreadLocal<T> {
-    /// Create a new `JsThreadLocal`.
+impl<T> LazyCell<T> {
+    /// Create a new `LazyCell`.
     #[doc(hidden)]
     pub const fn new(init: fn() -> T) -> Self {
         Self { init }
@@ -64,3 +64,6 @@ impl<T> JsThreadLocal<T> {
         result
     }
 }
+
+/// Backwards-compatible name used by generated `thread_local_v2` bindings.
+pub type JsThreadLocal<T> = LazyCell<T>;

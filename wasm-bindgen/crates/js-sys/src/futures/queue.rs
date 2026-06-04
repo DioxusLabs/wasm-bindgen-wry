@@ -112,28 +112,11 @@ impl Queue {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
     pub(crate) fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
-        use once_cell::unsync::Lazy;
-
-        struct Wrapper<T>(Lazy<T>);
-
-        #[cfg(not(target_feature = "atomics"))]
-        unsafe impl<T> Sync for Wrapper<T> {}
-
-        #[cfg(not(target_feature = "atomics"))]
-        unsafe impl<T> Send for Wrapper<T> {}
+        use wasm_bindgen::__rt::LazyCell;
 
         #[cfg_attr(target_feature = "atomics", thread_local)]
-        static QUEUE: Wrapper<Queue> = Wrapper(Lazy::new(Queue::new));
-
-        f(&QUEUE.0)
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
-        static QUEUE: wasm_bindgen::JsThreadLocal<Queue> =
-            wasm_bindgen::JsThreadLocal::new(Queue::new);
+        static QUEUE: LazyCell<Queue> = LazyCell::new(Queue::new);
 
         QUEUE.with(f)
     }

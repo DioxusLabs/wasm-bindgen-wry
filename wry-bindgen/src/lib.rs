@@ -50,7 +50,7 @@ pub use closure::{
 };
 pub use js_error::JsError;
 pub use value::JsValue;
-pub use wry_bindgen_core::JsThreadLocal;
+pub use wry_bindgen_core::{JsThreadLocal, LazyCell};
 
 pub use parent::Parent;
 #[doc(inline)]

@@ -450,11 +450,11 @@ pub(crate) fn drop_js_object(js_ref: JsRef) {
     recycle_heap_id_after_js_drop(js_ref);
 }
 
-/// Mark the JS wrapper for a Rust callback as unusable. A no-op if no runtime
-/// is installed (teardown).
-pub(crate) fn invalidate_js_rust_function(js_ref: JsRef) {
+/// Dispose the JS wrapper for a Rust callback. A no-op if no runtime is
+/// installed (teardown).
+pub(crate) fn dispose_js_rust_function(js_ref: JsRef) {
     if runtime_installed() {
-        crate::js_helpers::js_invalidate_rust_function(js_ref.raw());
+        crate::js_helpers::js_dispose_rust_function(js_ref.raw());
     }
 }
 
