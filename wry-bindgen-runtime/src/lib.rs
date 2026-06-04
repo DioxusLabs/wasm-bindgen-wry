@@ -21,8 +21,8 @@ pub use batch::{batch, batch_async, force_flush};
 /// active runtime and its operations directly; `wry-bindgen-core` wraps them in
 /// semantic handles, so they never reach the stable public surface.
 pub use batch::{
-    Runtime, queue_rust_object_drop, run_js_sync, try_queue_js_dispose_rust_function,
-    try_queue_js_drop, try_queue_rust_object_drop, with_runtime,
+    Runtime, drop_js_object, drop_rust_object, invalidate_js_rust_function, run_js_sync,
+    with_runtime,
 };
 pub use wry::{
     ProtocolHandler, WryBindgen, WryBindgenDriver, WryBindgenRuntime, WryBindgenWebviewDriver,

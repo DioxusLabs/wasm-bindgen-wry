@@ -7,35 +7,34 @@ fn drop_heap_ref_js() -> String {
     "heapId => window.jsHeap.remove(heapId)".into()
 }
 
-static DROP_HEAP_REF: JsFunctionSpec = JsFunctionSpec::new(drop_heap_ref_js);
-
-inventory::submit! {
-    DROP_HEAP_REF
-}
-
-fn dispose_rust_function_js() -> String {
+fn invalidate_rust_function_js() -> String {
     r#"heapId => {
   const value = window.jsHeap.get(heapId);
   const rustFunction = value && value.__wryRustFunction;
-  if (rustFunction && typeof rustFunction.disposeFromRust === "function") {
-    rustFunction.disposeFromRust();
+  if (rustFunction && typeof rustFunction.invalidateFromRust === "function") {
+    rustFunction.invalidateFromRust();
   }
 }"#
     .into()
 }
 
-static DISPOSE_RUST_FUNCTION: JsFunctionSpec = JsFunctionSpec::new(dispose_rust_function_js);
+static DROP_HEAP_REF: JsFunctionSpec = JsFunctionSpec::new(drop_heap_ref_js);
+static INVALIDATE_RUST_FUNCTION: JsFunctionSpec = JsFunctionSpec::new(invalidate_rust_function_js);
 
 inventory::submit! {
-    DISPOSE_RUST_FUNCTION
+    DROP_HEAP_REF
+}
+
+inventory::submit! {
+    INVALIDATE_RUST_FUNCTION
 }
 
 pub(crate) fn js_drop_heap_ref(heap_id: u64) {
     call_heap_helper(DROP_HEAP_REF, heap_id);
 }
 
-pub(crate) fn js_dispose_rust_function(heap_id: u64) {
-    call_heap_helper(DISPOSE_RUST_FUNCTION, heap_id);
+pub(crate) fn js_invalidate_rust_function(heap_id: u64) {
+    call_heap_helper(INVALIDATE_RUST_FUNCTION, heap_id);
 }
 
 fn call_heap_helper(spec: JsFunctionSpec, heap_id: u64) {

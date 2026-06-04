@@ -104,7 +104,7 @@ macro_rules! encode_callback_ref {
                 );
                 let handle = insert_callback!(callback);
                 encode_rust_owned_callback(handle, encoder);
-                crate::runtime::queue_rust_object_drop(handle);
+                crate::runtime::drop_rust_object(handle);
             }
         }
     };
@@ -138,7 +138,7 @@ macro_rules! encode_callback_ref {
                 );
                 let handle = insert_callback!(callback);
                 encode_rust_owned_callback(handle, encoder);
-                crate::runtime::queue_rust_object_drop(handle);
+                crate::runtime::drop_rust_object(handle);
             }
         }
     };

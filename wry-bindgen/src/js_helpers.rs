@@ -156,11 +156,6 @@ extern "C" {
     #[wasm_bindgen(js_name = "drop_heap_ref")]
     pub fn js_drop_heap_ref(heap_id: u64);
 
-    // Mark the RustFunction at this heap ID as disposed. Does NOT remove the
-    // heap entry — call drop_heap_ref separately (e.g., via JsValue::drop).
-    #[wasm_bindgen(js_name = "dispose_rust_function")]
-    pub fn js_dispose_rust_function(heap_id: u64);
-
     // Create a wrapper object for an exported Rust struct
     #[wasm_bindgen(js_name = "create_rust_object_wrapper")]
     pub(crate) fn create_rust_object_wrapper(handle: ObjectHandle, class_name: &str) -> JsValue;

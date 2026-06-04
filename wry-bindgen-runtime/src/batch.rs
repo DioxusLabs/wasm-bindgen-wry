@@ -428,8 +428,8 @@ fn hook_insert_object(obj: Box<dyn Any>) -> ObjectHandle {
     with_runtime(|runtime| runtime.insert_object_box(obj))
 }
 
-fn hook_queue_rust_object_drop(handle: ObjectHandle) {
-    queue_rust_object_drop(handle);
+fn hook_drop_rust_object(handle: ObjectHandle) {
+    drop_rust_object(handle);
 }
 
 fn hook_next_inbound_js_ref() -> JsRef {
@@ -438,7 +438,7 @@ fn hook_next_inbound_js_ref() -> JsRef {
 
 static HOOKS: wry_bindgen_abi::unstable::RuntimeHooks = wry_bindgen_abi::unstable::RuntimeHooks {
     insert_object: hook_insert_object,
-    queue_rust_object_drop: hook_queue_rust_object_drop,
+    drop_rust_object: hook_drop_rust_object,
     next_inbound_js_ref: hook_next_inbound_js_ref,
 };
 
@@ -446,16 +446,9 @@ fn install_hooks() {
     wry_bindgen_abi::unstable::install_runtime_hooks(&HOOKS);
 }
 
-/// Queue a stored object for drop. Called while encoding a callback, where an
-/// open operation frame defers the drop until the operation completes.
-pub fn queue_rust_object_drop(handle: ObjectHandle) {
-    let object = with_runtime(|runtime| runtime.release_object_handle(handle));
-    drop(object);
-}
-
 /// Release a JS heap reference, notifying JS now if no operation is open to
 /// batch the drop into. A no-op if no runtime is installed (teardown).
-pub fn try_queue_js_drop(js_ref: JsRef) {
+pub fn drop_js_object(js_ref: JsRef) {
     let Some(Some(id)) = try_with_runtime(|runtime| runtime.release_heap_id(js_ref.raw())) else {
         return;
     };
@@ -464,17 +457,16 @@ pub fn try_queue_js_drop(js_ref: JsRef) {
     recycle_heap_id_after_js_drop(js_ref);
 }
 
-/// Dispose the JS-side wrapper for a Rust function. A no-op if no runtime is
-/// installed (teardown).
-pub fn try_queue_js_dispose_rust_function(js_ref: JsRef) {
+/// Mark the JS wrapper for a Rust callback as unusable. A no-op if no runtime
+/// is installed (teardown).
+pub fn invalidate_js_rust_function(js_ref: JsRef) {
     if runtime_installed() {
-        crate::js_helpers::js_dispose_rust_function(js_ref.raw());
+        crate::js_helpers::js_invalidate_rust_function(js_ref.raw());
     }
 }
 
-/// Queue a stored object for drop. A no-op if no runtime is installed
-/// (teardown).
-pub fn try_queue_rust_object_drop(handle: ObjectHandle) {
+/// Release a stored Rust object. A no-op if no runtime is installed (teardown).
+pub fn drop_rust_object(handle: ObjectHandle) {
     let Some(object) = try_with_runtime(|runtime| runtime.release_object_handle(handle)) else {
         return;
     };

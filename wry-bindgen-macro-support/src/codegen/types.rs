@@ -215,36 +215,34 @@ pub(super) fn generate_type(
     // Generate JsCast implementation with actual instanceof check
     let js_name = &ty.js_name;
 
-    // Generate JavaScript instanceof check code with vendor prefix fallback
-    // Always generate a safe check that returns false if the class doesn't exist,
-    // matching wasm-bindgen's try-catch behavior
-    let instanceof_js_code = if ty.vendor_prefixes.is_empty() {
-        // Simple case: check if class exists before instanceof
-        format!(
-            "(a0) => typeof {prefix}{js_name} !== 'undefined' && a0 instanceof {prefix}{js_name}"
-        )
-    } else {
-        // Generate vendor-prefixed fallback:
-        // (a0) => a0 instanceof (typeof Foo !== 'undefined' ? Foo : (typeof webkitFoo !== 'undefined' ? webkitFoo : ...))
-        let mut class_expr =
-            format!("(typeof {prefix}{js_name} !== 'undefined' ? {prefix}{js_name} : ");
-        for (i, vendor_prefix) in ty.vendor_prefixes.iter().enumerate() {
-            let prefixed = format!("{vendor_prefix}{js_name}");
-            if i == ty.vendor_prefixes.len() - 1 {
-                // Last prefix - use Object as final fallback (which will make instanceof return false for non-objects)
-                class_expr.push_str(&format!(
-                    "(typeof {prefix}{prefixed} !== 'undefined' ? {prefix}{prefixed} : Object)"
-                ));
-            } else {
-                class_expr.push_str(&format!(
-                    "(typeof {prefix}{prefixed} !== 'undefined' ? {prefix}{prefixed} : "
-                ));
-            }
+    // Generate JavaScript instanceof check code with vendor prefix fallback.
+    // For inline/module imports, prefer the module export but fall back to the
+    // global constructor. This lets `type Array;` in an inline_js extern block
+    // still refer to the built-in `Array` when the module only exports helper
+    // functions.
+    let mut constructor_candidates = vec![format!("{prefix}{js_name}")];
+    if !prefix.is_empty() {
+        constructor_candidates.push(js_name.to_string());
+    }
+    for vendor_prefix in &ty.vendor_prefixes {
+        let prefixed = format!("{vendor_prefix}{js_name}");
+        constructor_candidates.push(format!("{prefix}{prefixed}"));
+        if !prefix.is_empty() {
+            constructor_candidates.push(prefixed);
         }
-        // Close all the parentheses
+    }
+    let mut class_expr = String::new();
+    for candidate in &constructor_candidates {
+        class_expr.push_str(&format!(
+            "(typeof {candidate} !== 'undefined' ? {candidate} : "
+        ));
+    }
+    class_expr.push_str("undefined");
+    for _ in &constructor_candidates {
         class_expr.push(')');
-        format!("(a0) => a0 instanceof {class_expr}")
-    };
+    }
+    let instanceof_js_code =
+        format!("(a0) => ({class_expr}) !== undefined && a0 instanceof ({class_expr})");
 
     // Generate is_type_of implementation if provided
     let is_type_of_impl = ty.is_type_of.as_ref().map(|is_type_of| {

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use crate::{DecodeError, DecodedData, EncodedData, JsRef};
 
-pub trait BinaryEncode<P = ()> {
+pub trait BinaryEncode {
     fn encode(self, encoder: &mut EncodedData);
 }
 
@@ -378,12 +378,12 @@ impl<T: BinaryDecode> BinaryDecode for Option<T> {
     }
 }
 
-impl<T: BinaryEncode<P>, P> BinaryEncode<P> for Option<T> {
+impl<T: BinaryEncode> BinaryEncode for Option<T> {
     fn encode(self, encoder: &mut EncodedData) {
         match self {
-            Some(val) => {
+            Some(value) => {
                 encoder.push_u8(1);
-                val.encode(encoder);
+                value.encode(encoder);
             }
             None => encoder.push_u8(0),
         }

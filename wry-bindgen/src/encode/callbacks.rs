@@ -229,7 +229,7 @@ macro_rules! impl_fnmut_stub {
                 );
                 crate::ScopedClosure {
                     _phantom: PhantomData,
-                    callback: crate::closure::CallbackOwnership::Owned,
+                    callback: crate::closure::CallbackOwnership::owned(handle),
                     value,
                 }
             }
@@ -263,7 +263,7 @@ macro_rules! impl_fnmut_stub {
                 );
                 crate::ScopedClosure {
                     _phantom: PhantomData,
-                    callback: crate::closure::CallbackOwnership::Owned,
+                    callback: crate::closure::CallbackOwnership::owned(handle),
                     value,
                 }
             }
@@ -298,7 +298,7 @@ macro_rules! impl_fnmut_stub {
                 );
                 crate::ScopedClosure {
                     _phantom: PhantomData,
-                    callback: crate::closure::CallbackOwnership::Owned,
+                    callback: crate::closure::CallbackOwnership::owned(handle),
                     value,
                 }
             }
@@ -332,7 +332,7 @@ macro_rules! impl_fnmut_stub {
                 );
                 crate::ScopedClosure {
                     _phantom: PhantomData,
-                    callback: crate::closure::CallbackOwnership::Owned,
+                    callback: crate::closure::CallbackOwnership::owned(handle),
                     value,
                 }
             }
@@ -659,8 +659,8 @@ impl<F: ?Sized> BinaryEncode for crate::Closure<F> {
         if self.callback.needs_flush() {
             RequireFlush.encode(encoder);
         }
-        // Hand the closure off to JS: ScopedClosure::drop must not dispose.
-        // JsValue::drop still queues the heap-ref release.
+        // Hand the closure off to JS: ScopedClosure::drop must not release the
+        // Rust callback object. JsValue::drop still queues the heap-ref release.
         self.callback.detach();
         (&self.value).encode(encoder);
     }

@@ -9,8 +9,6 @@ pub use crate::encode::{
 #[doc(hidden)]
 pub use crate::ipc::{DecodeError, DecodedData, EncodedData};
 #[doc(hidden)]
-pub use crate::js_helpers::js_dispose_rust_function as dispose_rust_function;
-#[doc(hidden)]
 pub use crate::js_helpers::js_drop_heap_ref as drop_heap_ref;
 #[doc(hidden)]
 pub use crate::js_helpers::js_extract_rust_handle as extract_rust_handle;
@@ -22,8 +20,7 @@ pub use wry_bindgen_core::RustCallback;
 pub use wry_bindgen_core::{CallbackKey, Runtime};
 #[doc(hidden)]
 pub use wry_bindgen_core::{
-    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunctionSpec, JsModuleSpec,
-    JsFunction,
+    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunction, JsFunctionSpec, JsModuleSpec,
 };
 
 #[doc(hidden)]

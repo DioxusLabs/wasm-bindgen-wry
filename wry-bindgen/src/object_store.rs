@@ -9,7 +9,7 @@ pub use wry_bindgen_core::ObjectHandle;
 
 /// Remove and drop a stored object by handle.
 pub fn drop_object(handle: ObjectHandle) {
-    handle.drop_stored()
+    handle.drop_rust_object()
 }
 
 pub fn with_object<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&T) -> R) -> R {

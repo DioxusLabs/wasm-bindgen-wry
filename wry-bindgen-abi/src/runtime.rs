@@ -1,10 +1,10 @@
 //! The hook seam the runtime installs.
 //!
 //! Encoding lives in this crate, but a few operations — storing a Rust callback,
-//! queuing its drop, and reserving an inbound [`JsRef`] — must run against the
-//! active runtime. The runtime lives in a crate that depends on this one, so it
-//! installs a small table of function pointers ([`RuntimeHooks`]) that the
-//! encoding paths call through.
+//! dropping it after its operation, and reserving an inbound [`JsRef`] — must
+//! run against the active runtime. The runtime lives in a crate that depends on
+//! this one, so it installs a small table of function pointers
+//! ([`RuntimeHooks`]) that the encoding paths call through.
 
 use alloc::boxed::Box;
 use core::any::Any;
@@ -21,8 +21,9 @@ use crate::{JsRef, ObjectHandle};
 pub struct RuntimeHooks {
     /// Store a Rust value in the runtime's object store, returning its handle.
     pub insert_object: fn(Box<dyn Any>) -> ObjectHandle,
-    /// Queue a stored object for drop once the current operation completes.
-    pub queue_rust_object_drop: fn(ObjectHandle),
+    /// Release a stored Rust object. The runtime may defer the release until
+    /// the current operation completes.
+    pub drop_rust_object: fn(ObjectHandle),
     /// Reserve the next Rust-side id for a JS value arriving out-of-band.
     pub next_inbound_js_ref: fn() -> JsRef,
 }
@@ -47,8 +48,8 @@ pub(crate) fn insert_object(obj: Box<dyn Any>) -> ObjectHandle {
     (hooks().insert_object)(obj)
 }
 
-pub(crate) fn queue_rust_object_drop(handle: ObjectHandle) {
-    (hooks().queue_rust_object_drop)(handle)
+pub(crate) fn drop_rust_object(handle: ObjectHandle) {
+    (hooks().drop_rust_object)(handle)
 }
 
 pub(crate) fn next_inbound_js_ref() -> JsRef {

@@ -1,12 +1,48 @@
 //! Closure compatibility types and traits.
 
 use alloc::boxed::Box;
+use alloc::rc::Rc;
+use core::cell::Cell;
 
+use crate::__rt::JsRef;
 use crate::JsValue;
 use crate::encode::{BinaryEncode, EncodeTypeDef};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::object_store::insert_object;
-use wry_bindgen_core::{CallbackKey, JsRefExt, ObjectHandleExt, RustCallback};
+use wry_bindgen_core::{CallbackKey, ObjectHandle, ObjectHandleExt, RustCallback};
+
+pub(crate) type CallbackHandle = Rc<Cell<Option<OwnedCallback>>>;
+
+pub(crate) struct OwnedCallback {
+    key: CallbackKey<()>,
+    handle: ObjectHandle,
+}
+
+impl OwnedCallback {
+    fn rust_owned(handle: ObjectHandle) -> Self {
+        Self {
+            key: CallbackKey::rust_owned(handle),
+            handle,
+        }
+    }
+
+    fn js_owned_once(handle: ObjectHandle) -> Self {
+        Self {
+            key: CallbackKey::js_owned_once(handle),
+            handle,
+        }
+    }
+}
+
+trait CallbackKeyExt {
+    fn invalidate_js_callback(&self, js_ref: JsRef);
+}
+
+impl<F: ?Sized> CallbackKeyExt for CallbackKey<F> {
+    fn invalidate_js_callback(&self, js_ref: JsRef) {
+        wry_bindgen_runtime::invalidate_js_rust_function(js_ref);
+    }
+}
 
 /// Borrowed or owned closure handle for passing Rust closures to JavaScript.
 pub struct ScopedClosure<'a, T: ?Sized> {
@@ -17,22 +53,27 @@ pub struct ScopedClosure<'a, T: ?Sized> {
     pub(crate) value: crate::JsValue,
 }
 
-/// Who is responsible for disposing the JS-side `RustFunction` wrapper that
-/// backs a `ScopedClosure`. Encoding an owned `Closure` by value detaches it
-/// because JavaScript takes ownership; borrowed encodes keep Rust ownership.
-/// Destructors only dispose in the `Owned` state.
-#[derive(Clone, Copy)]
+/// Who owns the Rust callback object backing a `ScopedClosure`.
+#[derive(Clone)]
 pub(crate) enum CallbackOwnership {
     /// No Rust callback backing this closure (e.g., wrapping a raw JS function).
     None,
-    /// Rust owns the callback; `ScopedClosure::drop` disposes it.
-    Owned,
-    /// Ownership has been handed off. No dispose on drop, but encoders still
+    /// Rust owns the callback; `ScopedClosure::drop` releases the Rust object.
+    Owned(CallbackHandle),
+    /// Ownership has been handed off. No Rust-object drop, but encoders still
     /// flush so JS receives the callable before the call that needs it.
     Detached,
 }
 
 impl CallbackOwnership {
+    pub(crate) fn owned(handle: ObjectHandle) -> Self {
+        Self::Owned(Rc::new(Cell::new(Some(OwnedCallback::rust_owned(handle)))))
+    }
+
+    fn owned_cell(handle: CallbackHandle) -> Self {
+        Self::Owned(handle)
+    }
+
     /// Encoding this closure to JS requires an immediate flush so the JS
     /// side has the callable ready.
     pub(crate) fn needs_flush(&self) -> bool {
@@ -41,9 +82,21 @@ impl CallbackOwnership {
 
     /// Transition `Owned` → `Detached`. No-op for `None` / `Detached`.
     pub(crate) fn detach(&mut self) {
-        if matches!(self, Self::Owned) {
+        if matches!(self, Self::Owned(_)) {
             *self = Self::Detached;
         }
+    }
+
+    fn drop_owned_callback(&mut self, value: &JsValue) {
+        let Self::Owned(handle) = self else {
+            return;
+        };
+        let Some(callback) = handle.take() else {
+            return;
+        };
+
+        callback.key.invalidate_js_callback(value.js_ref());
+        callback.handle.drop_rust_object();
     }
 }
 
@@ -76,7 +129,7 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
             crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(CallbackKey::new(key));
         Self {
             _phantom: core::marker::PhantomData,
-            callback: crate::closure::CallbackOwnership::Owned,
+            callback: crate::closure::CallbackOwnership::owned(key),
             value,
         }
     }
@@ -94,7 +147,7 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
             crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(CallbackKey::new(key));
         Self {
             _phantom: core::marker::PhantomData,
-            callback: crate::closure::CallbackOwnership::Owned,
+            callback: crate::closure::CallbackOwnership::owned(key),
             value,
         }
     }
@@ -107,29 +160,27 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
     where
         CallbackKey<FnPtr>: BinaryEncode + EncodeTypeDef,
     {
-        let handle_cell = alloc::rc::Rc::new(core::cell::Cell::new(
-            None::<wry_bindgen_core::ObjectHandle>,
-        ));
+        let handle_cell = alloc::rc::Rc::new(core::cell::Cell::new(None::<OwnedCallback>));
         let handle_for_callback = handle_cell.clone();
         let key = insert_object(RustCallback::new_fn_mut(move |decoder, encoder| {
             let result = encode_decode(decoder, encoder);
-            // Dispose the one-shot callback whether or not decoding succeeded.
-            if let Some(handle) = handle_for_callback.take() {
-                handle.try_queue_drop();
+            // Release the one-shot callback whether or not decoding succeeded.
+            if let Some(callback) = handle_for_callback.take() {
+                callback.handle.drop_rust_object();
             }
             result
         }));
-        handle_cell.set(Some(key));
+        handle_cell.set(Some(OwnedCallback::js_owned_once(key)));
         let value = crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(
             CallbackKey::js_owned_once(key),
         );
-        // Once-cells dispose themselves after the first call, but they still
+        // Once-cells release themselves after the first call, but they still
         // need Rust-side ownership while a `Closure` handle exists. Promise
         // adapters store resolve/reject once-closures and rely on dropping the
-        // pair after the first completion to dispose the unused callback.
+        // pair after the first completion to release the unused callback.
         Self {
             _phantom: core::marker::PhantomData,
-            callback: crate::closure::CallbackOwnership::Owned,
+            callback: crate::closure::CallbackOwnership::owned_cell(handle_cell),
             value,
         }
     }
@@ -147,12 +198,8 @@ where
 
 impl<T: ?Sized> Drop for ScopedClosure<'_, T> {
     fn drop(&mut self) {
-        if let crate::closure::CallbackOwnership::Owned = self.callback {
-            let js_ref = self.value.js_ref();
-            js_ref.try_queue_dispose_rust_function();
-        }
-        // JsValue::drop runs after this (via field drop glue) and queues
-        // the heap-ref release.
+        self.callback.drop_owned_callback(&self.value);
+        // JsValue::drop runs after this and releases the JS heap ref.
     }
 }
 

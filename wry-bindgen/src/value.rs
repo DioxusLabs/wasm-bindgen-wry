@@ -205,7 +205,7 @@ impl Drop for JsValue {
         }
 
         // Drop the value on the JS heap
-        self.idx.try_queue_drop();
+        self.idx.drop_js_object();
     }
 }
 
