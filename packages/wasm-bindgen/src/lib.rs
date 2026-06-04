@@ -19,13 +19,17 @@ pub use wasm_bindgen_macro::wasm_bindgen;
 pub use wry_bindgen::*;
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen::*;
+pub use wasm_bindgen_upstream::*;
 
 // Re-export the upstream wasm_bindgen macro for wasm32 targets
 // This is used by the shim macro to delegate to the real wasm-bindgen
 #[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen::prelude::wasm_bindgen as __wasm_bindgen_upstream_macro;
+pub use wasm_bindgen_upstream::prelude::wasm_bindgen as __wasm_bindgen_upstream_macro;
 
 // Re-export the upstream class marker for wasm32 targets
 #[cfg(target_arch = "wasm32")]
-pub use wasm_bindgen::prelude::__wasm_bindgen_class_marker as __wasm_bindgen_upstream_class_marker;
+pub use wasm_bindgen_upstream::prelude::__wasm_bindgen_class_marker as __wasm_bindgen_upstream_class_marker;
+
+// Re-export the upstream link_to macro for wasm32 targets
+#[cfg(target_arch = "wasm32")]
+pub use wasm_bindgen_upstream::link_to as __wasm_bindgen_upstream_link_to;

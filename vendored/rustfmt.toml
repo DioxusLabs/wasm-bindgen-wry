@@ -1,0 +1,5 @@
+# Vendored upstream crates are formatted by upstream; cargo fmt --all pulls
+# them in as path deps, so disable reformatting them here (CI rustfmt would
+# otherwise reorder their imports). This file sits outside vendored/wasm-bindgen
+# so it survives re-vendoring.
+disable_all_formatting = true

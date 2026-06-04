@@ -25,8 +25,9 @@ CI runs the following checks with rust 1.88. When running these checks locally, 
 
 - `cargo +1.88 fmt --all -- --check` - Format check
 - `cargo +1.88 check --workspace --all-features` - Compile check
+- `cargo +1.88 check --manifest-path packages/wasm-bindgen/Cargo.toml --target wasm32-unknown-unknown --all-features` - Wasm compile check (the shim must still build for the browser target, where it delegates to the real upstream wasm-bindgen; needs `rustup target add wasm32-unknown-unknown`)
 - `cargo +1.88 clippy --workspace --all-features` - Lint check
-- `cargo +nightly doc --no-deps --all-features -p wry-launch -p wasm-bindgen -p wry-bindgen-macro -p wry-bindgen-macro-support` - Documentation check (uses nightly, with `RUSTDOCFLAGS=-Dwarnings`)
+- `cargo +nightly doc --no-deps --all-features -p wry-launch -p wry-bindgen-macro -p wry-bindgen-macro-support` then `cargo +nightly doc --no-deps --all-features --manifest-path packages/wasm-bindgen/Cargo.toml` - Documentation check (uses nightly, with `RUSTDOCFLAGS=-Dwarnings`; `wasm-bindgen` is documented by manifest path because the wasm32 build pulls a second `wasm-bindgen` crate, making `-p wasm-bindgen` ambiguous)
 - `cargo +1.88 test --workspace --all-features -- --test-threads=1` - Test check
 
 To automatically fix issues, you can run the following commands:

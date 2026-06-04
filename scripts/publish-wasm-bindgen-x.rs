@@ -893,6 +893,28 @@ fn rewrite_dependency_packages(
         let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
             continue;
         };
+
+        // The wasm32 `wasm-bindgen` delegate is sourced from git so the workspace
+        // `[patch.crates-io]` does not capture it. A git source cannot be published,
+        // so repoint it at the tagged crates.io release: the published crate depends
+        // on the real upstream `wasm-bindgen` (kept under its real name, not the `-x`
+        // shim) at the same version as the tag.
+        if inline_table_value(table_body, "git").is_some() {
+            let package = inline_table_value(table_body, "package").unwrap_or(key);
+            let version = inline_table_value(table_body, "tag").ok_or_else(|| {
+                Error::new(format!(
+                    "{}: git dependency `{key}` needs a `tag` to map to a crates.io version",
+                    path.display()
+                ))
+            })?;
+            lines.set_body(
+                index,
+                format!("{prefix} package = \"{package}\", version = \"{version}\" {suffix}"),
+            );
+            changed = true;
+            continue;
+        }
+
         let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
         let Some(publish_name) = renamed_package_name(dependency_name) else {
             continue;

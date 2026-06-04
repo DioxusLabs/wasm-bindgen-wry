@@ -111,5 +111,7 @@ members = [
   "crates/js-sys",
   "crates/web-sys",
   "crates/futures",
+  "crates/test-macro",
+  "crates/test-shared",
 ]
 resolver = "2"
