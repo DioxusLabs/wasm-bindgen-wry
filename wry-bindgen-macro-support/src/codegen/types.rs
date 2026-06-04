@@ -71,8 +71,7 @@ pub(super) fn generate_type(
         #(#derives)*
         #[repr(transparent)]
         #vis struct #rust_name #generics #where_clause {
-            #[doc(hidden)]
-            pub obj: #storage_ty,
+            obj: #storage_ty,
             #generic_field
         }
     };
