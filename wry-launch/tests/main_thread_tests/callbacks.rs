@@ -1,10 +1,7 @@
 use futures_util::{StreamExt, stream::futures_unordered};
 use std::cell::Cell;
-use wasm_bindgen::{
-    Closure,
-    batch::{batch, force_flush},
-    wasm_bindgen,
-};
+use wasm_bindgen::{Closure, wasm_bindgen};
+use wry_bindgen_runtime::wire::{batch, force_flush};
 use wry_launch::JsValue;
 
 pub(crate) fn test_call_callback() {

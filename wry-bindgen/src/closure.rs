@@ -3,10 +3,10 @@
 use alloc::boxed::Box;
 
 use crate::JsValue;
-use crate::encode::{BinaryEncode, CallbackKey, EncodeTypeDef};
-use crate::function::RustCallback;
+use crate::encode::{BinaryEncode, EncodeTypeDef};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::object_store::insert_object;
+use wry_bindgen_core::{CallbackKey, ObjectHandle, RustCallback};
 
 /// Borrowed or owned closure handle for passing Rust closures to JavaScript.
 pub struct ScopedClosure<'a, T: ?Sized> {
@@ -33,6 +33,10 @@ pub(crate) enum CallbackOwnership {
 }
 
 impl CallbackOwnership {
+    pub(crate) fn owned(_handle: ObjectHandle) -> Self {
+        Self::Owned
+    }
+
     /// Encoding this closure to JS requires an immediate flush so the JS
     /// side has the callable ready.
     pub(crate) fn needs_flush(&self) -> bool {
@@ -76,7 +80,7 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
             crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(CallbackKey::new(key));
         Self {
             _phantom: core::marker::PhantomData,
-            callback: crate::closure::CallbackOwnership::Owned,
+            callback: crate::closure::CallbackOwnership::owned(key),
             value,
         }
     }
@@ -94,7 +98,7 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
             crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(CallbackKey::new(key));
         Self {
             _phantom: core::marker::PhantomData,
-            callback: crate::closure::CallbackOwnership::Owned,
+            callback: crate::closure::CallbackOwnership::owned(key),
             value,
         }
     }
@@ -107,19 +111,19 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
     where
         CallbackKey<FnPtr>: BinaryEncode + EncodeTypeDef,
     {
-        let handle_cell = alloc::rc::Rc::new(core::cell::Cell::new(None));
+        let handle_cell = alloc::rc::Rc::new(core::cell::Cell::new(None::<ObjectHandle>));
         let handle_for_callback = handle_cell.clone();
         let key = insert_object(RustCallback::new_fn_mut(move |decoder, encoder| {
             let result = encode_decode(decoder, encoder);
             // Dispose the one-shot callback whether or not decoding succeeded.
             if let Some(handle) = handle_for_callback.take() {
-                crate::batch::queue_rust_object_drop(handle);
+                handle.drop_rust_object();
             }
             result
         }));
         handle_cell.set(Some(key));
         let value = crate::__rt::wbg_cast::<CallbackKey<FnPtr>, crate::JsValue>(
-            CallbackKey::new_with_policy(key, crate::encode::CallbackPolicy::JsOwnedOnce),
+            CallbackKey::js_owned_once(key),
         );
         // Once-cells dispose themselves after the first call, but they still
         // need Rust-side ownership while a `Closure` handle exists. Promise
@@ -127,7 +131,7 @@ impl<T: ?Sized> ScopedClosure<'static, T> {
         // pair after the first completion to dispose the unused callback.
         Self {
             _phantom: core::marker::PhantomData,
-            callback: crate::closure::CallbackOwnership::Owned,
+            callback: crate::closure::CallbackOwnership::owned(key),
             value,
         }
     }
@@ -146,10 +150,8 @@ where
 impl<T: ?Sized> Drop for ScopedClosure<'_, T> {
     fn drop(&mut self) {
         if let crate::closure::CallbackOwnership::Owned = self.callback {
-            crate::batch::queue_js_dispose_rust_function(self.value.id());
+            self.value.js_ref().dispose_js_rust_function();
         }
-        // JsValue::drop runs after this (via field drop glue) and queues
-        // the heap-ref release.
     }
 }
 
@@ -377,5 +379,24 @@ where
         F: WasmClosureFnOnce<T, A, R> + MaybeUnwindSafe,
     {
         Self::once(fn_once).into_js_value()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::panic::{RefUnwindSafe, UnwindSafe};
+
+    use super::ScopedClosure;
+
+    fn assert_auto_traits<T: Send + Sync + UnwindSafe + RefUnwindSafe>() {}
+
+    #[test]
+    fn scoped_closure_preserves_auto_traits() {
+        assert_auto_traits::<
+            ScopedClosure<'static, dyn Fn() + Send + Sync + UnwindSafe + RefUnwindSafe>,
+        >();
+        assert_auto_traits::<
+            ScopedClosure<'static, dyn FnMut() + Send + Sync + UnwindSafe + RefUnwindSafe>,
+        >();
     }
 }

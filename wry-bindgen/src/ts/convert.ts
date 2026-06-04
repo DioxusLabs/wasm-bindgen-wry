@@ -159,27 +159,13 @@ export function is_error(x: any): boolean {
 // Heap management - clone a value in the JS heap
 // Returns the value itself. HeapRefType.encode handles inserting it and
 // encoding the assigned ID when this is returned to Rust.
-export function clone_heap_ref(heapId: number): unknown {
-  return window.jsHeap.get(heapId);
+export function clone_heap_ref(value: unknown): unknown {
+  return value;
 }
 
 // Heap management - drop a value from the JS heap
 export function drop_heap_ref(heapId: number): void {
   window.jsHeap.remove(heapId);
-}
-
-export function dispose_rust_function(heapId: number): void {
-  const value = window.jsHeap.get(heapId) as
-    | {
-        __wryRustFunction?: {
-          disposeFromRust?: () => void;
-        };
-      }
-    | undefined;
-  const rustFunction = value && value.__wryRustFunction;
-  if (rustFunction && typeof rustFunction.disposeFromRust === "function") {
-    rustFunction.disposeFromRust();
-  }
 }
 
 // Create a wrapper object for an exported Rust struct

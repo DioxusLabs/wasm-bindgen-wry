@@ -13576,31 +13576,12 @@ impl Promise {
 /// This allows access to the global properties and global names by accessing
 /// the `Object` returned.
 pub fn global() -> Object {
-    #[cfg(target_arch = "wasm32")]
-    {
-        use once_cell::unsync::Lazy;
+    use wasm_bindgen::__rt::LazyCell;
 
-        struct Wrapper<T>(Lazy<T>);
+    #[cfg_attr(target_feature = "atomics", thread_local)]
+    static GLOBAL: LazyCell<Object> = LazyCell::new(get_global_object);
 
-        #[cfg(not(target_feature = "atomics"))]
-        unsafe impl<T> Sync for Wrapper<T> {}
-
-        #[cfg(not(target_feature = "atomics"))]
-        unsafe impl<T> Send for Wrapper<T> {}
-
-        #[cfg_attr(target_feature = "atomics", thread_local)]
-        static GLOBAL: Wrapper<Object> = Wrapper(Lazy::new(get_global_object));
-
-        return GLOBAL.0.clone();
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        static GLOBAL: wasm_bindgen::JsThreadLocal<Object> =
-            wasm_bindgen::JsThreadLocal::new(get_global_object, 0);
-
-        return GLOBAL.with(Clone::clone);
-    }
+    return GLOBAL.with(Clone::clone);
 
     fn get_global_object() -> Object {
         // Accessing the global object is not an easy thing to do, and what we

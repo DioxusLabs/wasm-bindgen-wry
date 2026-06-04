@@ -42,6 +42,12 @@ pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
     }
 }
 
+/// Internal class marker macro used by wasm-bindgen impl-method expansion.
+#[proc_macro_attribute]
+pub fn __wasm_bindgen_class_marker(attr: TokenStream, input: TokenStream) -> TokenStream {
+    wasm_bindgen(attr, input)
+}
+
 /// Link to a JS file for use with workers/worklets.
 ///
 /// This macro is only meaningful in WASM contexts. When running outside of WASM,

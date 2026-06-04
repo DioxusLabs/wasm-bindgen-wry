@@ -10,7 +10,7 @@ use std::{
     task::{Context, Poll, Wake, Waker},
 };
 
-use wasm_bindgen::wry::{WryBindgen, WryBindgenWebviewDriver};
+use wry_bindgen_runtime::{WryBindgen, WryBindgenWebviewDriver};
 
 use crate::home::root_response;
 

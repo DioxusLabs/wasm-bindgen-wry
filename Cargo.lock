@@ -2954,7 +2954,6 @@ version = "0.3.99"
 dependencies = [
  "cfg-if",
  "futures-util",
- "once_cell",
  "wasm-bindgen",
 ]
 
@@ -6860,16 +6859,21 @@ dependencies = [
 name = "wry-bindgen"
 version = "0.2.122"
 dependencies = [
- "atomic-waker",
- "base64",
- "bytemuck",
- "http 1.4.0",
+ "cfg-if",
  "inventory",
  "lazy-js-bundle 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "once_cell",
  "serde",
  "serde_json",
+ "wry-bindgen-core",
  "wry-bindgen-macro",
+]
+
+[[package]]
+name = "wry-bindgen-core"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "wry-bindgen-runtime",
 ]
 
 [[package]]
@@ -6887,6 +6891,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "wry-bindgen-runtime"
+version = "0.1.0"
+dependencies = [
+ "atomic-waker",
+ "base64",
+ "bytemuck",
+ "futures",
+ "http 1.4.0",
+ "inventory",
+ "lazy-js-bundle 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "once_cell",
+ "tao",
+ "web-sys",
+ "wry",
 ]
 
 [[package]]
@@ -6912,6 +6933,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "wry",
+ "wry-bindgen-runtime",
 ]
 
 [[package]]

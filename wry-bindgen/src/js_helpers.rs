@@ -150,20 +150,15 @@ extern "C" {
 
     // Heap management - clone a value in the JS heap
     #[wasm_bindgen(js_name = "clone_heap_ref")]
-    pub(crate) fn js_clone_heap_ref(heap_id: u64) -> JsValue;
+    pub(crate) fn js_clone_heap_ref(value: &JsValue) -> JsValue;
 
     // Heap management - drop a value from the JS heap
     #[wasm_bindgen(js_name = "drop_heap_ref")]
-    pub(crate) fn js_drop_heap_ref(heap_id: u64);
-
-    // Mark the RustFunction at this heap ID as disposed. Does NOT remove the
-    // heap entry — call drop_heap_ref separately (e.g., via JsValue::drop).
-    #[wasm_bindgen(js_name = "dispose_rust_function")]
-    pub(crate) fn js_dispose_rust_function(heap_id: u64);
+    pub fn js_drop_heap_ref(heap_id: u64);
 
     // Create a wrapper object for an exported Rust struct
     #[wasm_bindgen(js_name = "create_rust_object_wrapper")]
-    pub(crate) fn create_rust_object_wrapper(handle: u32, class_name: &str) -> JsValue;
+    pub(crate) fn create_rust_object_wrapper(handle: ObjectHandle, class_name: &str) -> JsValue;
 
     // Extract the Rust object handle from a JavaScript wrapper object
     // Returns -1 if the object doesn't have a __handle property

@@ -1,108 +1,79 @@
-//! JavaScript function references and Rust callback management.
+//! Typed JavaScript function handles.
 //!
-//! This module provides types for calling JavaScript functions from Rust
-//! and for registering Rust callbacks that can be called from JavaScript.
+//! [`JsFunction`] resolves a [`JsFunctionSpec`] on first use and caches the
+//! handle. Its `.call(args)` performs the round-trip; the resolved function id
+//! and the cached type-id protocol are private to this module.
 
-// Allow clippy lints for macro-generated code and internal types
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::type_complexity)]
 
-use alloc::vec::Vec;
-use core::cell::RefCell;
 use core::marker::PhantomData;
 
-use crate::batch::{force_flush, run_js_sync, with_runtime};
-use crate::encode::{BatchableResult, BinaryEncode, EncodeTypeDef, TYPE_CACHED, TYPE_FULL};
-use crate::ipc::DecodeError;
-use crate::ipc::DecodedData;
-use crate::ipc::EncodedData;
+use once_cell::sync::OnceCell;
+use wry_bindgen_runtime::wire::{BinaryEncode, EncodeTypeDef, FunctionTypeInfo, TypeDef};
+use wry_bindgen_runtime::wire::{EncodedData, JsFunctionSpec};
 
-/// Reserved function ID for dropping native Rust refs when JS objects are GC'd.
-/// JS sends this when a FinalizationRegistry callback fires for a RustFunction.
-pub const DROP_NATIVE_REF_FN_ID: u32 = 0xFFFFFFFF;
+use crate::BatchableResult;
+use crate::runtime::{run_js_sync, with_backend};
 
-/// Reserved function ID for calling exported Rust struct methods from JS.
-/// JS sends this with the export name to call the appropriate handler.
-pub const CALL_EXPORT_FN_ID: u32 = 0xFFFFFFFE;
-
-/// Encode type definitions for a function call.
+/// Encode the cached type-definition prelude for a function call.
 ///
-/// On first encounter, emits `TYPE_FULL` + id + inline definition and records
-/// the id on the current encoder's pending-ack list. Once JS has acked the
-/// `TYPE_FULL` (signalled by the matching JS Respond popping the type-cache
-/// frame), subsequent calls emit `TYPE_CACHED` + id.
-fn encode_function_types(encoder: &mut EncodedData, encode_types: impl FnOnce(&mut Vec<u8>)) {
-    let mut type_buf = Vec::new();
-    encode_types(&mut type_buf);
-
-    with_runtime(|state| {
-        let (id, can_use_cached) = state.get_or_create_type_id(&type_buf);
-        if can_use_cached {
-            encoder.push_u8(TYPE_CACHED);
-            encoder.push_u32(id);
-        } else {
-            encoder.push_u8(TYPE_FULL);
-            encoder.push_u32(id);
-            encoder.register_pending_type_id(id);
-            for byte in type_buf {
-                encoder.push_u8(byte);
-            }
-        }
+/// On first encounter, emits a full inline type definition and records its id
+/// on the encoder's pending-ack list. Once JS has acked the definition,
+/// subsequent calls emit the cached id only.
+fn encode_function_types<Signature: EncodeTypeDef>(encoder: &mut EncodedData) {
+    let type_def = TypeDef::of::<Signature>();
+    with_backend(|state| {
+        let (id, can_use_cached) = state.get_or_create_type_id(&type_def);
+        FunctionTypeInfo::new(id, can_use_cached, &type_def).encode(encoder);
     });
 }
 
-/// A reference to a JavaScript function that can be called from Rust.
-///
-/// The type parameter encodes the function signature.
-/// Arguments and return values are serialized using the binary protocol.
-pub struct JSFunction<T> {
-    id: u32,
-    function: PhantomData<T>,
+/// A typed JS function that resolves from the active runtime on first use.
+pub struct JsFunction<F> {
+    spec: JsFunctionSpec,
+    inner: OnceCell<u32>,
+    function: PhantomData<F>,
 }
 
-impl<T> JSFunction<T> {
-    pub const fn new(id: u32) -> Self {
+impl<F> JsFunction<F> {
+    pub const fn new(spec: JsFunctionSpec) -> Self {
         Self {
-            id,
+            spec,
+            inner: OnceCell::new(),
             function: PhantomData,
         }
     }
 
-    /// Get the function ID.
-    pub fn id(&self) -> u32 {
-        self.id
+    fn id(&self) -> u32 {
+        *self
+            .inner
+            .get_or_init(|| with_backend(|runtime| runtime.resolve_function(self.spec)))
     }
 }
 
 macro_rules! impl_js_function_call {
     // Base case: zero arguments
     (0,) => {
-        impl<R: BatchableResult + EncodeTypeDef> JSFunction<fn() -> R> {
+        impl<R: BatchableResult + EncodeTypeDef + 'static> JsFunction<fn() -> R> {
             pub fn call(&self) -> R {
-                run_js_sync::<R>(self.id, |encoder| {
-                    encode_function_types(encoder, |buf| {
-                        buf.push(0);
-                        R::encode_type_def(buf);
-                    });
+                run_js_sync::<R>(self.id(), |encoder| {
+                    encode_function_types::<fn() -> R>(encoder);
                 })
             }
         }
     };
     // Recursive case: N arguments
     ($n:expr, $($T:ident $arg:ident),+) => {
-        impl<$($T: EncodeTypeDef,)+ R: BatchableResult + EncodeTypeDef>
-            JSFunction<fn($($T),+) -> R>
+        impl<$($T: EncodeTypeDef,)+ R: BatchableResult + EncodeTypeDef + 'static>
+            JsFunction<fn($($T),+) -> R>
         {
             pub fn call(&self, $($arg: $T),+) -> R
             where
                 $($T: BinaryEncode,)+
             {
-                run_js_sync::<R>(self.id, |encoder| {
-                    encode_function_types(encoder, |buf| {
-                        buf.push($n);
-                        $($T::encode_type_def(buf);)+
-                        R::encode_type_def(buf);
-                    });
+                run_js_sync::<R>(self.id(), |encoder| {
+                    encode_function_types::<fn($($T),+) -> R>(encoder);
                     $($arg.encode(encoder);)+
                 })
             }
@@ -143,56 +114,3 @@ impl_js_function_call!(29, T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6,
 impl_js_function_call!(30, T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7, T8 arg8, T9 arg9, T10 arg10, T11 arg11, T12 arg12, T13 arg13, T14 arg14, T15 arg15, T16 arg16, T17 arg17, T18 arg18, T19 arg19, T20 arg20, T21 arg21, T22 arg22, T23 arg23, T24 arg24, T25 arg25, T26 arg26, T27 arg27, T28 arg28, T29 arg29, T30 arg30);
 impl_js_function_call!(31, T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7, T8 arg8, T9 arg9, T10 arg10, T11 arg11, T12 arg12, T13 arg13, T14 arg14, T15 arg15, T16 arg16, T17 arg17, T18 arg18, T19 arg19, T20 arg20, T21 arg21, T22 arg22, T23 arg23, T24 arg24, T25 arg25, T26 arg26, T27 arg27, T28 arg28, T29 arg29, T30 arg30, T31 arg31);
 impl_js_function_call!(32, T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7, T8 arg8, T9 arg9, T10 arg10, T11 arg11, T12 arg12, T13 arg13, T14 arg14, T15 arg15, T16 arg16, T17 arg17, T18 arg18, T19 arg19, T20 arg20, T21 arg21, T22 arg22, T23 arg23, T24 arg24, T25 arg25, T26 arg26, T27 arg27, T28 arg28, T29 arg29, T30 arg30, T31 arg31, T32 arg32);
-
-/// Internal type for storing Rust callback functions.
-/// Always stores as `Rc<dyn Fn(...)>` for uniform handling.
-/// - For `Fn` closures: stored directly, supports reentrant calls
-/// - For `FnMut` closures: wrapped in RefCell internally, panics on reentrant calls
-type CallbackFn = dyn Fn(&mut DecodedData, &mut EncodedData) -> Result<(), DecodeError>;
-
-pub(crate) struct RustCallback {
-    f: alloc::rc::Rc<CallbackFn>,
-}
-
-impl RustCallback {
-    /// Create a callback from an `Fn` closure (supports reentrant calls).
-    ///
-    /// The closure returns `Err` if an argument from JS fails to decode; the
-    /// caller surfaces that instead of letting an `unwrap` panic propagate.
-    pub fn new_fn<F>(f: F) -> Self
-    where
-        F: Fn(&mut DecodedData, &mut EncodedData) -> Result<(), DecodeError> + 'static,
-    {
-        Self {
-            f: alloc::rc::Rc::new(move |data: &mut DecodedData, encoder: &mut EncodedData| {
-                let result = f(data, encoder);
-                force_flush();
-                result
-            }),
-        }
-    }
-
-    /// Create a callback from an `FnMut` closure (panics on reentrant calls)
-    pub fn new_fn_mut<F>(f: F) -> Self
-    where
-        F: FnMut(&mut DecodedData, &mut EncodedData) -> Result<(), DecodeError> + 'static,
-    {
-        // Wrap the FnMut in a RefCell, then create an Fn wrapper
-        let cell = RefCell::new(f);
-        Self {
-            f: alloc::rc::Rc::new(move |data: &mut DecodedData, encoder: &mut EncodedData| {
-                let result = {
-                    let mut f = cell.borrow_mut();
-                    f(data, encoder)
-                };
-                force_flush();
-                result
-            }),
-        }
-    }
-
-    /// Get a cloned Rc to the callback
-    pub fn clone_rc(&self) -> alloc::rc::Rc<CallbackFn> {
-        self.f.clone()
-    }
-}

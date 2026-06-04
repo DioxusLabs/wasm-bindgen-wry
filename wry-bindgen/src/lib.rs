@@ -7,10 +7,10 @@
 //!
 //! The crate is organized into several modules:
 //!
-//! - [`BinaryEncode`]/[`BinaryDecode`] - Core encoding/decoding traits for Rust types
-//! - [`JSFunction`] - JSFunction type for calling JavaScript functions
-//! - [`batch`] - Batching helpers for grouping multiple JS operations
-//! - [`wry`] - Event loop and Wry integration
+//! - [`JsValue`] - Opaque references to JavaScript values
+//! - [`closure`] - Rust closures passed to JavaScript
+//! - [`convert`] - wasm-bindgen-compatible conversion marker traits
+//! - [`sys`] - JavaScript semantic helper types
 
 #![no_std]
 
@@ -19,17 +19,14 @@ pub extern crate alloc;
 #[macro_use]
 extern crate std;
 
-pub mod batch;
 mod cast;
-mod clamped;
 pub mod closure;
 pub mod convert;
+pub mod describe;
 mod encode;
 mod erasure;
-mod function;
-mod function_registry;
-mod id_allocator;
-mod intern;
+#[doc(hidden)]
+pub mod handler;
 pub(crate) mod ipc;
 #[macro_use]
 mod wire;
@@ -38,49 +35,47 @@ mod wire;
 pub mod __rt;
 mod js_error;
 mod js_helpers;
-mod lazy;
 mod object_store;
 mod parent;
-mod runtime;
 pub mod sys;
 mod try_from_js;
-mod type_cache;
 mod value;
-pub mod wry;
-
-pub use intern::*;
 
 // Re-export core types
 pub use crate::__rt::marker::ErasableGeneric;
 pub use cast::JsCast;
-pub use clamped::Clamped;
 pub use closure::{
     Closure, IntoWasmClosure, IntoWasmClosureRef, IntoWasmClosureRefMut, MaybeUnwindSafe,
     ScopedClosure, WasmClosure, WasmClosureFnOnce, WasmClosureFnOnceAbort, WryWasmClosure,
 };
 pub use js_error::JsError;
-pub use lazy::JsThreadLocal;
 pub use value::JsValue;
+pub use wry_bindgen_core::{JsThreadLocal, LazyCell};
 
-pub use crate::__rt::{Ref, RefMut};
 pub use parent::Parent;
+#[doc(inline)]
+pub use wry_bindgen_core::Clamped;
 
 pub use convert::{IntoJsGeneric, JsGeneric};
-pub use encode::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
-pub use function::JSFunction;
-pub use ipc::{DecodeError, DecodedData, EncodedData};
-pub use sys::{JsOption, Null, Promising, Undefined};
 
 // Re-export the macros
 pub use wry_bindgen_macro::link_to;
 pub use wry_bindgen_macro::wasm_bindgen;
+
+#[inline]
+pub fn intern(s: &str) -> &str {
+    s
+}
+
+#[inline]
+pub fn unintern(_: &str) {}
 
 /// Macro to register and call a JavaScript function.
 ///
 /// This macro encapsulates the common pattern of:
 /// 1. Creating a static JsFunctionSpec
 /// 2. Submitting it to inventory
-/// 3. Creating a LazyJsFunction with the given signature
+/// 3. Creating a JsFunction with the given signature
 /// 4. Calling the function with the provided arguments
 ///
 /// # Usage
@@ -90,8 +85,14 @@ pub use wry_bindgen_macro::wasm_bindgen;
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __wry_call_js_function {
+    (module = $module:expr, $js_code:expr, $fn_type:ty, ($($args:expr),*)) => {{
+        static __FUNC: $crate::__rt::JsFunction<$fn_type> =
+            $crate::__wry_submit_js_function!(module = $module, $js_code);
+
+        __FUNC.call($($args),*)
+    }};
     ($js_code:expr, $fn_type:ty, ($($args:expr),*)) => {{
-        static __FUNC: $crate::__rt::LazyJsFunction<$fn_type> =
+        static __FUNC: $crate::__rt::JsFunction<$fn_type> =
             $crate::__wry_submit_js_function!($js_code);
 
         __FUNC.call($($args),*)
@@ -103,7 +104,7 @@ macro_rules! __wry_call_js_function {
 /// This macro encapsulates the common pattern of:
 /// 1. Creating a static JsFunctionSpec
 /// 2. Submitting it to inventory
-/// 3. Creating a LazyJsFunction with the given signature
+/// 3. Creating a JsFunction with the given signature
 ///
 /// # Usage
 /// ```ignore
@@ -112,6 +113,18 @@ macro_rules! __wry_call_js_function {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __wry_submit_js_function {
+    (module = $module:expr, $js_code:expr) => {{
+        static __SPEC: $crate::__rt::JsFunctionSpec =
+            $crate::__rt::JsFunctionSpec::with_module($module, |__wry_module| {
+                $crate::alloc::format!($js_code, __wry_module = __wry_module)
+            });
+
+        $crate::__rt::inventory::submit! {
+            __SPEC
+        }
+
+        $crate::__rt::JsFunction::new(__SPEC)
+    }};
     ($js_code:expr) => {{
         static __SPEC: $crate::__rt::JsFunctionSpec =
             $crate::__rt::JsFunctionSpec::new(|| $crate::alloc::format!($js_code));
@@ -120,7 +133,7 @@ macro_rules! __wry_submit_js_function {
             __SPEC
         }
 
-        __SPEC.resolve_as()
+        $crate::__rt::JsFunction::new(__SPEC)
     }};
 }
 
@@ -268,17 +281,13 @@ impl<T: 'static> core::ops::Deref for JsStatic<T> {
 
 /// Prelude module for common imports
 pub mod prelude {
-    pub use crate::Clamped;
     pub use crate::JsCast;
     pub use crate::JsError;
     pub use crate::JsValue;
     pub use crate::UnwrapThrowExt;
-    pub use crate::WasmClosure;
     pub use crate::closure::{Closure, ScopedClosure};
     pub use crate::convert::Upcast;
-    pub use crate::convert::{IntoJsGeneric, JsGeneric, UpcastFrom};
     pub use crate::wasm_bindgen;
-    pub use crate::{BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef};
-    pub use crate::{JSFunction, JsThreadLocal};
-    pub use crate::{JsOption, Null, Promising, Undefined};
+    #[doc(hidden)]
+    pub use wry_bindgen_macro::__wasm_bindgen_class_marker;
 }

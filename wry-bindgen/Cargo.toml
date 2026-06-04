@@ -9,10 +9,9 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 [features]
 default = ["std"]
 std = []
-# Mirror upstream wasm-bindgen's feature surface so the public-API diff (which runs
-# against this crate) matches and downstream feature flags resolve. `serde`/`serde_json`
-# enable the optional deps used by `JsValue::{from,into}_serde`; `gg-alloc`/`strict-macro`
-# exist to match upstream's feature names.
+# `serde`/`serde_json` enable the optional deps used by
+# `JsValue::{from,into}_serde`; the remaining feature names are no-op flags
+# retained for workspace feature resolution.
 enable-interning = ["std"]
 serde-serialize = ["serde", "serde_json", "std"]
 serde = ["dep:serde"]
@@ -25,14 +24,11 @@ rustversion = []
 xxx_debug_only_print_generated_code = []
 
 [dependencies]
-atomic-waker = "1.1.2"
-base64 = "0.22"
-bytemuck = "1.14"
 inventory = "0.3.21"
+wry-bindgen-core = { path = "../wry-bindgen-core", version = "0.1.0" }
 wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.122" }
 # We use this instead of std because wasm bindgen supports no_std environments
-once_cell = { version = "1.21.3", features = ["critical-section"] }
-http = "1.4.0"
+cfg-if = "1.0.0"
 serde = { version = "1", optional = true }
 serde_json = { version = "1", optional = true }
 

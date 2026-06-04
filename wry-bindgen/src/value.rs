@@ -3,34 +3,15 @@
 //! This type represents a reference to a JavaScript value on the JS heap.
 //! API compatible with wasm-bindgen's JsValue.
 
+use crate::__rt::{JsRef, JsRefEncode};
 use alloc::{boxed::Box, string::String, vec::Vec};
 use core::fmt;
 use core::ptr::NonNull;
-
-/// Top of the temporary borrow stack and start of special JS value indices.
-/// Values `1..JSIDX_OFFSET` are borrowed references that are only valid while
-/// the current JS borrow frame is alive.
-pub(crate) const JSIDX_OFFSET: u64 = 128;
-
-/// Index for the `undefined` JS value.
-pub(crate) const JSIDX_UNDEFINED: u64 = JSIDX_OFFSET;
-
-/// Index for the `null` JS value.
-pub(crate) const JSIDX_NULL: u64 = JSIDX_OFFSET + 1;
-
-/// Index for the `true` JS value.
-pub(crate) const JSIDX_TRUE: u64 = JSIDX_OFFSET + 2;
-
-/// Index for the `false` JS value.
-pub(crate) const JSIDX_FALSE: u64 = JSIDX_OFFSET + 3;
-
-/// First usable owned heap ID. IDs in `JSIDX_OFFSET..JSIDX_RESERVED` are
-/// reserved for special JS constants.
-pub(crate) const JSIDX_RESERVED: u64 = JSIDX_OFFSET + 4;
+use wry_bindgen_core::Clamped;
 
 #[inline]
-fn is_special_value_id(id: u64) -> bool {
-    (JSIDX_OFFSET..JSIDX_RESERVED).contains(&id)
+fn is_special_value_id(id: JsRef) -> bool {
+    id.is_special_value()
 }
 
 /// An opaque reference to a JavaScript heap object.
@@ -45,45 +26,37 @@ fn is_special_value_id(id: u64) -> bool {
 /// Unlike wasm-bindgen which runs in a single-threaded Wasm environment,
 /// this implementation uses the IPC protocol to communicate with JS.
 pub struct JsValue {
-    // The handle is just a `u64`, so the type is `Send`/`Sync`. A JsValue id is
-    // only meaningful inside the thread-local runtime that created it; using one
-    // elsewhere is a runtime error.
-    #[doc(hidden)]
-    pub idx: u64,
+    // A JsRef is only meaningful inside the thread-local runtime that created
+    // it; using one elsewhere is a runtime error.
+    idx: JsRef,
 }
 
 impl JsValue {
     /// The `null` JS value constant.
-    pub const NULL: JsValue = JsValue::_new(JSIDX_NULL);
+    pub const NULL: JsValue = JsValue::from_ref(JsRef::NULL);
 
     /// The `undefined` JS value constant.
-    pub const UNDEFINED: JsValue = JsValue::_new(JSIDX_UNDEFINED);
+    pub const UNDEFINED: JsValue = JsValue::from_ref(JsRef::UNDEFINED);
 
     /// The `true` JS value constant.
-    pub const TRUE: JsValue = JsValue::_new(JSIDX_TRUE);
+    pub const TRUE: JsValue = JsValue::from_ref(JsRef::TRUE);
 
     /// The `false` JS value constant.
-    pub const FALSE: JsValue = JsValue::_new(JSIDX_FALSE);
+    pub const FALSE: JsValue = JsValue::from_ref(JsRef::FALSE);
 
-    /// Create a new JsValue from an index (const fn for static values).
-    #[inline]
-    const fn _new(idx: u64) -> JsValue {
-        JsValue { idx }
-    }
-
-    /// Create a new JsValue from a heap ID.
+    /// Create a new JsValue from a JS heap reference.
     ///
-    /// This is called internally when decoding a value from JS.
+    /// This is called internally when decoding or reserving a value from JS.
     #[inline]
-    pub(crate) fn from_id(id: u64) -> Self {
-        Self::_new(id)
+    pub(crate) const fn from_ref(js_ref: JsRef) -> Self {
+        Self { idx: js_ref }
     }
 
-    /// Get the heap ID for this value.
+    /// Get the JS heap reference for this value.
     ///
     /// This is used internally for encoding values to send to JS.
     #[inline]
-    pub fn id(&self) -> u64 {
+    pub(crate) fn js_ref(&self) -> JsRef {
         self.idx
     }
 
@@ -157,9 +130,9 @@ impl JsValue {
     /// Returns u32 for wasm-bindgen compatibility.
     #[inline]
     pub fn into_abi(self) -> u32 {
-        let id = self.idx;
+        let id = self.idx.into_abi();
         core::mem::forget(self);
-        id as u32
+        id
     }
 
     /// Creates a new JS value representing `undefined`.
@@ -208,11 +181,18 @@ impl Clone for JsValue {
         // Special constants don't need cloning. Borrow-stack IDs are below
         // JSIDX_OFFSET and must be promoted to owned heap refs when cloned.
         if is_special_value_id(self.idx) {
-            return JsValue::_new(self.idx);
+            return JsValue::from_ref(self.idx);
         }
 
         // Clone the value on the JS heap
-        crate::js_helpers::js_clone_heap_ref(self.idx)
+        crate::js_helpers::js_clone_heap_ref(self)
+    }
+}
+
+impl JsRefEncode for JsValue {
+    #[inline]
+    fn js_ref(&self) -> JsRef {
+        self.js_ref()
     }
 }
 
@@ -220,12 +200,12 @@ impl Drop for JsValue {
     #[inline]
     fn drop(&mut self) {
         // Borrowed refs and special constants don't own JS heap slots.
-        if self.idx < JSIDX_RESERVED {
+        if !self.idx.is_owned_heap_ref() {
             return;
         }
 
         // Drop the value on the JS heap
-        crate::batch::queue_js_drop(self.idx);
+        self.idx.drop_js_object();
     }
 }
 
@@ -391,7 +371,7 @@ impl Eq for JsValue {}
 
 impl core::hash::Hash for JsValue {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        self.idx.hash(state);
+        core::hash::Hash::hash(&self.idx, state);
     }
 }
 
@@ -545,7 +525,7 @@ impl JsValue {
 
     /// Check if this value is undefined.
     pub fn is_undefined(&self) -> bool {
-        if self.idx == JSIDX_UNDEFINED {
+        if self.idx == JsRef::UNDEFINED {
             return true;
         }
         crate::js_helpers::js_is_undefined(self)
@@ -553,7 +533,7 @@ impl JsValue {
 
     /// Check if this value is null.
     pub fn is_null(&self) -> bool {
-        if self.idx == JSIDX_NULL {
+        if self.idx == JsRef::NULL {
             return true;
         }
         crate::js_helpers::js_is_null(self)
@@ -561,7 +541,7 @@ impl JsValue {
 
     /// Check if this value is null or undefined.
     pub fn is_null_or_undefined(&self) -> bool {
-        if self.idx == JSIDX_NULL || self.idx == JSIDX_UNDEFINED {
+        if self.idx == JsRef::NULL || self.idx == JsRef::UNDEFINED {
             return true;
         }
         crate::js_helpers::js_is_null_or_undefined(self)
@@ -579,20 +559,18 @@ impl JsValue {
 
     /// Get the value as a bool.
     pub fn as_bool(&self) -> Option<bool> {
-        match self.idx {
-            JSIDX_TRUE => Some(true),
-            JSIDX_FALSE => Some(false),
-            JSIDX_UNDEFINED | JSIDX_NULL => None,
-            _ => {
-                // For heap values, check via JS
-                if crate::js_helpers::js_is_true(self) {
-                    Some(true)
-                } else if crate::js_helpers::js_is_false(self) {
-                    Some(false)
-                } else {
-                    None
-                }
-            }
+        if self.idx == JsRef::TRUE {
+            Some(true)
+        } else if self.idx == JsRef::FALSE {
+            Some(false)
+        } else if self.idx == JsRef::UNDEFINED || self.idx == JsRef::NULL {
+            None
+        } else if crate::js_helpers::js_is_true(self) {
+            Some(true)
+        } else if crate::js_helpers::js_is_false(self) {
+            Some(false)
+        } else {
+            None
         }
     }
 
@@ -780,7 +758,7 @@ impl<T> From<NonNull<T>> for JsValue {
 
 impl<T> From<Vec<T>> for JsValue
 where
-    Vec<T>: crate::BinaryEncode + crate::EncodeTypeDef,
+    Vec<T>: crate::__rt::BinaryEncode + crate::__rt::EncodeTypeDef,
 {
     fn from(vector: Vec<T>) -> Self {
         crate::__rt::wbg_cast(vector)
@@ -789,27 +767,27 @@ where
 
 impl<T> From<Box<[T]>> for JsValue
 where
-    Box<[T]>: crate::BinaryEncode + crate::EncodeTypeDef,
+    Box<[T]>: crate::__rt::BinaryEncode + crate::__rt::EncodeTypeDef,
 {
     fn from(vector: Box<[T]>) -> Self {
         crate::__rt::wbg_cast(vector)
     }
 }
 
-impl<T> From<crate::Clamped<Vec<T>>> for JsValue
+impl<T> From<Clamped<Vec<T>>> for JsValue
 where
-    crate::Clamped<Vec<T>>: crate::BinaryEncode + crate::EncodeTypeDef,
+    Clamped<Vec<T>>: crate::__rt::BinaryEncode + crate::__rt::EncodeTypeDef,
 {
-    fn from(vector: crate::Clamped<Vec<T>>) -> Self {
+    fn from(vector: Clamped<Vec<T>>) -> Self {
         crate::__rt::wbg_cast(vector)
     }
 }
 
-impl<T> From<crate::Clamped<Box<[T]>>> for JsValue
+impl<T> From<Clamped<Box<[T]>>> for JsValue
 where
-    crate::Clamped<Vec<T>>: crate::BinaryEncode + crate::EncodeTypeDef,
+    Clamped<Vec<T>>: crate::__rt::BinaryEncode + crate::__rt::EncodeTypeDef,
 {
-    fn from(vector: crate::Clamped<Box<[T]>>) -> Self {
-        crate::__rt::wbg_cast(crate::Clamped(vector.0.into_vec()))
+    fn from(vector: Clamped<Box<[T]>>) -> Self {
+        crate::__rt::wbg_cast(Clamped(vector.0.into_vec()))
     }
 }

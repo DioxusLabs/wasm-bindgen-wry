@@ -18,7 +18,7 @@ use http::Response;
 
 use crate::batch::{Runtime, in_runtime};
 use crate::function_registry::FUNCTION_REGISTRY;
-use crate::ipc::{IPCMessage, OutboundIPCMessage, decode_data};
+use crate::ipc::{IPCMessage, decode_data};
 use crate::runtime::{
     DriverCommand, DriverCommandReceiver, DriverCommandSender, DriverCommandWeakSender, IPCSenders,
     Inbound, InboundSendError, WryIPC, dispatch_inbound_message,
@@ -73,7 +73,7 @@ enum WebviewLoadingState {
     /// message to be waiting for load, though normally this remains empty
     /// because user code cannot run until the lock can be acquired.
     Pending {
-        pending_ipc: Option<OutboundIPCMessage>,
+        pending_ipc: Option<IPCMessage>,
         acquire_lock: bool,
     },
     /// Webview is loaded and ready.
@@ -135,7 +135,7 @@ impl WebviewState {
         }
     }
 
-    fn handle_ipc_message(&mut self, ipc_msg: OutboundIPCMessage) {
+    fn handle_ipc_message(&mut self, ipc_msg: IPCMessage) {
         if let WebviewLoadingState::Pending { pending_ipc, .. } = &mut self.loading_state {
             assert!(
                 pending_ipc.replace(ipc_msg).is_none(),
@@ -222,12 +222,12 @@ impl WebviewMessageLayer {
         }
     }
 
-    fn receive_rust_message(&mut self, ipc_msg: OutboundIPCMessage) {
+    fn receive_rust_message(&mut self, ipc_msg: IPCMessage) {
         // Deliver as the response to the parked JS XHR. This is the only
         // Rust->JS payload path; `evaluate_script` is reserved for asking JS to
         // acquire this lock.
         let responder = self.take_parked_xhr();
-        responder.respond_ipc(ipc_msg.message);
+        responder.respond_ipc(ipc_msg);
     }
 
     fn release_lock(&mut self) {
@@ -620,13 +620,11 @@ fn not_found_response() -> http::Response<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{DecodedVariant, EncodedData, MessageType};
+    use crate::ipc::{DecodedVariant, MessageType};
     use std::sync::Arc;
 
     fn ipc_message(message_type: MessageType) -> IPCMessage {
-        let mut data = EncodedData::default();
-        data.push_u8(message_type as u8);
-        IPCMessage::new(data.to_bytes())
+        crate::ipc::empty_message(message_type)
     }
 
     fn handler_request(message_type: MessageType) -> http::Request<Vec<u8>> {
@@ -744,7 +742,7 @@ mod tests {
             layer.current_xhr = Some(WryBindgenResponder::from(move |response| {
                 *captured_response.borrow_mut() = Some(response);
             }));
-            layer.receive_rust_message(OutboundIPCMessage::new(message));
+            layer.receive_rust_message(message);
 
             assert!(layer.current_xhr.is_none());
             let response = response
@@ -855,9 +853,7 @@ mod tests {
             "lock script should be requested while the parked XHR is outstanding"
         );
 
-        runtime
-            .ipc
-            .send_ipc(OutboundIPCMessage::new(ipc_message(MessageType::Respond)));
+        runtime.ipc.send_ipc(ipc_message(MessageType::Respond));
         assert!(matches!(poll_driver(&mut driver), Poll::Pending));
 
         let response = response

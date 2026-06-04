@@ -1,0 +1,80 @@
+From cc60a5104c8ce80128f8ab735834db9df10a8628 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Fri, 29 May 2026 18:15:09 -0500
+Subject: [PATCH 3/4] Reuse LazyCell in js-sys (#5172)
+
+---
+ crates/js-sys/Cargo.toml           |  1 -
+ crates/js-sys/src/futures/queue.rs | 14 +++-----------
+ crates/js-sys/src/lib.rs           | 14 +++-----------
+ 3 files changed, 6 insertions(+), 23 deletions(-)
+
+diff --git a/crates/js-sys/Cargo.toml b/crates/js-sys/Cargo.toml
+index 112842e09..51e01be5a 100644
+--- a/crates/js-sys/Cargo.toml
++++ b/crates/js-sys/Cargo.toml
+@@ -36,7 +36,6 @@ futures-core-03-stream = ["dep:futures-util", "dep:futures-core"]
+ cfg-if = "1.0.0"
+ futures-core = { version = "0.3.8", default-features = false, optional = true }
+ futures-util = { version = "0.3.31", default-features = false, features = ["std"], optional = true }
+-once_cell = { version = "1.12", default-features = false }
+ wasm-bindgen = { path = "../../../shims/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [lints.rust]
+diff --git a/crates/js-sys/src/futures/queue.rs b/crates/js-sys/src/futures/queue.rs
+index 104ffa03d..11ec371b6 100644
+--- a/crates/js-sys/src/futures/queue.rs
++++ b/crates/js-sys/src/futures/queue.rs
+@@ -113,19 +113,11 @@ impl Queue {
+     }
+ 
+     pub(crate) fn with<R>(f: impl FnOnce(&Self) -> R) -> R {
+-        use once_cell::unsync::Lazy;
+-
+-        struct Wrapper<T>(Lazy<T>);
+-
+-        #[cfg(not(target_feature = "atomics"))]
+-        unsafe impl<T> Sync for Wrapper<T> {}
+-
+-        #[cfg(not(target_feature = "atomics"))]
+-        unsafe impl<T> Send for Wrapper<T> {}
++        use wasm_bindgen::__rt::LazyCell;
+ 
+         #[cfg_attr(target_feature = "atomics", thread_local)]
+-        static QUEUE: Wrapper<Queue> = Wrapper(Lazy::new(Queue::new));
++        static QUEUE: LazyCell<Queue> = LazyCell::new(Queue::new);
+ 
+-        f(&QUEUE.0)
++        QUEUE.with(f)
+     }
+ }
+diff --git a/crates/js-sys/src/lib.rs b/crates/js-sys/src/lib.rs
+index efa25abe3..0209f5630 100644
+--- a/crates/js-sys/src/lib.rs
++++ b/crates/js-sys/src/lib.rs
+@@ -13576,20 +13576,12 @@ impl Promise {
+ /// This allows access to the global properties and global names by accessing
+ /// the `Object` returned.
+ pub fn global() -> Object {
+-    use once_cell::unsync::Lazy;
+-
+-    struct Wrapper<T>(Lazy<T>);
+-
+-    #[cfg(not(target_feature = "atomics"))]
+-    unsafe impl<T> Sync for Wrapper<T> {}
+-
+-    #[cfg(not(target_feature = "atomics"))]
+-    unsafe impl<T> Send for Wrapper<T> {}
++    use wasm_bindgen::__rt::LazyCell;
+ 
+     #[cfg_attr(target_feature = "atomics", thread_local)]
+-    static GLOBAL: Wrapper<Object> = Wrapper(Lazy::new(get_global_object));
++    static GLOBAL: LazyCell<Object> = LazyCell::new(get_global_object);
+ 
+-    return GLOBAL.0.clone();
++    return GLOBAL.with(Clone::clone);
+ 
+     fn get_global_object() -> Object {
+         // Accessing the global object is not an easy thing to do, and what we
+-- 
+2.49.0

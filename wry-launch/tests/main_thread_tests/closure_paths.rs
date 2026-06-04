@@ -4,8 +4,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use wasm_bindgen::{Closure, JsValue, ScopedClosure, batch::force_flush, wasm_bindgen};
+use wasm_bindgen::{Closure, JsValue, ScopedClosure, wasm_bindgen};
 use web_sys::Event;
+use wry_bindgen_runtime::wire::force_flush;
 
 pub(crate) fn test_explicit_dyn_wrapped_borrowed_event_callbacks() {
     #[wasm_bindgen(inline_js = r#"

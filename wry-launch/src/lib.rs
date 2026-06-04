@@ -7,7 +7,7 @@ use tao::dpi::LogicalSize;
 use tao::event_loop::EventLoopBuilder;
 
 use wasm_bindgen::Closure;
-use wasm_bindgen::wry::WryBindgen;
+use wry_bindgen_runtime::WryBindgen;
 
 pub mod bindings;
 mod home;
@@ -20,7 +20,7 @@ pub use bindings::{set_on_error, set_on_log};
 
 // Re-export prelude items that apps need
 pub use wasm_bindgen::JsValue;
-pub use wasm_bindgen::batch::batch;
+pub use wry_bindgen_runtime::wire::batch;
 
 // Re-export tao and wry for users to configure builders
 pub use tao;

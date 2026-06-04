@@ -13,7 +13,7 @@ std = []
 # these features still build against the shim. Features that map to optional
 # upstream dependencies (serde, serde_json) or other crates' features (gg-alloc,
 # strict-macro) are declared as no-ops here since the shim has no such deps.
-enable-interning = ["std", "wry-bindgen/enable-interning"]
+enable-interning = ["std"]
 serde-serialize = ["serde", "serde_json", "std"]
 serde = []
 serde_json = []

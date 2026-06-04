@@ -9,12 +9,11 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 
 use atomic_waker::AtomicWaker;
 
-use crate::BinaryDecode;
 use crate::batch::with_runtime;
 use crate::function::{CALL_EXPORT_FN_ID, DROP_NATIVE_REF_FN_ID, RustCallback};
-use crate::ipc::MessageType;
-use crate::ipc::{DecodedData, DecodedVariant, IPCMessage, OutboundIPCMessage};
+use crate::ipc::{DecodedData, DecodedVariant, IPCMessage};
 use crate::object_store::ObjectHandle;
+use crate::wire::BinaryDecode;
 
 /// An inbound item arriving from JS on the single shared channel.
 ///
@@ -42,7 +41,7 @@ pub(crate) enum DriverCommand {
     /// Ask the webview to synchronously enter the handler and park an XHR.
     AcquireLock,
     /// Deliver a Rust-to-JS IPC payload through the parked XHR.
-    SendIpc(OutboundIPCMessage),
+    SendIpc(IPCMessage),
     /// Release the currently parked XHR with a blank response.
     ReleaseLock,
 }
@@ -285,7 +284,7 @@ impl WryIPC {
     }
 
     /// Send a Rust-to-JS IPC payload through the main-thread driver.
-    pub(crate) fn send_ipc(&self, message: OutboundIPCMessage) {
+    pub(crate) fn send_ipc(&self, message: IPCMessage) {
         self.commands.send(DriverCommand::SendIpc(message));
     }
 
@@ -342,18 +341,18 @@ fn handle_inbound_evaluate(mut data: DecodedData<'_>) {
 
 /// Handle a Rust callback invocation from JavaScript.
 fn handle_rust_callback(data: &mut DecodedData) {
-    let fn_id = data.take_u32().expect("Failed to read fn_id");
+    let fn_id = u32::decode(data).expect("Failed to read fn_id");
     let response = match fn_id {
         // Call a registered Rust callback
         0 => {
-            let key = data.take_u32().unwrap();
+            let key = u32::decode(data).unwrap();
 
             // Clone the Rc while briefly borrowing the batch state, then release the borrow.
             // This allows nested callbacks to access the object store during our callback execution.
             let callback = with_runtime(|state| {
                 let rust_callback = state.get_object::<RustCallback>(key);
 
-                rust_callback.clone_rc()
+                rust_callback.clone()
             });
 
             // Push a borrow frame before calling the callback - nested calls
@@ -365,7 +364,10 @@ fn handle_rust_callback(data: &mut DecodedData) {
             // Call through the cloned Rc (uniform Fn interface). A decode error
             // surfaces here with context instead of an opaque `unwrap` panic
             // inside the callback trampoline (mirrors the export path below).
-            match (callback)(data, &mut encoder) {
+            let result = callback.call(data, &mut encoder);
+            // Flush any JS operations the callback queued before responding.
+            crate::batch::force_flush();
+            match result {
                 Ok(()) => finish_respond_message(encoder),
                 Err(err) => {
                     panic!("Rust callback {key} failed to decode arguments: {err}")
@@ -387,23 +389,13 @@ fn handle_rust_callback(data: &mut DecodedData) {
             let export_name: alloc::string::String =
                 crate::encode::BinaryDecode::decode(data).expect("Failed to decode export name");
 
-            // Find the export handler
-            let export = crate::__rt::inventory::iter::<crate::__rt::JsExportSpec>()
-                .find(|e| e.name == export_name)
+            let result = inventory::iter::<crate::wire::JsExportSpec>()
+                .find_map(|export| export.call_if_name(&export_name, data))
                 .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
-
-            // Call the handler
-            let result = (export.handler)(data);
-
-            assert!(data.is_empty(), "Extra data remaining after export call");
 
             // Send response
             match result {
-                Ok(encoded) => {
-                    let mut encoder = respond_encoder();
-                    encoder.extend(&encoded);
-                    finish_respond_message(encoder)
-                }
+                Ok(encoded) => finish_respond_message(encoded),
                 Err(err) => {
                     panic!("Export call failed: {err}");
                 }
@@ -432,26 +424,22 @@ impl Drop for BorrowFrameGuard {
 }
 
 fn respond_encoder() -> crate::ipc::EncodedData {
-    let mut encoder = crate::ipc::EncodedData::default();
-    encoder.push_u8(MessageType::Respond as u8);
-    encoder
+    crate::ipc::EncodedData::default()
 }
 
-fn finish_respond_message(encoder: crate::ipc::EncodedData) -> OutboundIPCMessage {
+fn finish_respond_message(encoder: crate::ipc::EncodedData) -> IPCMessage {
     with_runtime(|runtime| runtime.finish_respond_message(encoder))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::EncodedData;
+    use crate::ipc::MessageType;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::Waker;
 
     fn ipc_message(message_type: MessageType) -> IPCMessage {
-        let mut data = EncodedData::default();
-        data.push_u8(message_type as u8);
-        IPCMessage::new(data.to_bytes())
+        crate::ipc::empty_message(message_type)
     }
 
     struct CountWaker {

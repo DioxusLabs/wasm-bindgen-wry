@@ -1,9 +1,10 @@
 use wasm_bindgen::{
-    JsError, JsValue, Promising,
+    JsError, JsValue,
     convert::{
         FromWasmAbi, IntoWasmAbi, OptionFromWasmAbi, OptionIntoWasmAbi, RefFromWasmAbi,
         TryFromJsValue, WasmAbi,
     },
+    sys::Promising,
     wasm_bindgen,
 };
 
@@ -83,7 +84,6 @@ pub(crate) fn test_interned_string_roundtrip() {
 
     let interned = wasm_bindgen::intern("cached string");
     assert_eq!(api_echo_string(interned), "cached string");
-
     wasm_bindgen::unintern("cached string");
     assert_eq!(api_echo_string("cached string"), "cached string");
 }
