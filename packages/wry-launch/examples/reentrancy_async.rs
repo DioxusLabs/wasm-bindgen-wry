@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use wasm_bindgen::{Closure, wasm_bindgen};
-use wry_launch::run;
+use wasm_bindgen_futures::spawn_local;
 
 #[wasm_bindgen(inline_js = r#"
     export function spam(cb) { setInterval(cb, 0); }
@@ -12,8 +12,13 @@ extern "C" {
     fn nothing();
 }
 
-fn main() -> wry::Result<()> {
-    run(|| async {
+fn main() {
+    wry_launch::launch();
+}
+
+#[wasm_bindgen(start)]
+pub fn start() {
+    spawn_local(async {
         let state = Rc::new(RefCell::new(0u64));
 
         let s = state.clone();
@@ -25,5 +30,5 @@ fn main() -> wry::Result<()> {
             // Hold a borrow across an js call. The callback fires reentrantly here.
             nothing();
         }
-    })
+    });
 }

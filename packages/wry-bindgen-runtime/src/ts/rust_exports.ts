@@ -78,7 +78,8 @@ function callExport(
  */
 function createWrapper(handle: number, className: string): object {
   // Try to use the generated class if available
-  const ClassConstructor = (window as any)[className];
+  const classRegistry = (window as any).__wryClassRegistry;
+  const ClassConstructor = classRegistry?.[className] ?? (window as any)[className];
   if (ClassConstructor && typeof ClassConstructor.__wrap === 'function') {
     return ClassConstructor.__wrap(handle);
   }

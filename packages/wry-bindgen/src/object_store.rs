@@ -22,6 +22,12 @@ pub fn with_object_mut<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&mut 
     f(&mut obj)
 }
 
+pub fn checkout_object<T: 'static>(
+    handle: ObjectHandle,
+) -> impl core::ops::DerefMut<Target = T> + 'static {
+    with_runtime(|rt| rt.object::<T>(handle))
+}
+
 pub fn insert_object<T: 'static>(obj: T) -> ObjectHandle {
     with_runtime(|rt| rt.insert_object(obj))
 }

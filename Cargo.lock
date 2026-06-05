@@ -1457,6 +1457,7 @@ name = "dioxus-web"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "wasm-bindgen 0.2.122",
  "web-sys",
  "wry-launch",
 ]
@@ -3077,6 +3078,7 @@ dependencies = [
  "serde",
  "serde_json",
  "uuid",
+ "wasm-bindgen 0.2.122",
  "web-sys",
  "wry-launch",
 ]
@@ -6095,7 +6097,7 @@ dependencies = [
  "once_cell",
  "rustversion",
  "wasm-bindgen-macro 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
- "wasm-bindgen-shared",
+ "wasm-bindgen-shared 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
 ]
 
 [[package]]
@@ -6122,7 +6124,17 @@ version = "0.2.122"
 source = "git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122#ddd322514d87a4b21342b7ab9a9d70796fc60576"
 dependencies = [
  "quote",
- "wasm-bindgen-macro-support",
+ "wasm-bindgen-macro-support 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
+]
+
+[[package]]
+name = "wasm-bindgen-macro-support"
+version = "0.2.122"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+ "wasm-bindgen-shared 0.2.122",
 ]
 
 [[package]]
@@ -6134,7 +6146,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
- "wasm-bindgen-shared",
+ "wasm-bindgen-shared 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
+]
+
+[[package]]
+name = "wasm-bindgen-shared"
+version = "0.2.122"
+dependencies = [
+ "unicode-ident",
 ]
 
 [[package]]
@@ -6937,6 +6956,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+ "wasm-bindgen-macro-support 0.2.122",
 ]
 
 [[package]]
@@ -7031,6 +7051,7 @@ dependencies = [
  "strum",
  "strum_macros",
  "tokio",
+ "wasm-bindgen 0.2.122",
  "wasm-bindgen-futures",
  "web-sys",
  "wry-launch",

@@ -632,7 +632,7 @@ pub enum LitOrExpr {
 impl Export {
     /// Mangles a rust -> javascript export, so that the created Ident will be unique over function
     /// name and class name, if the function belongs to a javascript class.
-    pub(crate) fn rust_symbol(&self) -> Ident {
+    pub fn rust_symbol(&self) -> Ident {
         let mut generated_name = String::from("__wasm_bindgen_generated");
         if let Some(class) = &self.js_class {
             generated_name.push('_');
@@ -654,7 +654,7 @@ impl Export {
     /// This is the name of the shim function that gets exported and takes the raw
     /// ABI form of its arguments and converts them back into their normal,
     /// "high level" form before calling the actual function.
-    pub(crate) fn export_name(&self) -> String {
+    pub fn export_name(&self) -> String {
         let fn_name = self.function.name.to_string();
         let base_name = match &self.js_class {
             Some(class) => shared::struct_function_export_name(class, &fn_name),

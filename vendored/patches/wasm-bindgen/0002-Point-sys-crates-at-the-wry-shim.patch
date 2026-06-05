@@ -1,4 +1,4 @@
-From 019af7201813bdafa82b52156edf54bd71097804 Mon Sep 17 00:00:00 2001
+From ebd92139c0a66547225bf404630f150cad82563b Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Fri, 29 May 2026 10:57:02 -0500
 Subject: [PATCH 2/4] Point sys crates at the wry shim
@@ -7,12 +7,13 @@ Subject: [PATCH 2/4] Point sys crates at the wry shim
  crates/futures/Cargo.toml |  9 ++-------
  crates/js-sys/Cargo.toml  | 10 +---------
  crates/shared/Cargo.toml  |  5 -----
+ crates/test/Cargo.toml    |  2 +-
  crates/web-sys/Cargo.toml |  9 ++-------
  crates/web-sys/src/lib.rs |  2 +-
- 5 files changed, 6 insertions(+), 29 deletions(-)
+ 6 files changed, 7 insertions(+), 30 deletions(-)
 
 diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
-index b355ca5de..949cbc795 100644
+index b355ca5..dfa17a9 100644
 --- a/crates/futures/Cargo.toml
 +++ b/crates/futures/Cargo.toml
 @@ -17,18 +17,13 @@ all-features = true
@@ -37,7 +38,7 @@ index b355ca5de..949cbc795 100644
  [lints]
  workspace = true
 diff --git a/crates/js-sys/Cargo.toml b/crates/js-sys/Cargo.toml
-index 1da2a7e25..112842e09 100644
+index 1da2a7e..ee70f10 100644
 --- a/crates/js-sys/Cargo.toml
 +++ b/crates/js-sys/Cargo.toml
 @@ -37,15 +37,7 @@ cfg-if = "1.0.0"
@@ -58,7 +59,7 @@ index 1da2a7e25..112842e09 100644
  [lints.rust]
  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(js_sys_unstable_apis)'] }
 diff --git a/crates/shared/Cargo.toml b/crates/shared/Cargo.toml
-index 4b37dac65..c57d1bdff 100644
+index 4b37dac..c57d1bd 100644
 --- a/crates/shared/Cargo.toml
 +++ b/crates/shared/Cargo.toml
 @@ -14,11 +14,6 @@ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/sh
@@ -73,8 +74,21 @@ index 4b37dac65..c57d1bdff 100644
  [lints]
  workspace = true
  
+diff --git a/crates/test/Cargo.toml b/crates/test/Cargo.toml
+index e6ee4cd..a330cad 100644
+--- a/crates/test/Cargo.toml
++++ b/crates/test/Cargo.toml
+@@ -16,7 +16,7 @@ std = ["wasm-bindgen/std", "js-sys/std", "wasm-bindgen-futures/std"]
+ [dependencies]
+ gg-alloc = { version = "1.0", optional = true }
+ js-sys = { path = '../js-sys', version = '=0.3.99', default-features = false }
+-wasm-bindgen = { path = '../..', version = '=0.2.122', default-features = false }
++wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ wasm-bindgen-futures = { path = '../futures', version = '=0.4.72', default-features = false }
+ wasm-bindgen-test-macro = { path = '../test-macro', version = '=0.3.72' }
+ wasm-bindgen-test-shared = { path = "../test-shared", version = "=0.2.122" }
 diff --git a/crates/web-sys/Cargo.toml b/crates/web-sys/Cargo.toml
-index f621e9473..fb472bfff 100644
+index f621e94..ade3f2a 100644
 --- a/crates/web-sys/Cargo.toml
 +++ b/crates/web-sys/Cargo.toml
 @@ -23,13 +23,8 @@ doctest = false
@@ -94,7 +108,7 @@ index f621e9473..fb472bfff 100644
  [lints.rust]
  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(web_sys_unstable_apis)'] }
 diff --git a/crates/web-sys/src/lib.rs b/crates/web-sys/src/lib.rs
-index 38cdb6732..ed019dda5 100644
+index 38cdb67..ed019dd 100644
 --- a/crates/web-sys/src/lib.rs
 +++ b/crates/web-sys/src/lib.rs
 @@ -12,7 +12,7 @@
@@ -108,3 +122,4 @@ index 38cdb6732..ed019dda5 100644
  extern crate alloc;
 -- 
 2.49.0
+

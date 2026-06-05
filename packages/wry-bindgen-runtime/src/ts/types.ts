@@ -31,6 +31,7 @@ enum TypeTag {
   BorrowedRef = 22,
   U8Clamped = 23,
   StringEnum = 24,
+  DynamicUnion = 25,
 }
 
 /**
@@ -128,6 +129,39 @@ class StringEnumType implements TypeClass {
   decode(decoder: DataDecoder): string {
     const index = decoder.takeU32();
     return this.lookupArray[index];
+  }
+}
+
+type DynamicUnionVariant =
+  | { kind: "string"; value: string }
+  | { kind: "type"; type: TypeClass };
+
+/**
+ * Type class for dynamic unions. JS-to-Rust values are sent as heap refs so
+ * Rust can run the same runtime dispatch as upstream; Rust-to-JS values are
+ * decoded from a variant index plus the variant payload.
+ */
+class DynamicUnionType implements TypeClass {
+  declare private variants: DynamicUnionVariant[];
+
+  constructor(variants: DynamicUnionVariant[]) {
+    this.variants = variants;
+  }
+
+  encode(encoder: DataEncoder, value: unknown): void {
+    heapRefTypeInstance.encode(encoder, value);
+  }
+
+  decode(decoder: DataDecoder): unknown {
+    const index = decoder.takeU8();
+    const variant = this.variants[index];
+    if (variant === undefined) {
+      throw new Error(`Invalid dynamic union variant index: ${index}`);
+    }
+    if (variant.kind === "string") {
+      return variant.value;
+    }
+    return variant.type.decode(decoder);
   }
 }
 
@@ -503,6 +537,38 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       }
 
       return new StringEnumType(lookupArray);
+    }
+    case TypeTag.DynamicUnion: {
+      const variantCount = bytes[offset.value++];
+      const variants: DynamicUnionVariant[] = [];
+
+      for (let i = 0; i < variantCount; i++) {
+        const kind = bytes[offset.value++];
+        if (kind === 0) {
+          const len =
+            bytes[offset.value] |
+            (bytes[offset.value + 1] << 8) |
+            (bytes[offset.value + 2] << 16) |
+            (bytes[offset.value + 3] << 24);
+          offset.value += 4;
+
+          const strBytes = bytes.subarray(offset.value, offset.value + len);
+          offset.value += len;
+          variants.push({
+            kind: "string",
+            value: new TextDecoder().decode(strBytes),
+          });
+        } else if (kind === 1) {
+          variants.push({
+            kind: "type",
+            type: parseTypeDef(bytes, offset),
+          });
+        } else {
+          throw new Error(`Invalid dynamic union variant kind: ${kind}`);
+        }
+      }
+
+      return new DynamicUnionType(variants);
     }
     default:
       throw new Error(`Unknown TypeTag: ${tag}`);

@@ -47,6 +47,7 @@ enum TypeTag {
     BorrowedRef = 22,
     U8Clamped = 23,
     StringEnum = 24,
+    DynamicUnion = 25,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -117,6 +118,29 @@ impl TypeDef {
         for variant in variants {
             self.push_str(variant);
         }
+    }
+
+    #[doc(hidden)]
+    pub fn dynamic_union(
+        &mut self,
+        variant_count: usize,
+        encode_variants: impl FnOnce(&mut TypeDef),
+    ) {
+        self.push_tag(TypeTag::DynamicUnion);
+        self.push_u8(u8::try_from(variant_count).expect("too many dynamic union variants"));
+        encode_variants(self);
+    }
+
+    #[doc(hidden)]
+    pub fn dynamic_union_string_variant(&mut self, value: &str) {
+        self.push_u8(0);
+        self.push_str(value);
+    }
+
+    #[doc(hidden)]
+    pub fn dynamic_union_type_variant<T: EncodeTypeDef>(&mut self) {
+        self.push_u8(1);
+        T::encode_type_def(self);
     }
 
     #[doc(hidden)]

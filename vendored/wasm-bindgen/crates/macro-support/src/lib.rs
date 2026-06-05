@@ -5,25 +5,288 @@
 #[macro_use]
 mod error;
 
-mod ast;
+pub mod ast;
+#[cfg(feature = "expand")]
 mod codegen;
+#[cfg(feature = "expand")]
 mod encode;
+#[cfg(feature = "expand")]
 mod generics;
 mod hash;
-mod parser;
+pub mod parser;
 
+#[cfg(feature = "expand")]
 use codegen::TryToTokens;
-use error::Diagnostic;
-pub use parser::BindgenAttrs;
+pub use error::Diagnostic;
+pub use parser::{BindgenAttr, BindgenAttrs, JsNamespace};
 use parser::{ConvertToAst, MacroParse};
 use proc_macro2::TokenStream;
 use quote::quote;
 use quote::ToTokens;
+#[cfg(feature = "expand")]
 use quote::TokenStreamExt;
+use syn::ext::IdentExt;
 use syn::parse::{Parse, ParseStream, Result as SynResult};
 use syn::Token;
 
+/// Parsed upstream macro-support AST plus Rust tokens preserved by the parser.
+///
+/// The parser emits these tokens for user Rust items that must remain in the
+/// expanded output while the AST carries wasm-bindgen metadata for generated
+/// glue.
+pub struct ParseOutput {
+    pub program: ast::Program,
+    pub tokens: TokenStream,
+    pub main: Option<syn::Ident>,
+}
+
+/// Parse a `#[wasm_bindgen]` input item into the upstream macro-support AST.
+pub fn parse(attr: TokenStream, input: TokenStream) -> Result<ast::Program, Diagnostic> {
+    Ok(parse_with_tokens(attr, input)?.program)
+}
+
+/// Parse a `#[wasm_bindgen]` input item into the upstream macro-support AST and
+/// return the Rust tokens the upstream parser preserves.
+pub fn parse_with_tokens(attr: TokenStream, input: TokenStream) -> Result<ParseOutput, Diagnostic> {
+    parser::reset_attrs_used();
+
+    let item = match syn::parse2::<syn::Item>(input)? {
+        syn::Item::Struct(item) => return parse_struct_item_with_tokens(attr, item),
+        syn::Item::Impl(item) => return parse_impl_item_with_tokens(attr, item),
+        syn::Item::Const(item) => return parse_const_item_with_tokens(attr, item),
+        item => item,
+    };
+
+    let opts: BindgenAttrs = syn::parse2(attr)?;
+    let main = match &item {
+        syn::Item::Fn(item) if opts.main().is_some() => Some(item.sig.ident.clone()),
+        _ => None,
+    };
+    let mut tokens = TokenStream::new();
+    let mut program = ast::Program::default();
+    item.macro_parse(&mut program, (Some(opts), &mut tokens))?;
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(ParseOutput {
+        program,
+        tokens,
+        main,
+    })
+}
+
+fn parse_const_item_with_tokens(
+    attr: TokenStream,
+    item: syn::ItemConst,
+) -> Result<ParseOutput, Diagnostic> {
+    let opts = syn::parse2(attr)?;
+    let mut program = ast::Program::default();
+    item.clone().macro_parse(&mut program, opts)?;
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(ParseOutput {
+        program,
+        tokens: item.to_token_stream(),
+        main: None,
+    })
+}
+
+fn parse_struct_item_with_tokens(
+    attr: TokenStream,
+    mut item: syn::ItemStruct,
+) -> Result<ParseOutput, Diagnostic> {
+    let opts: BindgenAttrs = syn::parse2(attr.clone())?;
+    let wasm_bindgen = opts
+        .wasm_bindgen()
+        .cloned()
+        .unwrap_or_else(|| syn::parse_quote! { ::wasm_bindgen });
+    let extends_path = opts.attrs.iter().find_map(|(_, a)| match a {
+        parser::BindgenAttr::Extends(_, path) => Some(path.clone()),
+        _ => None,
+    });
+    parser::inject_parent_field(&mut item, extends_path.as_ref(), &wasm_bindgen)?;
+
+    // The upstream struct path is two-stage: the attribute macro re-emits the
+    // struct with `#[wasm_bindgen(...)]`, then the derive marker parses it.
+    // Reset attribute accounting for that marker-like parse.
+    parser::reset_attrs_used();
+    let mut item: syn::ItemStruct = syn::parse2(quote! {
+        #[wasm_bindgen(#attr)]
+        #item
+    })?;
+
+    let mut program = ast::Program::default();
+    program.structs.push((&mut item).convert(&program)?);
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(ParseOutput {
+        program,
+        tokens: item.to_token_stream(),
+        main: None,
+    })
+}
+
+fn parse_impl_item_with_tokens(
+    attr: TokenStream,
+    mut item: syn::ItemImpl,
+) -> Result<ParseOutput, Diagnostic> {
+    let opts: BindgenAttrs = syn::parse2(attr)?;
+
+    if item.defaultness.is_some() {
+        return Err(Diagnostic::spanned_error(
+            &item.defaultness,
+            "#[wasm_bindgen] default impls are not supported",
+        ));
+    }
+    if item.unsafety.is_some() {
+        return Err(Diagnostic::spanned_error(
+            &item.unsafety,
+            "#[wasm_bindgen] unsafe impls are not supported",
+        ));
+    }
+    if let Some((_, path, _)) = &item.trait_ {
+        return Err(Diagnostic::spanned_error(
+            path,
+            "#[wasm_bindgen] trait impls are not supported",
+        ));
+    }
+    if !item.generics.params.is_empty() {
+        return Err(Diagnostic::spanned_error(
+            &item.generics,
+            "#[wasm_bindgen] generic impls aren't supported",
+        ));
+    }
+
+    let class_path = match item.self_ty.as_ref() {
+        syn::Type::Path(path) if path.qself.is_none() => &path.path,
+        other => {
+            return Err(Diagnostic::spanned_error(
+                other,
+                "unsupported self type in #[wasm_bindgen] impl",
+            ));
+        }
+    };
+    let class = class_path
+        .segments
+        .last()
+        .ok_or_else(|| Diagnostic::spanned_error(class_path, "expected an impl self type"))?
+        .ident
+        .clone();
+
+    let mut program = ast::Program::default();
+    if let Some(path) = opts.wasm_bindgen() {
+        program.wasm_bindgen = path.clone();
+    }
+    if let Some(path) = opts.wasm_bindgen_futures() {
+        program.wasm_bindgen_futures = path.clone();
+    }
+    if let Some(path) = opts.js_sys() {
+        program.js_sys = path.clone();
+    }
+
+    let marker = ClassMarker {
+        class: class.clone(),
+        js_class: opts
+            .js_class()
+            .map(|s| s.0.to_string())
+            .unwrap_or_else(|| class.unraw().to_string()),
+        js_namespace: opts.js_namespace().map(|(ns, _)| ns.0),
+        wasm_bindgen: program.wasm_bindgen.clone(),
+        wasm_bindgen_futures: program.wasm_bindgen_futures.clone(),
+        js_sys: program.js_sys.clone(),
+    };
+
+    let mut errors = Vec::new();
+    for impl_item in item.items.iter_mut() {
+        match impl_item {
+            syn::ImplItem::Fn(method) => {
+                if let Err(error) = method.macro_parse(&mut program, &marker) {
+                    errors.push(error);
+                }
+            }
+            syn::ImplItem::Const(_) => errors.push(Diagnostic::spanned_error(
+                impl_item,
+                "const definitions aren't supported with #[wasm_bindgen]",
+            )),
+            syn::ImplItem::Type(_) => errors.push(Diagnostic::spanned_error(
+                impl_item,
+                "type definitions in impls aren't supported with #[wasm_bindgen]",
+            )),
+            syn::ImplItem::Macro(_) => errors.push(Diagnostic::spanned_error(
+                impl_item,
+                "macros in impls aren't supported",
+            )),
+            syn::ImplItem::Verbatim(_) => panic!("unparsed impl item?"),
+            other => errors.push(Diagnostic::spanned_error(
+                other,
+                "failed to parse this item as a known item",
+            )),
+        }
+    }
+    Diagnostic::from_vec(errors)?;
+    opts.check_used();
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(ParseOutput {
+        program,
+        tokens: item.to_token_stream(),
+        main: None,
+    })
+}
+
+/// Parse a struct body through the upstream exported-struct converter.
+pub fn parse_struct(input: TokenStream) -> Result<ast::Struct, Diagnostic> {
+    parser::reset_attrs_used();
+
+    let mut item = syn::parse2::<syn::ItemStruct>(input)?;
+    let program = ast::Program::default();
+    let parsed = (&mut item).convert(&program)?;
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(parsed)
+}
+
+/// Parse an internal class marker method into the upstream macro-support AST.
+pub fn parse_class_marker(
+    attr: TokenStream,
+    input: TokenStream,
+) -> Result<ast::Program, Diagnostic> {
+    Ok(parse_class_marker_with_tokens(attr, input)?.program)
+}
+
+/// Parse an internal class marker method into the upstream macro-support AST
+/// and return the method tokens preserved by the upstream parser.
+pub fn parse_class_marker_with_tokens(
+    attr: TokenStream,
+    input: TokenStream,
+) -> Result<ParseOutput, Diagnostic> {
+    parser::reset_attrs_used();
+
+    let mut item = syn::parse2::<syn::ImplItemFn>(input)?;
+    let opts: ClassMarker = syn::parse2(attr)?;
+    let mut program = ast::Program::default();
+    item.macro_parse(&mut program, &opts)?;
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(ParseOutput {
+        program,
+        tokens: item.to_token_stream(),
+        main: None,
+    })
+}
+
+/// Parse a `wasm_bindgen::link_to!` input into its module AST.
+pub fn parse_link_to(input: TokenStream) -> Result<ast::LinkToModule, Diagnostic> {
+    parser::reset_attrs_used();
+
+    let opts = syn::parse2(input)?;
+    let parsed = parser::link_to(opts)?;
+    parser::unused_attrs_diagnostic()?;
+
+    Ok(parsed)
+}
+
 /// Takes the parsed input from a `#[wasm_bindgen]` macro and returns the generated bindings
+#[cfg(feature = "expand")]
 pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diagnostic> {
     parser::reset_attrs_used();
     // if struct is encountered, add `derive` attribute and let everything happen there (workaround
@@ -68,6 +331,7 @@ pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diag
 }
 
 /// Takes the parsed input from a `wasm_bindgen::link_to` macro and returns the generated link
+#[cfg(feature = "expand")]
 pub fn expand_link_to(input: TokenStream) -> Result<TokenStream, Diagnostic> {
     parser::reset_attrs_used();
     let opts = syn::parse2(input)?;
@@ -80,6 +344,7 @@ pub fn expand_link_to(input: TokenStream) -> Result<TokenStream, Diagnostic> {
 }
 
 /// Takes the parsed input from a `#[wasm_bindgen]` macro and returns the generated bindings
+#[cfg(feature = "expand")]
 pub fn expand_class_marker(
     attr: TokenStream,
     input: TokenStream,
@@ -222,6 +487,7 @@ impl Parse for ClassMarker {
     }
 }
 
+#[cfg(feature = "expand")]
 pub fn expand_struct_marker(item: TokenStream) -> Result<TokenStream, Diagnostic> {
     parser::reset_attrs_used();
 

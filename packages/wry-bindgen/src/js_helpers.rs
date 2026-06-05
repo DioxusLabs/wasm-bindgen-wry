@@ -6,7 +6,7 @@ use crate::JsValue;
 use crate::object_store::ObjectHandle;
 use crate::wasm_bindgen;
 
-#[wasm_bindgen(crate = crate, inline_js = include_str!("./js/convert.js"))]
+#[wasm_bindgen(wasm_bindgen = crate, module = "./js/convert.js")]
 extern "C" {
     #[wasm_bindgen(js_name = "is_undefined")]
     pub(crate) fn js_is_undefined(x: &JsValue) -> bool;

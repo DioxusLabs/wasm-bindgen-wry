@@ -1,6 +1,6 @@
-use crate::ast::StringEnum;
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
+use wasm_bindgen_macro_support::ast::StringEnum;
 
 use super::common::clippy_allows;
 
@@ -27,19 +27,6 @@ pub(super) fn generate_string_enum(
         .iter()
         .map(|v| quote_spanned!(span=> #enum_name::#v))
         .collect();
-
-    // Generate the enum definition with repr(u32)
-    let enum_def = quote! {
-        #(#rust_attrs)*
-        #[non_exhaustive]
-        #[repr(u32)]
-        #vis enum #enum_name {
-            #(#variants = #variant_indices,)*
-            #[automatically_derived]
-            #[doc(hidden)]
-            __Invalid
-        }
-    };
 
     // Generate helper methods (from_str, to_str, from_js_value)
     let allows = clippy_allows();
@@ -118,6 +105,36 @@ pub(super) fn generate_string_enum(
         }
     };
 
+    let try_from_jsvalue_impl = quote! {
+        #[automatically_derived]
+        impl #krate::convert::TryFromJsValue for #enum_name {
+            fn try_from_js_value_ref(value: &#krate::JsValue) -> ::core::option::Option<Self> {
+                Self::from_js_value(value)
+            }
+        }
+    };
+
+    let promising_impl = quote! {
+        #[automatically_derived]
+        impl #krate::sys::Promising for #enum_name {
+            type Resolution = #enum_name;
+        }
+    };
+
+    // Upstream parsing does not preserve string-enum tokens; wasm-bindgen
+    // generates a replacement enum with an internal invalid sentinel.
+    let enum_def = quote! {
+        #(#rust_attrs)*
+        #[non_exhaustive]
+        #[repr(u32)]
+        #vis enum #enum_name {
+            #(#variants = #variant_indices,)*
+            #[automatically_derived]
+            #[doc(hidden)]
+            __Invalid
+        }
+    };
+
     Ok(quote! {
         #enum_def
         #impl_methods
@@ -126,9 +143,7 @@ pub(super) fn generate_string_enum(
         #binary_decode_impl
         #batchable_impl
         #into_jsvalue_impl
+        #try_from_jsvalue_impl
+        #promising_impl
     })
 }
-
-// ============================================================================
-// Export Code Generation (for Rust structs/impl blocks exposed to JavaScript)
-// ============================================================================

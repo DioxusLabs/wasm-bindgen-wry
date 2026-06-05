@@ -1,14 +1,15 @@
-use crate::ast::{ImportFunction, ImportFunctionKind};
+use wasm_bindgen_macro_support::ast::{
+    ImportFunction, ImportFunctionKind, MethodKind, OperationKind,
+};
+
+use super::erasure::import_function_is_instance_method;
 
 fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix: &str) -> String {
-    // Start with the base class name (no prefix)
     let mut result = format!("(typeof {prefix}{class} !== 'undefined' ? {prefix}{class} : ");
 
-    // Add each vendor prefix
     for (i, vendor_prefix) in prefixes.iter().enumerate() {
         let prefixed_class = format!("{vendor_prefix}{class}");
         if i == prefixes.len() - 1 {
-            // Last one - end with undefined if none found
             result.push_str(&format!(
                 "(typeof {prefix}{prefixed_class} !== 'undefined' ? {prefix}{prefixed_class} : undefined)"
             ));
@@ -19,25 +20,38 @@ fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix
         }
     }
 
-    // Close all the parentheses
     result.push(')');
     result
 }
 
-/// Generate JavaScript code for the function
+/// Generate JavaScript code for the function.
 pub(super) fn generate_js_code(
     func: &ImportFunction,
+    js_namespace: Option<&[String]>,
     vendor_prefixes: &std::collections::HashMap<String, Vec<String>>,
     prefix: &str,
     skip_catch_wrapper: bool,
 ) -> String {
-    let js_name = &func.js_name;
+    let js_name = &func.function.name;
+    let prefix = namespace_prefix(prefix, js_namespace);
+    let explicit_arg_count =
+        func.function.arguments.len() - usize::from(import_function_is_instance_method(func));
 
-    let prefix = namespace_prefix(prefix, func.js_namespace.as_deref());
-
-    // Use a{index} naming to avoid conflicts with JS reserved words
-    let args: Vec<_> = (0..func.arguments.len()).map(|i| format!("a{i}")).collect();
+    let args: Vec<_> = (0..explicit_arg_count).map(|i| format!("a{i}")).collect();
     let args_str = args.join(", ");
+    let spread_args = |args: &[String]| -> String {
+        if func.variadic && !args.is_empty() {
+            let last = args.last().unwrap();
+            if args.len() == 1 {
+                format!("...{last}")
+            } else {
+                format!("{}, ...{last}", args[..args.len() - 1].join(", "))
+            }
+        } else {
+            args.join(", ")
+        }
+    };
+    let call_args_str = spread_args(&args);
 
     let (params, body) = match &func.kind {
         ImportFunctionKind::Normal => {
@@ -47,68 +61,87 @@ pub(super) fn generate_js_code(
                 let object = prefix.trim_end_matches('.');
                 js_property_access(object, js_name)
             };
-            (format!("({args_str})"), format!("{callee}({args_str})"))
-        }
-        ImportFunctionKind::Method { .. } => {
-            let method = js_property_access("obj", js_name);
-            if args.is_empty() {
-                ("(obj)".to_string(), format!("{method}()"))
-            } else {
-                (
-                    format!("(obj, {args_str})"),
-                    format!("{method}({args_str})"),
-                )
-            }
-        }
-        ImportFunctionKind::Getter { property, .. } => {
-            ("(obj)".to_string(), js_property_access("obj", property))
-        }
-        ImportFunctionKind::Setter { property, .. } => (
-            "(obj, value)".to_string(),
-            format!("{} = value", js_property_access("obj", property)),
-        ),
-        ImportFunctionKind::IndexingGetter { .. } => {
-            // obj[index] - takes one argument (the index)
-            ("(obj, index)".to_string(), "obj[index]".to_string())
-        }
-        ImportFunctionKind::IndexingSetter { .. } => {
-            // obj[index] = value - takes two arguments (index and value)
             (
-                "(obj, index, value)".to_string(),
-                "obj[index] = value".to_string(),
+                format!("({args_str})"),
+                format!("{callee}({call_args_str})"),
             )
         }
-        ImportFunctionKind::IndexingDeleter { .. } => {
-            // delete obj[index] - takes one argument (the index)
-            ("(obj, index)".to_string(), "delete obj[index]".to_string())
-        }
-        ImportFunctionKind::Constructor { class } => {
-            // Check if this type has vendor prefixes
+        ImportFunctionKind::Method {
+            class,
+            kind: MethodKind::Constructor,
+            ..
+        } => {
             let body = if let Some(prefixes) = vendor_prefixes.get(class) {
-                if !prefixes.is_empty() {
-                    // Generate vendor-prefixed fallback code
+                if prefixes.is_empty() {
+                    format!("new {prefix}{class}({call_args_str})")
+                } else {
                     let constructor_expr =
                         generate_vendor_prefixed_constructor(class, prefixes, &prefix);
-                    format!("new ({constructor_expr})({args_str})")
-                } else {
-                    format!("new {prefix}{class}({args_str})")
+                    format!("new ({constructor_expr})({call_args_str})")
                 }
             } else {
-                format!("new {prefix}{class}({args_str})")
+                format!("new {prefix}{class}({call_args_str})")
             };
 
             (format!("({args_str})"), body)
         }
-        ImportFunctionKind::StaticMethod { class } => {
+        ImportFunctionKind::Method {
+            class,
+            kind: MethodKind::Operation(operation),
+            ..
+        } if operation.is_static => {
             let class_object = format!("{prefix}{class}");
             let method = js_property_access(&class_object, js_name);
-            (format!("({args_str})"), format!("{method}({args_str})"))
+            (
+                format!("({args_str})"),
+                format!("{method}({call_args_str})"),
+            )
         }
+        ImportFunctionKind::Method {
+            kind: MethodKind::Operation(operation),
+            ..
+        } => match &operation.kind {
+            OperationKind::Regular | OperationKind::RegularThis => {
+                let method = js_property_access("obj", js_name);
+                if args.is_empty() {
+                    ("(obj)".to_string(), format!("{method}()"))
+                } else {
+                    (
+                        format!("(obj, {args_str})"),
+                        format!("{method}({call_args_str})"),
+                    )
+                }
+            }
+            OperationKind::Getter(property) => (
+                "(obj)".to_string(),
+                js_property_access(
+                    "obj",
+                    property
+                        .as_deref()
+                        .unwrap_or_else(|| func.function.infer_getter_property()),
+                ),
+            ),
+            OperationKind::Setter(property) => {
+                let property = property
+                    .clone()
+                    .or_else(|| func.function.infer_setter_property().ok())
+                    .unwrap_or_else(|| "value".to_string());
+                (
+                    "(obj, value)".to_string(),
+                    format!("{} = value", js_property_access("obj", &property)),
+                )
+            }
+            OperationKind::IndexingGetter => ("(obj, index)".to_string(), "obj[index]".to_string()),
+            OperationKind::IndexingSetter => (
+                "(obj, index, value)".to_string(),
+                "obj[index] = value".to_string(),
+            ),
+            OperationKind::IndexingDeleter => {
+                ("(obj, index)".to_string(), "delete obj[index]".to_string())
+            }
+        },
     };
 
-    // Wrap in try-catch if catch attribute is present
-    // Skip for async functions since the Promise adapter already returns
-    // Result<JsValue, JsValue>.
     let body = if func.catch && !skip_catch_wrapper {
         wrap_body_with_try_catch(&body)
     } else {
@@ -153,24 +186,12 @@ fn js_string_literal(value: &str) -> String {
     literal
 }
 
-/// Wrap JavaScript body in try-catch block for error handling
 fn wrap_body_with_try_catch(body: &str) -> String {
-    // Wrap the body in try-catch and return Result-like object
     format!(
         "{{{{ try {{{{ return {{{{ ok: {body} }}}}; }}}} catch(e) {{{{ return {{{{ err: e }}}}; }}}} }}}}"
     )
 }
 
-/// Wrap an async import's arrow function so the promise it returns carries a
-/// rejection handler from the moment it is created.
-///
-/// `JsFuture` attaches the real resolve/reject handlers once Rust awaits the
-/// promise, but that attach is a separate Rust-to-JS call. In nonbatched mode
-/// the promise is created and handed back to Rust in one round-trip, so an
-/// already-rejected promise reaches the event loop's unhandled-rejection check
-/// before the real handler arrives. Attaching a no-op rejection handler in the
-/// same JS turn marks the promise handled; `JsFuture`'s later handlers still
-/// receive the settled value.
 pub(super) fn async_promise_guard_js_code(js_code: &str) -> String {
     let Some((params, body)) = js_code.split_once(" => ") else {
         panic!("generated async JS code should be an arrow function");

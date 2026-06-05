@@ -33,6 +33,8 @@ const COPY_ENTRIES: &[&str] = &[
     "vendored/wasm-bindgen/Cargo.toml",
     "vendored/wasm-bindgen/LICENSE-APACHE",
     "vendored/wasm-bindgen/LICENSE-MIT",
+    "vendored/wasm-bindgen/crates/shared",
+    "vendored/wasm-bindgen/crates/macro-support",
     "vendored/wasm-bindgen/crates/js-sys",
     "vendored/wasm-bindgen/crates/web-sys",
     "vendored/wasm-bindgen/crates/futures",
@@ -50,6 +52,12 @@ const RENAMED_CRATES: &[RenamedCrate] = &[
         source_name: "wasm-bindgen-macro",
         publish_name: "wasm-bindgen-macro-x",
         lib_name: "wasm_bindgen_macro",
+    },
+    RenamedCrate {
+        manifest: "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
+        source_name: "wasm-bindgen-macro-support",
+        publish_name: "wasm-bindgen-macro-support-x",
+        lib_name: "wasm_bindgen_macro_support",
     },
     RenamedCrate {
         manifest: "vendored/wasm-bindgen/crates/js-sys/Cargo.toml",
@@ -363,6 +371,10 @@ fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
 fn publish_crates() -> Vec<PublishCrate> {
     vec![
         PublishCrate {
+            manifest: "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
+            publish_name: "wasm-bindgen-macro-support-x",
+        },
+        PublishCrate {
             manifest: "packages/wry-bindgen-macro-support/Cargo.toml",
             publish_name: "wry-bindgen-macro-support",
         },
@@ -473,6 +485,7 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
     let versions = package_versions(staging_dir)?;
 
     merge_vendored_workspace_lints(staging_dir)?;
+    remove_local_vendored_workspace_roots(staging_dir)?;
 
     for krate in RENAMED_CRATES {
         let manifest = staging_dir.join(krate.manifest);
@@ -484,8 +497,15 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
         rewrite_dependency_packages(&staging_dir.join(krate.manifest), &versions, true)?;
     }
 
-    rewrite_root_workspace_members(&staging_dir.join("Cargo.toml"))?;
-    rewrite_dependency_packages(&staging_dir.join("Cargo.toml"), &versions, false)?;
+    let root_manifest = staging_dir.join("Cargo.toml");
+    rewrite_root_workspace_members(&root_manifest)?;
+    rewrite_dependency_packages(&root_manifest, &versions, false)?;
+    ensure_patch_crates_io_entry(
+        &root_manifest,
+        "web-sys",
+        "vendored/wasm-bindgen/crates/web-sys",
+        "web-sys-x",
+    )?;
     trim_web_sys_features_to_published(staging_dir)?;
     Ok(())
 }
@@ -747,6 +767,47 @@ fn merge_vendored_workspace_lints(staging_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn remove_local_vendored_workspace_roots(staging_dir: &Path) -> Result<()> {
+    for relative in ["vendored/wasm-bindgen/crates/macro-support/Cargo.toml"] {
+        remove_manifest_sections(
+            &staging_dir.join(relative),
+            &["workspace", "workspace.lints.rust", "workspace.lints.clippy"],
+        )?;
+    }
+    Ok(())
+}
+
+fn remove_manifest_sections(path: &Path, sections: &[&str]) -> Result<()> {
+    let text = fs::read_to_string(path)?;
+    let mut lines = Lines::from(&text);
+    let mut changed = false;
+    let mut index = 0;
+
+    while index < lines.len() {
+        let Some(name) = section_name(lines.body(index)) else {
+            index += 1;
+            continue;
+        };
+
+        let start = index;
+        index += 1;
+        while index < lines.len() && section_name(lines.body(index)).is_none() {
+            index += 1;
+        }
+
+        if sections.contains(&name) {
+            lines.lines.drain(start..index);
+            changed = true;
+            index = start;
+        }
+    }
+
+    if changed {
+        fs::write(path, lines.into_string())?;
+    }
+    Ok(())
+}
+
 fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
     let text = fs::read_to_string(path)?;
     let mut lines = Lines::from(&text);
@@ -770,10 +831,12 @@ fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
             "    \"packages/wry-bindgen-macro-support\",",
             "    \"packages/wasm-bindgen\",",
             "    \"packages/wasm-bindgen-macro\",",
+            "    \"vendored/wasm-bindgen/crates/macro-support\",",
             "    \"vendored/wasm-bindgen/crates/js-sys\",",
             "    \"vendored/wasm-bindgen/crates/web-sys\",",
             "    \"vendored/wasm-bindgen/crates/futures\",",
             "]",
+            "exclude = [\"vendored/wasm-bindgen/crates/shared\"]",
             "resolver = \"2\"",
         ],
     );
@@ -935,6 +998,45 @@ fn rewrite_dependency_packages(
     if changed {
         fs::write(path, lines.into_string())?;
     }
+    Ok(())
+}
+
+fn ensure_patch_crates_io_entry(
+    path: &Path,
+    dependency: &str,
+    dependency_path: &str,
+    package: &str,
+) -> Result<()> {
+    let text = fs::read_to_string(path)?;
+    let mut lines = Lines::from(&text);
+    let (start, end) = lines.find_section_bounds("patch.crates-io").ok_or_else(|| {
+        Error::new(format!(
+            "{} is missing a [patch.crates-io] section",
+            path.display()
+        ))
+    })?;
+
+    for index in start..end {
+        let line = lines.body(index).to_string();
+        let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
+            continue;
+        };
+        if key != dependency {
+            continue;
+        }
+
+        let updated_table = upsert_inline_table_value(table_body, "path", dependency_path);
+        let updated_table = upsert_inline_table_value(&updated_table, "package", package);
+        lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+        fs::write(path, lines.into_string())?;
+        return Ok(());
+    }
+
+    lines.insert(
+        end,
+        format!("{dependency} = {{ path = \"{dependency_path}\", package = \"{package}\" }}"),
+    );
+    fs::write(path, lines.into_string())?;
     Ok(())
 }
 
@@ -1372,7 +1474,101 @@ mod tests {
     #[test]
     fn renamed_package_map_contains_expected_crates() {
         assert_eq!(renamed_package_name("wasm-bindgen"), Some("wasm-bindgen-x"));
+        assert_eq!(
+            renamed_package_name("wasm-bindgen-macro-support"),
+            Some("wasm-bindgen-macro-support-x")
+        );
         assert_eq!(renamed_package_name("js-sys"), Some("js-sys-x"));
         assert_eq!(renamed_package_name("serde"), None);
+    }
+
+    #[test]
+    fn remove_manifest_sections_removes_matching_sections() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-section-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"wasm-bindgen-macro-support\"
+
+[workspace]
+resolver = \"2\"
+
+[workspace.lints.rust]
+unused_lifetimes = \"warn\"
+
+[dependencies]
+syn = \"2\"
+";
+        fs::write(&path, input).unwrap();
+
+        remove_manifest_sections(&path, &["workspace", "workspace.lints.rust"]).unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains("[package]"));
+        assert!(output.contains("[dependencies]"));
+        assert!(!output.contains("[workspace]"));
+        assert!(!output.contains("[workspace.lints.rust]"));
+    }
+
+    #[test]
+    fn ensure_patch_crates_io_entry_inserts_missing_entry() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-patch-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[workspace]
+members = []
+
+[patch.crates-io]
+wasm-bindgen = { path = \"packages/wasm-bindgen\", package = \"wasm-bindgen-x\" }
+";
+        fs::write(&path, input).unwrap();
+
+        ensure_patch_crates_io_entry(
+            &path,
+            "web-sys",
+            "vendored/wasm-bindgen/crates/web-sys",
+            "web-sys-x",
+        )
+        .unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains(
+            "web-sys = { path = \"vendored/wasm-bindgen/crates/web-sys\", package = \"web-sys-x\" }"
+        ));
+    }
+
+    #[test]
+    fn ensure_patch_crates_io_entry_rewrites_existing_entry() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-patch-rewrite-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[workspace]
+members = []
+
+[patch.crates-io]
+web-sys = { path = \"vendored/wasm-bindgen/crates/web-sys\", package = \"web-sys\" }
+";
+        fs::write(&path, input).unwrap();
+
+        ensure_patch_crates_io_entry(
+            &path,
+            "web-sys",
+            "vendored/wasm-bindgen/crates/web-sys",
+            "web-sys-x",
+        )
+        .unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains(r#"package = "web-sys-x""#));
+        assert!(!output.contains(r#"package = "web-sys""#));
     }
 }

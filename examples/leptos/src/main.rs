@@ -2,16 +2,14 @@
 use leptos::{ev, html::Input, prelude::*};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use wasm_bindgen::prelude::*;
 use web_sys::KeyboardEvent;
 
 pub fn main() {
-    wry_launch::run(|| async {
-        app();
-        std::future::pending::<()>().await;
-    })
-    .unwrap();
+    wry_launch::launch();
 }
 
+#[wasm_bindgen(start)]
 fn app() {
     console_error_panic_hook::set_once();
     window().document().unwrap().head().unwrap().set_inner_html(

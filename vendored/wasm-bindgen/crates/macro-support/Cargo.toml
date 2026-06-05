@@ -12,11 +12,13 @@ rust-version = "1.77"
 version = "0.2.122"
 
 [features]
+default = ["expand"]
+expand = ["dep:bumpalo"]
 extra-traits = ["syn/extra-traits"]
 strict-macro = []
 
 [dependencies]
-bumpalo = "3.0.0"
+bumpalo = { version = "3.0.0", optional = true }
 proc-macro2 = "1.0"
 quote = '1.0'
 syn = { version = '2.0', features = ['visit', 'visit-mut', 'full', 'extra-traits'] }
@@ -24,3 +26,22 @@ wasm-bindgen-shared = { path = "../shared", version = "=0.2.122" }
 
 [lints]
 workspace = true
+
+[workspace]
+resolver = "2"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(wasm_bindgen_unstable_test_coverage)',
+  'cfg(wasm_bindgen_use_js_sys)',
+  'cfg(xxx_debug_only_print_generated_code)',
+] }
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+large_enum_variant = "allow"
+new_without_default = "allow"
+overly_complex_bool_expr = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+uninlined_format_args = "warn"

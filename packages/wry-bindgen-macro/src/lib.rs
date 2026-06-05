@@ -4,6 +4,7 @@
 //! code for Wry's WebView IPC protocol.
 
 use proc_macro::TokenStream;
+use quote::ToTokens;
 
 /// The main wasm_bindgen attribute macro.
 ///
@@ -38,14 +39,17 @@ use proc_macro::TokenStream;
 pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
     match wry_bindgen_macro_support::expand(attr.into(), input.into()) {
         Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
+        Err(err) => err.to_token_stream().into(),
     }
 }
 
 /// Internal class marker macro used by wasm-bindgen impl-method expansion.
 #[proc_macro_attribute]
 pub fn __wasm_bindgen_class_marker(attr: TokenStream, input: TokenStream) -> TokenStream {
-    wasm_bindgen(attr, input)
+    match wry_bindgen_macro_support::expand_class_marker(attr.into(), input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_token_stream().into(),
+    }
 }
 
 /// Link to a JS file for use with workers/worklets.

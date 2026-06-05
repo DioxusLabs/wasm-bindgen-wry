@@ -1,31 +1,27 @@
 //! wry-bindgen-macro-support - Implementation of the wasm_bindgen attribute macro
 //!
-//! This crate contains the parsing, AST, and code generation logic for the
-//! `#[wasm_bindgen]` attribute macro that targets Wry's WebView.
+//! This crate contains Wry code generation for the `#[wasm_bindgen]`
+//! attribute macro. Parsing and macro API compatibility come from upstream
+//! `wasm-bindgen-macro-support`.
 
-mod ast;
 mod codegen;
-mod parser;
 
 use proc_macro2::TokenStream;
+use wasm_bindgen_macro_support::Diagnostic;
 
 /// Expand the wasm_bindgen attribute macro.
 ///
 /// This is the main entry point called by the proc-macro crate.
-pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, syn::Error> {
-    // Parse the input item
-    let item: syn::Item = syn::parse2(input)?;
+pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diagnostic> {
+    let program = wasm_bindgen_macro_support::parse_with_tokens(attr, input)?;
+    Ok(codegen::generate(&program)?)
+}
 
-    // Parse the attribute arguments
-    let attrs = parser::parse_attrs(attr)?;
-
-    // Convert to our AST and generate code
-    let mut program = ast::Program {
-        attrs,
-        ..Default::default()
-    };
-    ast::parse_item(&mut program, item)?;
-
-    // Generate the output tokens
-    codegen::generate(&program)
+/// Expand an internal wasm-bindgen class marker method.
+pub fn expand_class_marker(
+    attr: TokenStream,
+    input: TokenStream,
+) -> Result<TokenStream, Diagnostic> {
+    let program = wasm_bindgen_macro_support::parse_class_marker_with_tokens(attr, input)?;
+    Ok(codegen::generate(&program)?)
 }

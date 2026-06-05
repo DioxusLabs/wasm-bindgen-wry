@@ -10,5 +10,6 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "parsing", "printing", "extra-traits"] }
+wasm-bindgen-macro-support = { path = "../../vendored/wasm-bindgen/crates/macro-support", version = "=0.2.122", default-features = false }
 [lints]
 workspace = true

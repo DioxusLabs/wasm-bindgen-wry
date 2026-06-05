@@ -1,6 +1,7 @@
 //! Runtime compatibility hooks used by generated wasm-bindgen-style code.
 
 use crate::{__wry_submit_js_function, JsValue};
+use core::convert::Infallible;
 
 #[doc(hidden)]
 pub use crate::encode::{
@@ -20,21 +21,57 @@ pub use wry_bindgen_core::RustCallback;
 pub use wry_bindgen_core::{CallbackKey, Runtime};
 #[doc(hidden)]
 pub use wry_bindgen_core::{
-    JsClassMemberKind, JsClassMemberSpec, JsExportSpec, JsFunction, JsFunctionSpec, JsModuleSpec,
-    LazyCell,
+    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsFreeExportSpec, JsFunction,
+    JsFunctionSpec, JsModuleSpec, JsReexportSpec, LazyCell,
 };
 
 #[doc(hidden)]
 pub mod object_store {
     pub use crate::object_store::{
-        ObjectHandle, create_js_wrapper, drop_object, insert_object, remove_object, with_object,
-        with_object_mut,
+        ObjectHandle, checkout_object, create_js_wrapper, drop_object, insert_object,
+        remove_object, with_object, with_object_mut,
     };
 }
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WasmWord(pub u32);
+
+/// Internal helper for upstream-compatible `#[wasm_bindgen(main)]` expansion.
+pub struct MainWrapper<T>(pub Option<T>);
+
+/// Internal trait for upstream-compatible `#[wasm_bindgen(main)]` expansion.
+pub trait Main {
+    fn __wasm_bindgen_main(&mut self);
+}
+
+impl Main for &mut &mut MainWrapper<()> {
+    #[inline]
+    fn __wasm_bindgen_main(&mut self) {}
+}
+
+impl Main for &mut &mut MainWrapper<Infallible> {
+    #[inline]
+    fn __wasm_bindgen_main(&mut self) {}
+}
+
+impl<E: Into<JsValue>> Main for &mut &mut MainWrapper<Result<(), E>> {
+    #[inline]
+    fn __wasm_bindgen_main(&mut self) {
+        if let Err(error) = self.0.take().unwrap() {
+            crate::throw_val(error.into());
+        }
+    }
+}
+
+impl<E: core::fmt::Debug> Main for &mut MainWrapper<Result<(), E>> {
+    #[inline]
+    fn __wasm_bindgen_main(&mut self) {
+        if let Err(error) = self.0.take().unwrap() {
+            crate::throw_str(&alloc::format!("{error:?}"));
+        }
+    }
+}
 
 pub struct Ref<'b, T: ?Sized + 'b> {
     pub(crate) inner: core::cell::Ref<'b, T>,

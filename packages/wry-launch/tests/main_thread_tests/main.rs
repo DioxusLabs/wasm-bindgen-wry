@@ -37,6 +37,7 @@ mod string_enum;
 mod structs;
 mod thread_local;
 mod timer_callbacks;
+mod upstream_attr_codegen;
 mod wasm_bindgen_compat;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
@@ -304,6 +305,18 @@ fn build_tests() -> Vec<TestCase> {
         borrow_stack::test_borrowed_ref_deep_nesting,
         thread_local::test_thread_local,
         thread_local::test_thread_local_window,
+        upstream_attr_codegen::test_variadic_import_spreads_final_argument,
+        upstream_attr_codegen::test_imported_js_namespace_paths,
+        upstream_attr_codegen::test_reexport_installs_imported_values,
+        upstream_attr_codegen::test_static_string_thread_local_and_reexport,
+        upstream_attr_codegen::test_namespaced_export_and_this,
+        upstream_attr_codegen::test_start_export_runs_during_initialization,
+        upstream_attr_codegen::test_numeric_enums_export_and_roundtrip,
+        upstream_attr_codegen::test_dynamic_union_export_argument_decode,
+        upstream_attr_codegen::test_dynamic_union_import_return_decode,
+        upstream_attr_codegen::test_dynamic_union_nested_and_fallback,
+        upstream_attr_codegen::test_dynamic_union_export_return_encode,
+        upstream_attr_codegen::test_exported_class_metadata_paths,
         module_import::test_module_import,
         indexing::test_indexing_getter_array,
         indexing::test_indexing_setter_array,
@@ -339,6 +352,10 @@ fn build_tests() -> Vec<TestCase> {
         async_bindings::test_already_resolved_async,
         async_bindings::test_already_rejected_async_catch,
         async_bindings::test_join_many_async,
+        upstream_attr_codegen::test_async_export_returns_promise,
+        upstream_attr_codegen::test_async_receiver_methods_return_promise,
+        upstream_attr_codegen::test_async_constructor_returns_instance_promise,
+        upstream_attr_codegen::test_async_static_method_returns_promise,
     );
 
     tests

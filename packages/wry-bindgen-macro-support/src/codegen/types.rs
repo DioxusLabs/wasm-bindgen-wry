@@ -1,16 +1,20 @@
-use crate::ast::ImportType;
 use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
+use wasm_bindgen_macro_support::ast::ImportType;
 
-use super::common::generate_wry_call_js_function;
+use super::common::{generate_js_reexport_spec, generate_wry_call_js_function, namespace_tokens};
 use super::erasure::add_static_bounds;
+use super::js::namespace_prefix;
 
 pub(super) fn generate_type(
     ty: &ImportType,
+    js_namespace: Option<&[String]>,
+    reexport: Option<&Option<String>>,
     krate: &TokenStream,
     module: Option<&Ident>,
     prefix: &str,
 ) -> syn::Result<TokenStream> {
+    let prefix = namespace_prefix(prefix, js_namespace);
     let vis = &ty.vis;
     let rust_name = &ty.rust_name;
     let generics = &ty.generics;
@@ -24,7 +28,7 @@ pub(super) fn generate_type(
         .push(syn::parse_quote!(#self_ty: #krate::JsGeneric));
     let (into_js_impl_generics, into_js_ty_generics, into_js_where_clause) =
         into_js_generics.split_for_impl();
-    let derives = &ty.derives;
+    let derives = &ty.attrs;
     let span = rust_name.span();
     let storage_ty = if let Some(first_parent) = ty.extends.first() {
         first_parent.to_token_stream()
@@ -102,7 +106,9 @@ pub(super) fn generate_type(
 
     // Generate Deref to the first parent or JsValue if no parents
     let deref_impls = {
-        if let Some(inner) = js_option_inner {
+        if ty.no_deref {
+            quote! {}
+        } else if let Some(inner) = js_option_inner {
             quote_spanned! {span=>
                 impl<#inner: #krate::JsGeneric> ::core::ops::Deref for #rust_name<#inner> {
                     type Target = #inner;
@@ -213,6 +219,21 @@ pub(super) fn generate_type(
 
     // Generate JsCast implementation with actual instanceof check
     let js_name = &ty.js_name;
+    let reexport_tokens = if let Some(reexport) = reexport {
+        let name = reexport.clone().unwrap_or_else(|| ty.js_name.clone());
+        let js_code = format!("{prefix}{js_name}");
+        generate_js_reexport_spec(
+            "__TYPE_REEXPORT_SPEC",
+            quote_spanned! {span=> #name },
+            namespace_tokens(None, span),
+            module,
+            &js_code,
+            krate,
+            span,
+        )
+    } else {
+        TokenStream::new()
+    };
 
     // Generate JavaScript instanceof check code with vendor prefix fallback.
     // For inline/module imports, prefer the module export but fall back to the
@@ -302,20 +323,26 @@ pub(super) fn generate_type(
         }
     };
 
+    let into_js_generic_impl = if ty.no_into_js_generic {
+        quote! {}
+    } else {
+        quote_spanned! {span=>
+            impl #into_js_impl_generics #krate::IntoJsGeneric for #rust_name #into_js_ty_generics #into_js_where_clause {
+                type JsCanon = Self;
+
+                #[inline]
+                fn to_js(self) -> Self::JsCanon {
+                    self
+                }
+            }
+        }
+    };
+
     let generic_trait_impls = quote_spanned! {span=>
         unsafe impl #impl_generics #krate::__rt::marker::ErasableGeneric for #rust_name #ty_generics #where_clause {
             type Repr = #krate::JsValue;
         }
-
-        impl #into_js_impl_generics #krate::IntoJsGeneric for #rust_name #into_js_ty_generics #into_js_where_clause {
-            type JsCanon = Self;
-
-            #[inline]
-            fn to_js(self) -> Self::JsCanon {
-                self
-            }
-        }
-
+        #into_js_generic_impl
     };
 
     let promising_impl = if ty.no_promising {
@@ -428,5 +455,6 @@ pub(super) fn generate_type(
         #generic_trait_impls
         #promising_impl
         #upcast_impls
+        #reexport_tokens
     })
 }

@@ -5,13 +5,10 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 pub fn main() {
-    wry_launch::run(|| async {
-        app();
-        std::future::pending().await
-    })
-    .unwrap();
+    wry_launch::launch();
 }
 
+#[wasm_bindgen(start)]
 fn app() {
     console_error_panic_hook::set_once();
 

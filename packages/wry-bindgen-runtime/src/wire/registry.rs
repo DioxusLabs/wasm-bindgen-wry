@@ -34,13 +34,80 @@ enum JsFunctionCode {
 inventory::collect!(JsFunctionSpec);
 
 #[derive(Clone, Copy)]
+pub struct JsReexportSpec {
+    name: &'static str,
+    namespace: &'static [&'static str],
+    code: JsFunctionCode,
+}
+
+impl JsReexportSpec {
+    pub const fn new(
+        name: &'static str,
+        namespace: &'static [&'static str],
+        js_code: fn() -> String,
+    ) -> Self {
+        Self {
+            name,
+            namespace,
+            code: JsFunctionCode::Global(js_code),
+        }
+    }
+
+    pub const fn with_module(
+        module: &'static JsModuleSpec,
+        name: &'static str,
+        namespace: &'static [&'static str],
+        js_code: fn(&str) -> String,
+    ) -> Self {
+        Self {
+            name,
+            namespace,
+            code: JsFunctionCode::Module { module, js_code },
+        }
+    }
+}
+
+impl JsReexportSpec {
+    pub(crate) fn module(&self) -> Option<&'static JsModuleSpec> {
+        match self.code {
+            JsFunctionCode::Global(_) => None,
+            JsFunctionCode::Module { module, .. } => Some(module),
+        }
+    }
+
+    pub(crate) fn parts(&self) -> (&'static str, &'static [&'static str], String) {
+        let value = match self.code {
+            JsFunctionCode::Global(js_code) => js_code(),
+            JsFunctionCode::Module { module, js_code } => {
+                let module_binding = alloc::format!("module_{:x}", module.const_hash());
+                js_code(&module_binding)
+            }
+        };
+        (self.name, self.namespace, value)
+    }
+}
+
+inventory::collect!(JsReexportSpec);
+
+#[derive(Clone, Copy)]
 pub struct JsModuleSpec {
-    content: &'static str,
+    value: &'static str,
+    raw: bool,
 }
 
 impl JsModuleSpec {
     pub const fn new(content: &'static str) -> Self {
-        Self { content }
+        Self {
+            value: content,
+            raw: false,
+        }
+    }
+
+    pub const fn raw(specifier: &'static str) -> Self {
+        Self {
+            value: specifier,
+            raw: true,
+        }
     }
 
     pub const fn const_hash(&self) -> u64 {
@@ -48,8 +115,11 @@ impl JsModuleSpec {
         const FNV_PRIME: u64 = 0x100000001b3;
 
         let mut hash = FNV_OFFSET_BASIS;
+        let tag = self.raw as u8;
+        hash ^= tag as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
         let mut i = 0;
-        let bytes = self.content.as_bytes();
+        let bytes = self.value.as_bytes();
         while i < bytes.len() {
             hash ^= bytes[i] as u64;
             hash = hash.wrapping_mul(FNV_PRIME);
@@ -58,6 +128,65 @@ impl JsModuleSpec {
         hash
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct JsClassSpec {
+    class_name: &'static str,
+    js_name: &'static str,
+    js_namespace: &'static [&'static str],
+    private: bool,
+    extends: Option<&'static str>,
+    extends_js_class: Option<&'static str>,
+    extends_js_namespace: &'static [&'static str],
+}
+
+impl JsClassSpec {
+    pub const fn new(
+        class_name: &'static str,
+        js_name: &'static str,
+        js_namespace: &'static [&'static str],
+        private: bool,
+        extends: Option<&'static str>,
+        extends_js_class: Option<&'static str>,
+        extends_js_namespace: &'static [&'static str],
+    ) -> Self {
+        Self {
+            class_name,
+            js_name,
+            js_namespace,
+            private,
+            extends,
+            extends_js_class,
+            extends_js_namespace,
+        }
+    }
+}
+
+pub(super) type JsClassParts = (
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    bool,
+    Option<&'static str>,
+    Option<&'static str>,
+    &'static [&'static str],
+);
+
+impl JsClassSpec {
+    pub(crate) fn parts(&self) -> JsClassParts {
+        (
+            self.class_name,
+            self.js_name,
+            self.js_namespace,
+            self.private,
+            self.extends,
+            self.extends_js_class,
+            self.extends_js_namespace,
+        )
+    }
+}
+
+inventory::collect!(JsClassSpec);
 
 impl JsFunctionSpec {
     pub(crate) fn module(&self) -> Option<&'static JsModuleSpec> {
@@ -96,8 +225,12 @@ impl JsFunctionSpec {
 }
 
 impl JsModuleSpec {
-    pub(crate) fn content(&self) -> &'static str {
-        self.content
+    pub(crate) fn content(&self) -> Option<&'static str> {
+        if self.raw { None } else { Some(self.value) }
+    }
+
+    pub(crate) fn raw_specifier(&self) -> Option<&'static str> {
+        if self.raw { Some(self.value) } else { None }
     }
 }
 
@@ -169,6 +302,70 @@ impl JsClassMemberSpec {
 }
 
 inventory::collect!(JsClassMemberSpec);
+
+#[derive(Clone, Copy)]
+pub struct JsFreeExportSpec {
+    name: &'static str,
+    namespace: &'static [&'static str],
+    arg_count: usize,
+    arg_types: fn() -> Vec<TypeDef>,
+    return_type: fn() -> Option<TypeDef>,
+    this: bool,
+    public: bool,
+    start: bool,
+}
+
+impl JsFreeExportSpec {
+    pub const fn new(
+        name: &'static str,
+        namespace: &'static [&'static str],
+        arg_count: usize,
+        arg_types: fn() -> Vec<TypeDef>,
+        return_type: fn() -> Option<TypeDef>,
+        this: bool,
+        public: bool,
+        start: bool,
+    ) -> Self {
+        Self {
+            name,
+            namespace,
+            arg_count,
+            arg_types,
+            return_type,
+            this,
+            public,
+            start,
+        }
+    }
+}
+
+pub(super) type JsFreeExportParts = (
+    &'static str,
+    &'static [&'static str],
+    usize,
+    Vec<TypeDef>,
+    Option<TypeDef>,
+    bool,
+    bool,
+    bool,
+);
+
+impl JsFreeExportSpec {
+    pub(crate) fn parts(&self) -> JsFreeExportParts {
+        (
+            self.name,
+            self.namespace,
+            self.arg_count,
+            (self.arg_types)(),
+            (self.return_type)(),
+            self.this,
+            self.public,
+            self.start,
+        )
+    }
+}
+
+inventory::collect!(JsFreeExportSpec);
 
 #[derive(Clone, Copy)]
 pub struct JsExportSpec {

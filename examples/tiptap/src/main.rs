@@ -567,81 +567,87 @@ const EDITOR_HTML: &str = r#"
 "#;
 
 fn main() {
-    wry_launch::run(|| async {
-        let document = window().unwrap().document().unwrap();
-        let body = document.body().unwrap();
+    wry_launch::launch();
+}
 
-        // Add styles
-        let style = document.create_element("style").unwrap();
-        style.set_inner_html(EDITOR_STYLES);
-        document.head().unwrap().append_child(&style).unwrap();
+#[wasm_bindgen(start)]
+pub fn start() {
+    let document = window().unwrap().document().unwrap();
+    let body = document.body().unwrap();
 
-        // Inject TipTap bundle
-        inject_bundle(TIPTAP_BUNDLE);
+    // Add styles
+    let style = document.create_element("style").unwrap();
+    style.set_inner_html(EDITOR_STYLES);
+    document.head().unwrap().append_child(&style).unwrap();
 
-        // Add editor HTML
-        body.set_inner_html(EDITOR_HTML);
+    // Inject TipTap bundle
+    inject_bundle(TIPTAP_BUNDLE);
 
-        // Initial content
-        let initial_content = "<p>Welcome to the <strong>TipTap</strong> editor!</p><p>Try formatting some text using the toolbar above.</p>";
+    // Add editor HTML
+    body.set_inner_html(EDITOR_HTML);
 
-        // Create callbacks for content and selection changes
-        let on_change = Closure::new(|html: String| {
-            if let Some(output) = window()
-                .and_then(|w| w.document())
-                .and_then(|d| d.get_element_by_id("html-output"))
-            {
-                output.set_inner_html(&html);
-            }
-        });
+    // Initial content
+    let initial_content = "<p>Welcome to the <strong>TipTap</strong> editor!</p><p>Try formatting some text using the toolbar above.</p>";
 
-        let on_selection = Closure::new(|selection: JsValue| {
-            let state = SelectionState::from_js(&selection);
-
-            // Update toolbar button states
-            if let Some(document) = window().and_then(|w| w.document()) {
-                let update_button = |action: &str, active: bool| {
-                    if let Some(btn) = document.query_selector(&format!("[data-action='{action}']")).ok().flatten() {
-                        if active {
-                            let _ = btn.class_list().add_1("active");
-                        } else {
-                            let _ = btn.class_list().remove_1("active");
-                        }
-                    }
-                };
-
-                update_button("h1", state.h1);
-                update_button("h2", state.h2);
-                update_button("h3", state.h3);
-                update_button("paragraph", state.paragraph);
-                update_button("bold", state.bold);
-                update_button("italic", state.italic);
-                update_button("strike", state.strike);
-                update_button("highlight", state.highlight);
-                update_button("bulletList", state.bullet_list);
-                update_button("orderedList", state.ordered_list);
-                update_button("blockquote", state.blockquote);
-                update_button("alignLeft", state.align_left);
-                update_button("alignCenter", state.align_center);
-                update_button("alignRight", state.align_right);
-            }
-        });
-
-        // Create the editor
-        create("editor", initial_content, true, &on_change, &on_selection);
-
-        // Set initial HTML output
-        if let Some(output) = document.get_element_by_id("html-output") {
-            output.set_inner_html(initial_content);
+    // Create callbacks for content and selection changes
+    let on_change = Closure::new(|html: String| {
+        if let Some(output) = window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.get_element_by_id("html-output"))
+        {
+            output.set_inner_html(&html);
         }
+    });
 
-        // Set up toolbar click handlers
-        setup_toolbar_handlers();
+    let on_selection = Closure::new(|selection: JsValue| {
+        let state = SelectionState::from_js(&selection);
 
-        // Keep the application running
-        std::future::pending::<()>().await;
-    })
-    .unwrap();
+        // Update toolbar button states
+        if let Some(document) = window().and_then(|w| w.document()) {
+            let update_button = |action: &str, active: bool| {
+                if let Some(btn) = document
+                    .query_selector(&format!("[data-action='{action}']"))
+                    .ok()
+                    .flatten()
+                {
+                    if active {
+                        let _ = btn.class_list().add_1("active");
+                    } else {
+                        let _ = btn.class_list().remove_1("active");
+                    }
+                }
+            };
+
+            update_button("h1", state.h1);
+            update_button("h2", state.h2);
+            update_button("h3", state.h3);
+            update_button("paragraph", state.paragraph);
+            update_button("bold", state.bold);
+            update_button("italic", state.italic);
+            update_button("strike", state.strike);
+            update_button("highlight", state.highlight);
+            update_button("bulletList", state.bullet_list);
+            update_button("orderedList", state.ordered_list);
+            update_button("blockquote", state.blockquote);
+            update_button("alignLeft", state.align_left);
+            update_button("alignCenter", state.align_center);
+            update_button("alignRight", state.align_right);
+        }
+    });
+
+    // Create the editor
+    create("editor", initial_content, true, &on_change, &on_selection);
+
+    // Set initial HTML output
+    if let Some(output) = document.get_element_by_id("html-output") {
+        output.set_inner_html(initial_content);
+    }
+
+    // Set up toolbar click handlers
+    setup_toolbar_handlers();
+
+    on_change.forget();
+    on_selection.forget();
 }
 
 fn setup_toolbar_handlers() {
