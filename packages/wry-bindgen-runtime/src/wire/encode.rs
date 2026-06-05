@@ -504,6 +504,12 @@ impl<T: BinaryDecode> BinaryDecode for Vec<T> {
     }
 }
 
+impl<T: BinaryDecode> BinaryDecode for Box<[T]> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
+        Ok(Vec::<T>::decode(decoder)?.into_boxed_slice())
+    }
+}
+
 macro_rules! ref_encode_via_clone {
     ($($ty:ty),* $(,)?) => {
         $(
