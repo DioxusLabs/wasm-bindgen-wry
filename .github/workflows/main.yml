@@ -173,8 +173,13 @@ jobs:
 
   wasm-bindgen-compat:
     if: github.event.pull_request.draft == false
-    name: wasm-bindgen compat
+    name: wasm-bindgen compat (shard ${{ matrix.shard }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      # WB_SHARD_TOTAL below must equal the number of shards listed here.
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17
@@ -187,8 +192,13 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           cache-all-crates: "true"
+          key: compat-shard-${{ matrix.shard }}
       # Build the hardcoded top-100 wasm-bindgen dependents against the shim to
       # catch macro/runtime API drift. Native-exercising crates build for the
       # host; wasm32-gated crates build for wasm32 via unstable_force_wry_backend.
+      # Sharded across runners; each shard builds its slice of the crate list.
       - name: Build top wasm-bindgen dependents against the shim
+        env:
+          WB_SHARD_TOTAL: "4"
+          WB_SHARD_INDEX: ${{ matrix.shard }}
         run: ./scripts/check-wasm-bindgen-compat.sh

@@ -1,7 +1,7 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.pass_enum_vec = () => {
+export const pass_enum_vec = () => {
     const el1 = wasm.EnumArrayElement.Unit;
     const el2 = wasm.EnumArrayElement.Unit;
     const ret = wasm.consume_enum_vec([el1, el2]);
@@ -13,7 +13,7 @@ exports.pass_enum_vec = () => {
     assert.strictEqual(wasm.consume_optional_enum_vec(undefined), undefined);
 };
 
-exports.pass_invalid_enum_vec = () => {
+export const pass_invalid_enum_vec = () => {
     let threw = false;
     try {
         wasm.consume_enum_vec(['not an enum value']);

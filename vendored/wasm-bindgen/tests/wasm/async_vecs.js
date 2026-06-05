@@ -1,7 +1,7 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.js_works = async () => {
+export const js_works = async () => {
     assert.deepStrictEqual(await wasm.async_jsvalue_vec(), [1, "hi", new Float64Array(), null]);
     assert.deepStrictEqual(await wasm.async_import_vec(), [/hi|bye/, /hello w[a-z]rld/]);
     assert.deepStrictEqual(await wasm.async_string_vec(), ["a", "b", "c"]);

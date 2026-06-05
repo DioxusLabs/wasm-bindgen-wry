@@ -45,7 +45,15 @@ class DataEncoder {
     this.pushU32(high);
   }
 
-  pushU128(value: number) {
+  pushU128(value: number | bigint) {
+    // bigint inputs (an i128/u128) are split into two 64-bit halves losslessly;
+    // plain numbers keep the existing float-split path.
+    if (typeof value === "bigint") {
+      const v = BigInt.asUintN(128, value);
+      this.pushU64(v & 0xffffffffffffffffn);
+      this.pushU64(v >> 64n);
+      return;
+    }
     const low = value >>> 0;
     const high = Math.floor(value / 0x10000000000000000) >>> 0;
     this.pushU64(low);
@@ -255,6 +263,29 @@ class DataDecoder {
     // Convert high part to signed 32-bit first
     const signedHigh = high | 0;
     return low + signedHigh * 0x10000000000000000;
+  }
+
+  // BigInt-precise readers for Rust's `i64`/`u64`/`i128`/`u128`, which JS models
+  // as `BigInt` (matching wasm-bindgen). These are distinct from `takeU64`,
+  // which stays a plain number for heap-ref/install IDs used as Map keys.
+  takeBigUint64(): bigint {
+    const low = BigInt(this.takeU32());
+    const high = BigInt(this.takeU32());
+    return low | (high << 32n);
+  }
+
+  takeBigInt64(): bigint {
+    return BigInt.asIntN(64, this.takeBigUint64());
+  }
+
+  takeBigUint128(): bigint {
+    const low = this.takeBigUint64();
+    const high = this.takeBigUint64();
+    return low | (high << 64n);
+  }
+
+  takeBigInt128(): bigint {
+    return BigInt.asIntN(128, this.takeBigUint128());
   }
 
   /**

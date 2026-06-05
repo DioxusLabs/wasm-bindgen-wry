@@ -6096,6 +6096,8 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "rustversion",
+ "serde",
+ "serde_json",
  "wasm-bindgen-macro 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
  "wasm-bindgen-shared 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
 ]
@@ -6162,6 +6164,23 @@ version = "0.2.122"
 source = "git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122#ddd322514d87a4b21342b7ab9a9d70796fc60576"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-bindgen-test"
+version = "0.2.122"
+dependencies = [
+ "inventory",
+ "wasm-bindgen-test-macro",
+]
+
+[[package]]
+name = "wasm-bindgen-test-macro"
+version = "0.2.122"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -6997,6 +7016,7 @@ dependencies = [
  "tokio",
  "wasm-bindgen 0.2.122",
  "wasm-bindgen-futures",
+ "wasm-bindgen-test",
  "web-sys",
  "wry",
  "wry-bindgen-runtime",

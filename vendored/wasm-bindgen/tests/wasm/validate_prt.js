@@ -1,5 +1,5 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 // NB: `wasm-pack` uses the presence of checks for moved values as a way to test
 // whether it is correctly enabling `--debug` when configured to do so, so don't
@@ -29,7 +29,7 @@ const methodMoved = () => {
     assertMovedPtrThrows(() => quince.rot());
 };
 
-exports.js_works = () => {
+export const js_works = () => {
     useMoved();
     moveMoved();
     methodMoved();

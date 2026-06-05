@@ -1,23 +1,23 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 class MyType {
 }
 
-exports.MyType = MyType;
+export { MyType };
 
-exports.take_none_byval = x => {
+export const take_none_byval = x => {
     assert.strictEqual(x, undefined);
 };
-exports.take_some_byval = x => {
+export const take_some_byval = x => {
     assert.ok(x !== null && x !== undefined);
     assert.ok(x instanceof MyType);
 };
-exports.return_undef_byval = () => undefined;
-exports.return_null_byval = () => null;
-exports.return_some_byval = () => new MyType();
+export const return_undef_byval = () => undefined;
+export const return_null_byval = () => null;
+export const return_some_byval = () => new MyType();
 
-exports.test_option_values = () => {
+export const test_option_values = () => {
     wasm.rust_take_none_byval(null);
     wasm.rust_take_none_byval(undefined);
     wasm.rust_take_some_byval(new MyType());
@@ -27,19 +27,19 @@ exports.test_option_values = () => {
     assert.ok(x instanceof MyType);
 };
 
-exports.take_option_jsvalue_none = x => {
+export const take_option_jsvalue_none = x => {
     assert.strictEqual(x, undefined);
 };
 
-exports.take_option_jsvalue_some = x => {
+export const take_option_jsvalue_some = x => {
     assert.ok(x !== null && x !== undefined);
 };
 
-exports.return_option_jsvalue_none = () => undefined;
+export const return_option_jsvalue_none = () => undefined;
 
-exports.return_option_jsvalue_some = () => "js value";
+export const return_option_jsvalue_some = () => "js value";
 
-exports.test_option_jsvalue_values = () => {
+export const test_option_jsvalue_values = () => {
     wasm.rust_take_option_jsvalue_none(null);
     wasm.rust_take_option_jsvalue_none(undefined);
     wasm.rust_take_option_jsvalue_some("test");

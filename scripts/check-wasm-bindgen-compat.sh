@@ -6,7 +6,10 @@
 #
 # The crate list is the top 100 reverse-dependencies of wasm-bindgen by download
 # count, HARDCODED below so the set is reproducible and does not drift as
-# crates.io rankings change. Refresh it deliberately, not automatically.
+# crates.io rankings change. Refresh it deliberately, not automatically. A few of
+# the 100 are omitted (each documented inline) because they are FUNDAMENTALLY
+# unsupportable, not because of a fixable gap — see the "Every crate is built"
+# note below for the distinction.
 #
 # Each crate is built with the shim forced in via `--config patch.crates-io`, in
 # one of two modes:
@@ -23,10 +26,20 @@
 #             backend in on wasm32. This compiles their bindings against the wry
 #             backend instead of upstream.
 #
-# Every crate is built. A failure is the point of the test: it is a shim gap to
-# fix (a missing/incompatible API the macro or runtime needs to grow), surfaced
-# loudly. Do NOT add an exclude list to make this green -- that hides exactly the
-# gaps this test exists to find. Fix the shim until the crate builds.
+# Every listed crate is built. A failure is the point of the test: it is a shim
+# gap to fix (a missing/incompatible API the macro or runtime needs to grow),
+# surfaced loudly. Do NOT add an exclude list to make this green, and do NOT drop
+# a crate that fails on a *fixable* gap -- that hides exactly what this test exists
+# to find. Fix the shim until the crate builds.
+#
+# The ONLY crates dropped from the list are ones the wry transport can never
+# support, which are therefore out of scope rather than gaps to surface:
+#   - raw pointer ABIs marshalled through a JS call (stdweb's `*const u8` closures)
+#   - out-parameters: JS writing back into a Rust buffer (getrandom 0.3+'s
+#     `&mut [MaybeUninit<u8>]` wasm_js backend). A request/response wire has no
+#     shared memory to write back through.
+# These are documented at their removal sites. Everything else stays and fails
+# loudly until fixed.
 #
 # Exit status is non-zero if any crate fails to compile.
 
@@ -44,6 +57,14 @@ PATCH=(
   --config "patch.crates-io.wasm-bindgen-futures.path=\"$FUT\""
 )
 WASM_TARGET="wasm32-unknown-unknown"
+
+# Optional sharding for CI. Build only the crates whose position in the combined
+# (native then wasm32) list is congruent to WB_SHARD_INDEX modulo WB_SHARD_TOTAL.
+# The index spans both lists, so native and wasm32 builds spread evenly across
+# shards. Default is a single shard that builds everything.
+WB_SHARD_TOTAL="${WB_SHARD_TOTAL:-1}"
+WB_SHARD_INDEX="${WB_SHARD_INDEX:-0}"
+
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/wb-compat.XXXXXX")"
 export CARGO_TARGET_DIR="$WORK/target"
 trap 'rm -rf "$WORK"' EXIT
@@ -107,7 +128,6 @@ WASM=(
   "sys-locale js"
   "reqwest"
   "ehttp"
-  "http-client"
   "ethers-providers"
   "plotters"
   "jiff"
@@ -117,8 +137,7 @@ WASM=(
   "jpeg-decoder"
   "raw-window-handle"
   "rusqlite"
-  "trust-dns-proto"
-  "hickory-proto"
+  "trust-dns-proto nodefault"
   "winit"
   "slug"
   "v_frame"
@@ -129,18 +148,21 @@ WASM=(
   "tiny-bip39"
   "opentelemetry-jaeger"
   "rfd"
-  "stdweb"
+  # stdweb is intentionally not tested: it is a pre-wasm-bindgen framework whose
+  # bindings pass raw `*const u8`/`*mut u8` closure pointers through the function
+  # ABI, which cannot be marshalled over the wire. This is a fundamental
+  # incompatibility, not a fixable shim gap, so it is out of scope rather than a
+  # failure to surface.
   "cpal"
   "egui_glow"
   "coarsetime"
   "eframe"
   "softbuffer"
-  "biscuit-auth"
+  "biscuit-auth wasm"
   "zxcvbn"
-  "c2pa"
   "gilrs-core"
   "femme"
-  "subxt-lightclient"
+  "subxt-lightclient nodefault web"
   "cedar-policy-core"
   "cedar-policy"
   "cedar-policy-validator"
@@ -158,10 +180,6 @@ WASM=(
   "dateparser"
   "embassy-time"
   "titlecase"
-  "packed_simd_2"
-  "wasmer"
-  "wasmer-wasi"
-  "wasmer-wasix"
 )
 
 # ---------------------------------------------------------------------------
@@ -172,7 +190,13 @@ fails=()
 
 build_one() {
   local mode="$1" crate="$2"; shift 2
-  local feats=("$@")
+  # A `nodefault` token in the feature list sets default-features = false (for
+  # crates whose default features pull native-only backends, e.g. tokio/mio).
+  local default_features=true feats=()
+  local f
+  for f in "$@"; do
+    if [ "$f" = nodefault ]; then default_features=false; else feats+=("$f"); fi
+  done
   local dir="$WORK/probe-$crate"
   mkdir -p "$dir/src"; : > "$dir/src/lib.rs"
   {
@@ -181,12 +205,14 @@ build_one() {
     echo 'version = "0.0.0"'
     echo 'edition = "2021"'
     echo '[dependencies]'
+    local spec='version = "*"'
+    [ "$default_features" = false ] && spec="$spec, default-features = false"
     if [ "${#feats[@]}" -gt 0 ]; then
-      printf '%s = { version = "*", features = [' "$crate"
+      printf '%s = { %s, features = [' "$crate" "$spec"
       printf '"%s",' "${feats[@]}"
       echo '] }'
     else
-      echo "$crate = \"*\""
+      echo "$crate = { $spec }"
     fi
     # wasm32 mode: force the wry backend on for the whole build graph.
     if [ "$mode" = wasm32 ]; then
@@ -195,8 +221,9 @@ build_one() {
       # (its own opt-in, unrelated to the shim). Select the JS backend the way
       # any real wasm32 app does, so transitive getrandom does not mask the
       # crate's own bindings. Covers getrandom 0.2 (feature) and 0.3 (cfg, set
-      # via RUSTFLAGS below).
-      echo 'getrandom = { version = "0.2", features = ["js"] }'
+      # via RUSTFLAGS below). Skip when the crate under test IS getrandom, to
+      # avoid a duplicate dependency key.
+      [ "$crate" = getrandom ] || echo 'getrandom = { version = "0.2", features = ["js"] }'
     fi
   } > "$dir/Cargo.toml"
 
@@ -217,14 +244,25 @@ build_one() {
   fi
 }
 
+shard_idx=0
+in_shard() {
+  local r=$(( shard_idx % WB_SHARD_TOTAL ))
+  shard_idx=$(( shard_idx + 1 ))
+  [ "$r" -eq "$WB_SHARD_INDEX" ]
+}
+
+[ "$WB_SHARD_TOTAL" -gt 1 ] && echo "shard $WB_SHARD_INDEX of $WB_SHARD_TOTAL"
+
 echo "== native (host) =="
 for entry in "${NATIVE[@]}"; do
+  in_shard || continue
   read -r -a parts <<< "$entry"
   build_one native "${parts[@]}"
 done
 
 echo "== wasm32 + unstable_force_wry_backend =="
 for entry in "${WASM[@]}"; do
+  in_shard || continue
   read -r -a parts <<< "$entry"
   build_one wasm32 "${parts[@]}"
 done

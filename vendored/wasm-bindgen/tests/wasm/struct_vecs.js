@@ -1,7 +1,7 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.pass_struct_vec = () => {
+export const pass_struct_vec = () => {
     const el1 = new wasm.ArrayElement();
     const el2 = new wasm.ArrayElement();
     const ret = wasm.consume_struct_vec([el1, el2]);
@@ -13,7 +13,7 @@ exports.pass_struct_vec = () => {
     assert.strictEqual(wasm.consume_optional_struct_vec(undefined), undefined);
 };
 
-exports.pass_invalid_struct_vec = () => {
+export const pass_invalid_struct_vec = () => {
     try {
         wasm.consume_struct_vec(['not a struct']);
     } catch (e) {

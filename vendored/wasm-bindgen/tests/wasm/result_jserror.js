@@ -1,20 +1,20 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.call_ok = function() {
+export const call_ok = function() {
     assert.doesNotThrow(() => {
         let five = wasm.return_ok();
         assert.strictEqual(five, 5);
     })
 }
 
-exports.call_err = function() {
+export const call_err = function() {
     assert.throws(() => wasm.return_err(), {
         message: "MyError::Variant"
     });
 }
 
-exports.call_make_an_error = function() {
+export const call_make_an_error = function() {
     assert.doesNotThrow(() => {
         let e = wasm.make_an_error()
         assert.strictEqual(e.message, "un-thrown error");
@@ -25,7 +25,7 @@ function check_inflight(struct) {
     assert.strictEqual(struct.is_inflight(), false);
 }
 
-exports.all_struct_methods = function() {
+export const all_struct_methods = function() {
     let struct;
     assert.throws(() => wasm.MyStruct.new_err(), {
         message: "MyError::Variant"
@@ -45,7 +45,7 @@ exports.all_struct_methods = function() {
     check_inflight(struct);
 }
 
-exports.call_return_string = function() {
+export const call_return_string = function() {
     assert.doesNotThrow(() => {
         let ok = wasm.jserror_return_string();
         assert.strictEqual(ok, "string here");

@@ -52,7 +52,7 @@ pub(super) fn generate_js_reexport_spec(
                     &#module,
                     #export_name,
                     #namespace,
-                    |__wry_module| #krate::alloc::format!(#js_code, __wry_module = __wry_module),
+                    |__wry_module| #krate::__rt::alloc::format!(#js_code, __wry_module = __wry_module),
                 );
 
                 #krate::__rt::inventory::submit! {
@@ -66,7 +66,7 @@ pub(super) fn generate_js_reexport_spec(
                 static #static_ident: #krate::__rt::JsReexportSpec = #krate::__rt::JsReexportSpec::new(
                     #export_name,
                     #namespace,
-                    || #krate::alloc::string::String::from(#js_code),
+                    || #krate::__rt::alloc::string::String::from(#js_code),
                 );
 
                 #krate::__rt::inventory::submit! {
@@ -85,19 +85,19 @@ pub(super) fn generate_member_type_helpers(
 ) -> TokenStream {
     let return_body = match return_type {
         Some(ty) => quote_spanned! {span=>
-            ::core::option::Option::Some(#krate::__rt::TypeDef::of::<#ty>())
+            #krate::__rt::core::option::Option::Some(#krate::__rt::TypeDef::of::<#ty>())
         },
-        None => quote_spanned! {span=> ::core::option::Option::None },
+        None => quote_spanned! {span=> #krate::__rt::core::option::Option::None },
     };
 
     quote_spanned! {span=>
-        fn __wry_arg_types() -> #krate::alloc::vec::Vec<#krate::__rt::TypeDef> {
-            #krate::alloc::vec![
+        fn __wry_arg_types() -> #krate::__rt::alloc::vec::Vec<#krate::__rt::TypeDef> {
+            #krate::__rt::alloc::vec![
                 #(#krate::__rt::TypeDef::of::<#arg_types>()),*
             ]
         }
 
-        fn __wry_return_type() -> ::core::option::Option<#krate::__rt::TypeDef> {
+        fn __wry_return_type() -> #krate::__rt::core::option::Option<#krate::__rt::TypeDef> {
             #return_body
         }
     }
@@ -246,6 +246,7 @@ pub(super) fn generate_js_free_export_spec(
     export_name: TokenStream,
     namespace: TokenStream,
     arg_count: TokenStream,
+    arg_names: TokenStream,
     type_helpers: TokenStream,
     this: TokenStream,
     public: TokenStream,
@@ -264,6 +265,7 @@ pub(super) fn generate_js_free_export_spec(
                 #export_name,
                 #namespace,
                 #arg_count,
+                #arg_names,
                 __wry_arg_types,
                 __wry_return_type,
                 #this,

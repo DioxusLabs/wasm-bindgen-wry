@@ -1,11 +1,11 @@
-const assert = require('assert');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.PI = 3.14159;
+export const PI = 3.14159;
 
-exports.add = function add(a, b) {
+export const add = function add(a, b) {
     return a + b;
 };
 
-exports.multiply = function multiply(a, b) {
+export const multiply = function multiply(a, b) {
     return a * b;
 };

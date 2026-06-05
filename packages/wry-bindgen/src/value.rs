@@ -116,7 +116,8 @@ impl JsValue {
     /// Used by serde-wasm-bindgen for numeric conversions.
     #[inline]
     pub fn unchecked_into_f64(&self) -> f64 {
-        self.as_f64().unwrap_or(f64::NAN)
+        // Unary `+` coercion, matching wasm-bindgen (so e.g. the string "5" becomes 5).
+        crate::js_helpers::js_as_number(self)
     }
 
     /// Check if this value is an instance of a specific JS type.
@@ -351,19 +352,40 @@ macro_rules! impl_partial_eq_int {
     };
 }
 
-impl_partial_eq_int!(
-    i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
-);
+impl_partial_eq_int!(i8, i16, i32, isize, u8, u16, u32, usize);
+
+// 64/128-bit integers are JS `BigInt`s, so they compare via bigint `===` rather
+// than `as_f64` (which is `None` for a bigint). Matches wasm-bindgen.
+macro_rules! impl_partial_eq_bigint {
+    ($($t:ty),*) => {
+        $(
+            impl PartialEq<$t> for JsValue {
+                fn eq(&self, other: &$t) -> bool {
+                    *self == JsValue::from(*other)
+                }
+            }
+
+            impl PartialEq<JsValue> for $t {
+                fn eq(&self, other: &JsValue) -> bool {
+                    JsValue::from(*self) == *other
+                }
+            }
+        )*
+    };
+}
+
+impl_partial_eq_bigint!(i64, u64, i128, u128);
 
 impl fmt::Debug for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.as_debug_string())
+        write!(f, "JsValue({})", self.as_debug_string())
     }
 }
 
 impl PartialEq for JsValue {
+    /// Compares two `JsValue`s with JS `===`, matching wasm-bindgen.
     fn eq(&self, other: &Self) -> bool {
-        self.idx == other.idx
+        crate::js_helpers::js_strict_eq(self, other)
     }
 }
 

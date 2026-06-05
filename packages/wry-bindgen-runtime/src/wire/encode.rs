@@ -48,6 +48,8 @@ enum TypeTag {
     U8Clamped = 23,
     StringEnum = 24,
     DynamicUnion = 25,
+    Char = 26,
+    ThrowingResult = 27,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -237,7 +239,9 @@ impl BinaryDecode for bool {
 
 impl EncodeTypeDef for char {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.push_tag(TypeTag::U32);
+        // The wire payload is the u32 code point, but JS converts to/from a 1-char
+        // string (matching wasm-bindgen) via the `Char` type tag.
+        type_def.push_tag(TypeTag::Char);
     }
 }
 
@@ -249,8 +253,12 @@ impl BinaryEncode for char {
 
 impl BinaryDecode for char {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
-        char::from_u32(decoder.take_u32()?)
-            .ok_or_else(|| DecodeError::custom("invalid char scalar value"))
+        let cp = decoder.take_u32()?;
+        char::from_u32(cp).ok_or_else(|| {
+            DecodeError::custom(alloc::format!(
+                "expected a valid Unicode scalar value, found {cp}"
+            ))
+        })
     }
 }
 
@@ -444,6 +452,26 @@ impl<T: BinaryDecode, E: BinaryDecode> BinaryDecode for Result<T, E> {
         } else {
             Ok(Err(E::decode(decoder)?))
         }
+    }
+}
+
+/// A `Result` returned from an exported Rust function. The wire payload is
+/// identical to `Result`, but the distinct type tag tells JS to throw the `Err`
+/// value as an exception instead of returning a `{err}` object, matching
+/// wasm-bindgen's behavior for fallible exports.
+pub struct ThrowingResult<T, E>(pub Result<T, E>);
+
+impl<T: EncodeTypeDef, E: EncodeTypeDef> EncodeTypeDef for ThrowingResult<T, E> {
+    fn encode_type_def(type_def: &mut TypeDef) {
+        type_def.push_tag(TypeTag::ThrowingResult);
+        T::encode_type_def(type_def);
+        E::encode_type_def(type_def);
+    }
+}
+
+impl<T: BinaryEncode, E: BinaryEncode> BinaryEncode for ThrowingResult<T, E> {
+    fn encode(self, encoder: &mut EncodedData) {
+        self.0.encode(encoder);
     }
 }
 

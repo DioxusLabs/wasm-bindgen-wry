@@ -528,9 +528,13 @@ impl FunctionRegistry {
 
         let mut start_calls = Vec::new();
         for export in inventory::iter::<crate::wire::JsFreeExportSpec>() {
-            let (name, namespace, arg_count, arg_types, return_type, this, public, start) =
+            let (name, namespace, arg_count, arg_names, arg_types, return_type, this, public, start) =
                 export.parts();
-            let args = generate_args(arg_count);
+            let args = if arg_names.is_empty() {
+                generate_args(arg_count)
+            } else {
+                arg_names.join(", ")
+            };
             let args_call = if this {
                 if args.is_empty() {
                     "this".to_string()

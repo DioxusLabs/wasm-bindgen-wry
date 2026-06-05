@@ -3,9 +3,21 @@
 use crate::{__wry_submit_js_function, JsValue};
 use core::convert::Infallible;
 
+// Re-export the std-family crates so generated code can spell them as
+// `wasm_bindgen::__rt::{core,alloc,std}::...`. The macro crate is always in scope
+// where `#[wasm_bindgen]` is used, so these paths resolve in any edition —
+// including edition-2015 crates that lack `extern crate core` in their root.
+#[doc(hidden)]
+pub extern crate alloc;
+#[doc(hidden)]
+pub extern crate core;
+#[doc(hidden)]
+pub extern crate std;
+
 #[doc(hidden)]
 pub use crate::encode::{
-    BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef, JsRef, JsRefEncode, TypeDef,
+    BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef, JsRef, JsRefEncode, ThrowingResult,
+    TypeDef,
 };
 #[doc(hidden)]
 pub use crate::ipc::{DecodeError, DecodedData, EncodedData};

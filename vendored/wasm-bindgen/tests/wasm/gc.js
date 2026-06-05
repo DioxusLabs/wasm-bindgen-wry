@@ -1,5 +1,5 @@
-const wasm = require("wasm-bindgen-test.js");
-const assert = require("assert");
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 async function gc() {
   if ("gc" in global) {
@@ -12,9 +12,9 @@ async function gc() {
 }
 
 let dropCount = 0;
-exports.drop_callback = () => dropCount += 1;
+export const drop_callback = () => dropCount += 1;
 
-exports.owned_methods = async () => {
+export const owned_methods = async () => {
   dropCount = 0;
   new wasm.OwnedValue(1).add(new wasm.OwnedValue(2)).n();
 
@@ -27,7 +27,7 @@ exports.owned_methods = async () => {
 };
 
 // Make sure that objects created via. builders get GC'd properly.
-exports.gc_builder = async () => {
+export const gc_builder = async () => {
   dropCount = 0;
   wasm.OwnedValue.build(1);
 
@@ -36,7 +36,7 @@ exports.gc_builder = async () => {
 };
 
 // Make sure that objects created via. constructors get GC'd properly.
-exports.gc_constructor = async () => {
+export const gc_constructor = async () => {
   dropCount = 0;
   new wasm.OwnedValue(1);
 
@@ -46,7 +46,7 @@ exports.gc_constructor = async () => {
 
 // Make sure that exported Rust types don't get GC'd while they're still in use
 // by an async function.
-exports.no_gc_fn_argument = async () => {
+export const no_gc_fn_argument = async () => {
   dropCount = 0;
   let resolve;
 
@@ -68,7 +68,7 @@ exports.no_gc_fn_argument = async () => {
   assert.strictEqual(dropCount, 1);
 };
 
-exports.no_gc_method_receiver = async () => {
+export const no_gc_method_receiver = async () => {
   dropCount = 0;
   let resolve;
 

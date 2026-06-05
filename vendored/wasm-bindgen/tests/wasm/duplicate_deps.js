@@ -1,16 +1,16 @@
-const assert = require('assert');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 let next = null;
 
-exports.assert_next_undefined = function() {
+export const assert_next_undefined = function() {
   next = undefined;
 };
 
-exports.assert_next_ten = function() {
+export const assert_next_ten = function() {
   next = 10;
 };
 
-exports.foo = function(a) {
+export const foo = function(a) {
   console.log(a, next);
   assert.strictEqual(a, next);
   next = null;

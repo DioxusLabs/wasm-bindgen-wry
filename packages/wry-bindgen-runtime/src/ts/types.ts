@@ -32,6 +32,8 @@ enum TypeTag {
   U8Clamped = 23,
   StringEnum = 24,
   DynamicUnion = 25,
+  Char = 26,
+  ThrowingResult = 27,
 }
 
 /**
@@ -106,6 +108,22 @@ class StringType implements TypeClass {
 
   decode(decoder: DataDecoder): string {
     return decoder.takeStr();
+  }
+}
+
+/**
+ * Rust `char`: the wire payload is the u32 code point, but in JS it is a 1-character
+ * string (matching wasm-bindgen).
+ */
+class CharType implements TypeClass {
+  // The argument is named `c` so a non-string input produces the same
+  // "c.codePointAt is not a function" TypeError that wasm-bindgen's glue does.
+  encode(encoder: DataEncoder, c: string): void {
+    encoder.pushU32(c.codePointAt(0) ?? 0);
+  }
+
+  decode(decoder: DataDecoder): string {
+    return String.fromCodePoint(decoder.takeU32());
   }
 }
 
@@ -218,18 +236,19 @@ class NumericType implements TypeClass {
     this.size = size;
   }
 
-  encode(encoder: DataEncoder, value: number): void {
+  encode(encoder: DataEncoder, value: number | bigint): void {
     switch (this.size) {
       case "u8":
-        encoder.pushU8(value);
+        encoder.pushU8(Number(value));
         break;
       case "u16":
-        encoder.pushU16(value);
+        encoder.pushU16(Number(value));
         break;
       case "u32":
-        encoder.pushU32(value);
+        encoder.pushU32(Number(value));
         break;
       case "u64":
+        // i64/u64 are BigInt; pushU64 also accepts a plain number.
         encoder.pushU64(value);
         break;
       case "u128":
@@ -237,15 +256,15 @@ class NumericType implements TypeClass {
         break;
       case "i8":
         // Signed integers encode as unsigned (Rust: self as u8)
-        encoder.pushU8(value & 0xff);
+        encoder.pushU8(Number(value) & 0xff);
         break;
       case "i16":
         // Signed integers encode as unsigned (Rust: self as u16)
-        encoder.pushU16(value & 0xffff);
+        encoder.pushU16(Number(value) & 0xffff);
         break;
       case "i32":
         // Signed integers encode as unsigned (Rust: self as u32)
-        encoder.pushU32(value >>> 0);
+        encoder.pushU32(Number(value) >>> 0);
         break;
       case "i64":
         // Signed integers encode as unsigned (Rust: self as u64)
@@ -256,23 +275,23 @@ class NumericType implements TypeClass {
         encoder.pushU128(value);
         break;
       case "usize":
-        // usize encodes as u64
-        encoder.pushU64(value);
+        // usize encodes as u64 but stays a JS number (wasm32 pointer width).
+        encoder.pushU64(Number(value));
         break;
       case "isize":
-        // isize encodes as u64 (Rust: self as u64)
-        encoder.pushU64(value);
+        // isize encodes as u64 (Rust: self as u64) but stays a JS number.
+        encoder.pushU64(Number(value));
         break;
       case "f32":
-        encoder.pushF32(value);
+        encoder.pushF32(Number(value));
         break;
       case "f64":
-        encoder.pushF64(value);
+        encoder.pushF64(Number(value));
         break;
     }
   }
 
-  decode(decoder: DataDecoder): number {
+  decode(decoder: DataDecoder): number | bigint {
     switch (this.size) {
       case "u8":
         return decoder.takeU8();
@@ -281,9 +300,9 @@ class NumericType implements TypeClass {
       case "u32":
         return decoder.takeU32();
       case "u64":
-        return decoder.takeU64();
+        return decoder.takeBigUint64();
       case "u128":
-        return decoder.takeU128();
+        return decoder.takeBigUint128();
       case "i8":
         return decoder.takeI8();
       case "i16":
@@ -291,14 +310,14 @@ class NumericType implements TypeClass {
       case "i32":
         return decoder.takeI32();
       case "i64":
-        return decoder.takeI64();
+        return decoder.takeBigInt64();
       case "i128":
-        return decoder.takeI128();
+        return decoder.takeBigInt128();
       case "usize":
-        // usize decodes as u64
+        // usize decodes as a plain number (wasm32 pointer width).
         return decoder.takeU64();
       case "isize":
-        // isize decodes as i64
+        // isize decodes as a plain number (wasm32 pointer width).
         return decoder.takeI64();
       case "f32":
         return decoder.takeF32();
@@ -327,7 +346,7 @@ class OptionType implements TypeClass {
   decode(decoder: DataDecoder): any {
     const isPresent = decoder.takeU8();
     if (isPresent === 0) {
-      return null; // Return null
+      return undefined; // `None` decodes to `undefined`, matching wasm-bindgen
     } else {
       return this.wrappedType.decode(decoder);
     }
@@ -368,6 +387,43 @@ class ResultType implements TypeClass {
       const errValue = this.errType.decode(decoder);
       return { err: errValue };
     }
+  }
+}
+
+/**
+ * A `Result` returned from an exported Rust function. The wire payload matches
+ * `Result`, but the `Err` value is thrown as an exception instead of being
+ * returned as a `{ err }` object — matching wasm-bindgen's behavior for fallible
+ * exports.
+ */
+class ThrowingResultType implements TypeClass {
+  declare private okType: TypeClass;
+  declare private errType: TypeClass;
+
+  constructor(okType: TypeClass, errType: TypeClass) {
+    this.okType = okType;
+    this.errType = errType;
+  }
+
+  encode(encoder: DataEncoder, value: any): void {
+    const result: Ok | Err = value;
+    if ("ok" in result) {
+      encoder.pushU8(1);
+      this.okType.encode(encoder, result.ok);
+    } else if ("err" in result) {
+      encoder.pushU8(0);
+      this.errType.encode(encoder, result.err);
+    } else {
+      throw new Error("Invalid RustType value: must be Ok or Err");
+    }
+  }
+
+  decode(decoder: DataDecoder): any {
+    const isOk = decoder.takeU8();
+    if (isOk === 1) {
+      return this.okType.decode(decoder);
+    }
+    throw this.errType.decode(decoder);
   }
 }
 
@@ -444,6 +500,7 @@ const nullTypeInstance = new NullType();
 const heapRefTypeInstance = new HeapRefType();
 const borrowedRefTypeInstance = new BorrowedRefType();
 const stringTypeInstance = new StringType();
+const charTypeInstance = new CharType();
 
 /**
  * Parse a TypeDef from a byte array and return a TypeClass.
@@ -487,6 +544,8 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       return IsizeType;
     case TypeTag.String:
       return stringTypeInstance;
+    case TypeTag.Char:
+      return charTypeInstance;
     case TypeTag.HeapRef:
       return heapRefTypeInstance;
     case TypeTag.BorrowedRef:
@@ -508,6 +567,11 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       const okType = parseTypeDef(bytes, offset);
       const errType = parseTypeDef(bytes, offset);
       return new ResultType(okType, errType);
+    }
+    case TypeTag.ThrowingResult: {
+      const okType = parseTypeDef(bytes, offset);
+      const errType = parseTypeDef(bytes, offset);
+      return new ThrowingResultType(okType, errType);
     }
     case TypeTag.Array: {
       const elementType = parseTypeDef(bytes, offset);

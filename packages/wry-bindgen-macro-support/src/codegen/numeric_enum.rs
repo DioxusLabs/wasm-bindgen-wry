@@ -80,27 +80,27 @@ pub(super) fn generate_numeric_enum(e: &Enum, krate: &TokenStream) -> syn::Resul
         }
 
         impl #krate::__rt::BinaryDecode for #enum_name {
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self, #krate::__rt::DecodeError> {
                 match <#backing_ty as #krate::__rt::BinaryDecode>::decode(decoder)? {
-                    #(#values => ::core::result::Result::Ok(#enum_name::#variants),)*
-                    _ => ::core::result::Result::Err(#krate::__rt::DecodeError::custom(#invalid_msg)),
+                    #(#values => #krate::__rt::core::result::Result::Ok(#enum_name::#variants),)*
+                    _ => #krate::__rt::core::result::Result::Err(#krate::__rt::DecodeError::custom(#invalid_msg)),
                 }
             }
         }
 
         impl #krate::__rt::BatchableResult for #enum_name {}
 
-        impl ::core::convert::From<#enum_name> for #krate::JsValue {
+        impl #krate::__rt::core::convert::From<#enum_name> for #krate::JsValue {
             fn from(value: #enum_name) -> Self {
                 #krate::JsValue::from(value as #backing_ty)
             }
         }
 
         impl #krate::convert::TryFromJsValue for #enum_name {
-            fn try_from_js_value_ref(value: &#krate::JsValue) -> ::core::option::Option<Self> {
+            fn try_from_js_value_ref(value: &#krate::JsValue) -> #krate::__rt::core::option::Option<Self> {
                 match <#backing_ty as #krate::convert::TryFromJsValue>::try_from_js_value_ref(value)? {
-                    #(#values => ::core::option::Option::Some(#enum_name::#variants),)*
-                    _ => ::core::option::Option::None,
+                    #(#values => #krate::__rt::core::option::Option::Some(#enum_name::#variants),)*
+                    _ => #krate::__rt::core::option::Option::None,
                 }
             }
         }

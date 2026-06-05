@@ -1,5 +1,5 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 const ARGUMENT_NAMES = /([^\s,]+)/g;
 const STRIP_COMMENTS = /((\/\/.*$)|(\/\*[\s\S]*?\*\/))/mg;
@@ -11,6 +11,6 @@ function getArgNames(func) {
     return result === null ? [] : result;
 }
 
-exports.js_arg_names = () => {
+export const js_arg_names = () => {
     assert.deepEqual(getArgNames(wasm.fn_with_many_args), ['_a', '_b', '_c', '_d']);
 };

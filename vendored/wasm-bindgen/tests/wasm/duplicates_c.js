@@ -1,2 +1,2 @@
-exports.foo = () => false;
-exports.bar = 5;
+export const foo = () => false;
+export const bar = 5;

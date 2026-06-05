@@ -1,7 +1,7 @@
-const wasm = require("wasm-bindgen-test.js");
-const assert = require("assert");
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.js_keywords_compile = () => {
+export const js_keywords_compile = () => {
   assert.strictEqual(wasm._throw(1), 1);
   assert.strictEqual(wasm._class(1, 2), false);
   assert.strictEqual(wasm.classy(3), 3);
@@ -11,14 +11,14 @@ exports.js_keywords_compile = () => {
   assert.strictEqual(obj.instanceof("Class"), "class is instance of Class");
 };
 
-exports.test_keyword_1_as_fn_name = (x) => {
+export const test_keyword_1_as_fn_name = (x) => {
   return wasm._throw(x);
 };
 
-exports.test_keyword_2_as_fn_name = (x, y) => {
+export const test_keyword_2_as_fn_name = (x, y) => {
   return wasm._class(x, y);
 };
 
-exports.test_keyword_as_fn_arg = (x) => {
+export const test_keyword_as_fn_arg = (x) => {
   return wasm.classy(x);
 };

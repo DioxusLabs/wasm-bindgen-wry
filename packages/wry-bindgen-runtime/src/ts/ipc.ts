@@ -9,7 +9,7 @@
  * - string buffer: from str_offset to end
  *
  * Message format in the u8 buffer:
- * - First u8: message type (0 = Evaluate, 1 = Respond)
+ * - First u8: message type (0 = Evaluate, 1 = Respond, 2 = RespondError)
  * - Remaining data depends on message type
  */
 
@@ -20,6 +20,7 @@ import { parseTypeDef, TypeClass, HeapRefType } from "./types";
 enum MessageType {
   Evaluate = 0,
   Respond = 1,
+  RespondError = 2,
 }
 
 // Type caching markers - must match Rust's TYPE_CACHED and TYPE_FULL
@@ -181,6 +182,12 @@ function handleBinaryResponse(
     if (msgType === MessageType.Respond) {
       installDeferredHeapRefs(decoder);
       return decoder;
+    } else if (msgType === MessageType.RespondError) {
+      // Rust signalled that the call failed (e.g. an argument could not be
+      // decoded). Surface it as a thrown exception the caller can catch,
+      // matching wasm-bindgen's throw-on-bad-argument behavior.
+      installDeferredHeapRefs(decoder);
+      throw new Error(decoder.takeStr());
     } else if (msgType === MessageType.Evaluate) {
       installDeferredHeapRefs(decoder);
 

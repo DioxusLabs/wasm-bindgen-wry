@@ -192,7 +192,7 @@ fn wrap_body_with_try_catch(body: &str) -> String {
     )
 }
 
-pub(super) fn async_promise_guard_js_code(js_code: &str) -> String {
+pub(super) fn mark_async_promise_handled_js_code(js_code: &str) -> String {
     let Some((params, body)) = js_code.split_once(" => ") else {
         panic!("generated async JS code should be an arrow function");
     };

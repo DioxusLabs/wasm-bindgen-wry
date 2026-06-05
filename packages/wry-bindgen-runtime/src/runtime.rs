@@ -393,12 +393,12 @@ fn handle_rust_callback(data: &mut DecodedData) {
                 .find_map(|export| export.call_if_name(&export_name, data))
                 .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
 
-            // Send response
+            // Send response. A decode/call failure becomes a JS exception the
+            // caller can catch, matching wasm-bindgen's throw-on-bad-argument
+            // behavior instead of aborting the process.
             match result {
                 Ok(encoded) => finish_respond_message(encoded),
-                Err(err) => {
-                    panic!("Export call failed: {err}");
-                }
+                Err(err) => finish_respond_error_message(&alloc::format!("{err}")),
             }
         }
         _ => panic!("Unknown Rust callback function ID: {fn_id}"),
@@ -429,6 +429,10 @@ fn respond_encoder() -> crate::ipc::EncodedData {
 
 fn finish_respond_message(encoder: crate::ipc::EncodedData) -> IPCMessage {
     with_runtime(|runtime| runtime.finish_respond_message(encoder))
+}
+
+fn finish_respond_error_message(message: &str) -> IPCMessage {
+    with_runtime(|runtime| runtime.finish_respond_error_message(message))
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
-const assert = require('assert');
-const wasm = require('wasm-bindgen-test');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
 
 const pointerIndex = (ptr, stride) => ptr / stride;
 
@@ -8,7 +8,7 @@ const nonNullZero = () => 0;
 const nonNullTypeError = () =>
   /expected a number argument that is not 0/;
 
-exports.test_add = function() {
+export const test_add = function() {
   assert.strictEqual(wasm.simple_add(1, 2), 3);
   assert.strictEqual(wasm.simple_add(2, 3), 5);
   assert.strictEqual(wasm.simple_add3(2), 5);
@@ -16,19 +16,19 @@ exports.test_add = function() {
   assert.strictEqual(wasm.simple_return_and_take_bool(true, false), false);
 };
 
-exports.test_string_arguments = function() {
+export const test_string_arguments = function() {
   wasm.simple_assert_foo("foo");
   wasm.simple_assert_foo_and_bar("foo2", "bar");
 };
 
-exports.test_return_a_string = function() {
+export const test_return_a_string = function() {
   assert.strictEqual(wasm.simple_clone("foo"), "foo");
   assert.strictEqual(wasm.simple_clone("another"), "another");
   assert.strictEqual(wasm.simple_concat("a", "b", 3), "a b 3");
   assert.strictEqual(wasm.simple_concat("c", "d", -2), "c d -2");
 };
 
-exports.test_wrong_types = function() {
+export const test_wrong_types = function() {
   // this test only works when `--debug` is passed to `wasm-bindgen` (or the
   // equivalent thereof)
   if (require('process').env.WASM_BINDGEN_NO_DEBUG)
@@ -42,11 +42,11 @@ exports.test_wrong_types = function() {
   assert.doesNotThrow(() => wasm.simple_bool(true));
 };
 
-exports.test_other_exports_still_available = function() {
-  require('wasm-bindgen-test').__wasm.foo(3);
+export const test_other_exports_still_available = function() {
+  new Proxy({}, { get: (_t, n) => window[n] }).__wasm.foo(3);
 };
 
-exports.test_jsvalue_typeof = function() {
+export const test_jsvalue_typeof = function() {
   assert.ok(wasm.is_object({}));
   assert.ok(!wasm.is_object(42));
   assert.ok(wasm.is_function(function() {}));
@@ -55,43 +55,43 @@ exports.test_jsvalue_typeof = function() {
   assert.ok(!wasm.is_string(42));
 };
 
-exports.optional_str_none = function(x) {
+export const optional_str_none = function(x) {
   assert.strictEqual(x, undefined);
 };
 
-exports.optional_str_some = function(x) {
+export const optional_str_some = function(x) {
   assert.strictEqual(x, 'x');
 };
 
-exports.optional_slice_none = function(x) {
+export const optional_slice_none = function(x) {
   assert.strictEqual(x, undefined);
 };
 
-exports.optional_slice_some = function(x) {
+export const optional_slice_some = function(x) {
   assert.strictEqual(x.length, 3);
   assert.strictEqual(x[0], 1);
   assert.strictEqual(x[1], 2);
   assert.strictEqual(x[2], 3);
 }
 
-exports.optional_string_none = function(x) {
+export const optional_string_none = function(x) {
   assert.strictEqual(x, undefined);
 };
 
-exports.optional_string_some = function(x) {
+export const optional_string_some = function(x) {
   assert.strictEqual(x, 'abcd');
 };
 
-exports.optional_string_some_empty = function(x) {
+export const optional_string_some_empty = function(x) {
   assert.strictEqual(x, '');
 };
 
-exports.return_string_none = function() {};
-exports.return_string_some = function() {
+export const return_string_none = function() {};
+export const return_string_some = function() {
   return 'foo';
 };
 
-exports.test_rust_optional = function() {
+export const test_rust_optional = function() {
   wasm.take_optional_str_none();
   wasm.take_optional_str_none(null);
   wasm.take_optional_str_none(undefined);
@@ -100,12 +100,12 @@ exports.test_rust_optional = function() {
   assert.strictEqual(wasm.return_optional_str_some(), 'world');
 };
 
-exports.RenamedInRust = class {};
-exports.new_renamed = () => new exports.RenamedInRust;
+export const RenamedInRust = class {};
+export const new_renamed = () => new RenamedInRust;
 
-exports.import_export_same_name = () => {};
+export const import_export_same_name = () => {};
 
-exports.test_string_roundtrip = () => {
+export const test_string_roundtrip = () => {
   const test = s => {
     assert.strictEqual(wasm.do_string_roundtrip(s), s);
   };
@@ -118,7 +118,7 @@ exports.test_string_roundtrip = () => {
   test('a longer 💖 string');
 };
 
-exports.test_raw_pointers = function() {
+export const test_raw_pointers = function() {
   const memory32 = new Uint32Array(wasm.__wasm.memory.buffer);
   const memory8 = new Uint8Array(wasm.__wasm.memory.buffer);
 
@@ -145,7 +145,7 @@ exports.test_raw_pointers = function() {
   assert.strictEqual(wasm.simple_return_option_null_pointer(), 0)
 };
 
-exports.test_non_null = function() {
+export const test_non_null = function() {
   assert.strictEqual(wasm.simple_nonnull_work(wasm.simple_return_non_null()), 42);
   assert.throws(() => wasm.simple_nonnull_work(nonNullZero()), nonNullTypeError());
 

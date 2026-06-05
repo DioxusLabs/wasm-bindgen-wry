@@ -1,15 +1,15 @@
-exports.MyDurableObject = class MyDurableObject {
+export const MyDurableObject = class MyDurableObject {
   constructor() {}
 };
 
-exports.MyDurableObjectStub = class MyDurableObjectStub {
+export const MyDurableObjectStub = class MyDurableObjectStub {
   constructor() {}
 };
 
-exports.DurableObjectNamespace = class DurableObjectNamespace {
+export const DurableObjectNamespace = class DurableObjectNamespace {
   constructor() {}
 
   getByName(name) {
-    return new exports.MyDurableObjectStub();
+    return new MyDurableObjectStub();
   }
 };

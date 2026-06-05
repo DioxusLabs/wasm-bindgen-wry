@@ -1,4 +1,4 @@
-exports.import_me = function() {};
+export const import_me = function() {};
 
 global.webkitMySpecialApi = class {
   foo() { return 123; }

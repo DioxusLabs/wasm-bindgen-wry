@@ -1,0 +1,18 @@
+[package]
+name = "wasm-bindgen-test-macro"
+version = "0.2.122"
+edition = "2024"
+description = "Desktop #[wasm_bindgen_test] macro that registers tests with the wry-bindgen test harness"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
+
+[lints]
+workspace = true

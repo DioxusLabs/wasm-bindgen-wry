@@ -1,9 +1,9 @@
-const assert = require('assert');
-const wasm = require('wasm-bindgen-test');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
 
-exports.math_log = Math.log;
+export const math_log = Math.log;
 
-exports.StaticFunction = class {
+export const StaticFunction = class {
   static bar() { return 2; }
 };
 
@@ -48,7 +48,7 @@ class Construct {
 }
 
 Construct.internal_string = '';
-exports.Construct = Construct;
+export { Construct };
 
 class NewConstructor {
   constructor(field) {
@@ -60,8 +60,8 @@ class NewConstructor {
   }
 }
 
-exports.NewConstructors = NewConstructor;
-exports.default = NewConstructor;
+export const NewConstructors = NewConstructor;
+export const default = NewConstructor;
 
 let switch_called = false;
 class SwitchMethods {
@@ -76,16 +76,16 @@ class SwitchMethods {
     switch_called = true;
   }
 }
-exports.SwitchMethods = SwitchMethods;
-exports.switch_methods_called = function() {
+export { SwitchMethods };
+export const switch_methods_called = function() {
   const tmp = switch_called;
   switch_called = false;
   return tmp;
 };
-exports.switch_methods_a = function() { SwitchMethods.a = function() {}; };
-exports.switch_methods_b = function() { SwitchMethods.prototype.b = function() {}; };
+export const switch_methods_a = function() { SwitchMethods.a = function() {}; };
+export const switch_methods_b = function() { SwitchMethods.prototype.b = function() {}; };
 
-exports.Properties = class {
+export const Properties = class {
   constructor() {
     this.num = 1;
   }
@@ -99,7 +99,7 @@ exports.Properties = class {
   }
 };
 
-exports.RenameProperties = class {
+export const RenameProperties = class {
   constructor() {
     this.num = 1;
   }
@@ -115,29 +115,29 @@ exports.RenameProperties = class {
 
 class Options {
 }
-exports.Options = Options;
+export { Options };
 
-exports.take_none = function(val) {
+export const take_none = function(val) {
   assert.strictEqual(val, undefined);
 };
 
-exports.take_some = function(val) {
+export const take_some = function(val) {
   assert.strictEqual(val === undefined, false);
 };
 
-exports.return_null = function() {
+export const return_null = function() {
   return null;
 };
 
-exports.return_undefined = function() {
+export const return_undefined = function() {
   return undefined;
 };
 
-exports.return_some = function() {
+export const return_some = function() {
   return new Options();
 };
 
-exports.run_rust_option_tests = function() {
+export const run_rust_option_tests = function() {
   wasm.rust_take_none();
   wasm.rust_take_none(null)
   wasm.rust_take_none(undefined);
@@ -147,7 +147,7 @@ exports.run_rust_option_tests = function() {
   assert.strictEqual(wasm.rust_return_some() === undefined, false);
 };
 
-exports.CatchConstructors = class {
+export const CatchConstructors = class {
   constructor(x) {
     if (x == 0) {
       throw new Error('bad!');
@@ -155,7 +155,7 @@ exports.CatchConstructors = class {
   }
 };
 
-exports.StaticStructural = class {
+export const StaticStructural = class {
   static static_structural(x) {
     return x + 3;
   }
@@ -185,6 +185,6 @@ class InnerClass {
   }
 }
 
-exports.nestedNamespace = {
+export const nestedNamespace = {
   InnerClass: InnerClass
 }

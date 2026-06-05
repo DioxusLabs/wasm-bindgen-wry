@@ -1,5 +1,5 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 const isWasm64 = () => typeof wasm.wasm64_return_usize === 'function';
 
@@ -12,7 +12,7 @@ const pointerSizedUnsignedArray = values =>
 const typedValue = (array, value) =>
     typeof array[0] === 'bigint' ? BigInt(value) : value;
 
-exports.js_export = () => {
+export const js_export = () => {
     const i8 = new Int8Array(2);
     i8[0] = 1;
     i8[1] = 2;
@@ -122,29 +122,29 @@ const test_import = (a, b, c) => {
     return a;
 };
 
-exports.import_js_i8 = test_import;
-exports.import_js_u8 = test_import;
-exports.import_js_i16 = test_import;
-exports.import_js_u16 = test_import;
-exports.import_js_i32 = test_import;
-exports.import_js_isize = test_import;
-exports.import_js_u32 = test_import;
-exports.import_js_usize = test_import;
-exports.import_js_f32 = test_import;
-exports.import_js_f64 = test_import;
+export const import_js_i8 = test_import;
+export const import_js_u8 = test_import;
+export const import_js_i16 = test_import;
+export const import_js_u16 = test_import;
+export const import_js_i32 = test_import;
+export const import_js_isize = test_import;
+export const import_js_u32 = test_import;
+export const import_js_usize = test_import;
+export const import_js_f32 = test_import;
+export const import_js_f64 = test_import;
 
-exports.import_js_uninit_i8 = test_import;
-exports.import_js_uninit_u8 = test_import;
-exports.import_js_uninit_i16 = test_import;
-exports.import_js_uninit_u16 = test_import;
-exports.import_js_uninit_i32 = test_import;
-exports.import_js_uninit_isize = test_import;
-exports.import_js_uninit_u32 = test_import;
-exports.import_js_uninit_usize = test_import;
-exports.import_js_uninit_f32 = test_import;
-exports.import_js_uninit_f64 = test_import;
+export const import_js_uninit_i8 = test_import;
+export const import_js_uninit_u8 = test_import;
+export const import_js_uninit_i16 = test_import;
+export const import_js_uninit_u16 = test_import;
+export const import_js_uninit_i32 = test_import;
+export const import_js_uninit_isize = test_import;
+export const import_js_uninit_u32 = test_import;
+export const import_js_uninit_usize = test_import;
+export const import_js_uninit_f32 = test_import;
+export const import_js_uninit_f64 = test_import;
 
-exports.js_import = () => {
+export const js_import = () => {
     const i8 = new Int8Array(2);
     i8[0] = 1;
     i8[1] = 2;
@@ -199,7 +199,7 @@ exports.js_import = () => {
     assert.deepStrictEqual(wasm.import_rust_uninit_f64(f64), f64);
 };
 
-exports.js_pass_array = () => {
+export const js_pass_array = () => {
     wasm.pass_array_rust_i8([1, 2]);
     wasm.pass_array_rust_u8([1, 2]);
     wasm.pass_array_rust_i16([1, 2]);
@@ -245,27 +245,27 @@ const import_mut_foo = (a, b, c) => {
     assert.strictEqual(c, undefined);
 };
 
-exports.import_mut_js_i8 = import_mut_foo;
-exports.import_mut_js_u8 = import_mut_foo;
-exports.import_mut_js_i16 = import_mut_foo;
-exports.import_mut_js_u16 = import_mut_foo;
-exports.import_mut_js_i32 = import_mut_foo;
-exports.import_mut_js_u32 = import_mut_foo;
-exports.import_mut_js_isize = import_mut_foo;
-exports.import_mut_js_usize = import_mut_foo;
-exports.import_mut_js_f32 = import_mut_foo;
-exports.import_mut_js_f64 = import_mut_foo;
+export const import_mut_js_i8 = import_mut_foo;
+export const import_mut_js_u8 = import_mut_foo;
+export const import_mut_js_i16 = import_mut_foo;
+export const import_mut_js_u16 = import_mut_foo;
+export const import_mut_js_i32 = import_mut_foo;
+export const import_mut_js_u32 = import_mut_foo;
+export const import_mut_js_isize = import_mut_foo;
+export const import_mut_js_usize = import_mut_foo;
+export const import_mut_js_f32 = import_mut_foo;
+export const import_mut_js_f64 = import_mut_foo;
 
-exports.import_mut_js_uninit_i8 = import_mut_foo;
-exports.import_mut_js_uninit_u8 = import_mut_foo;
-exports.import_mut_js_uninit_i16 = import_mut_foo;
-exports.import_mut_js_uninit_u16 = import_mut_foo;
-exports.import_mut_js_uninit_i32 = import_mut_foo;
-exports.import_mut_js_uninit_u32 = import_mut_foo;
-exports.import_mut_js_uninit_isize = import_mut_foo;
-exports.import_mut_js_uninit_usize = import_mut_foo;
-exports.import_mut_js_uninit_f32 = import_mut_foo;
-exports.import_mut_js_uninit_f64 = import_mut_foo;
+export const import_mut_js_uninit_i8 = import_mut_foo;
+export const import_mut_js_uninit_u8 = import_mut_foo;
+export const import_mut_js_uninit_i16 = import_mut_foo;
+export const import_mut_js_uninit_u16 = import_mut_foo;
+export const import_mut_js_uninit_i32 = import_mut_foo;
+export const import_mut_js_uninit_u32 = import_mut_foo;
+export const import_mut_js_uninit_isize = import_mut_foo;
+export const import_mut_js_uninit_usize = import_mut_foo;
+export const import_mut_js_uninit_f32 = import_mut_foo;
+export const import_mut_js_uninit_f64 = import_mut_foo;
 
 const export_mut_run = (a, rust) => {
     const one = typedValue(a, 1);
@@ -286,7 +286,7 @@ const export_mut_run = (a, rust) => {
     assert.strictEqual(a[2], three);
 };
 
-exports.js_export_mut = () => {
+export const js_export_mut = () => {
     export_mut_run(new Int8Array(3), wasm.export_mut_i8);
     export_mut_run(new Uint8Array(3), wasm.export_mut_u8);
     export_mut_run(new Int16Array(3), wasm.export_mut_i16);
@@ -310,7 +310,7 @@ exports.js_export_mut = () => {
     export_mut_run(new Float64Array(3), wasm.export_mut_uninit_f64);
 };
 
-exports.js_return_vec = () => {
+export const js_return_vec = () => {
     const app = wasm.return_vec_web_main();
 
     for (let i = 0; i < 10; i++) {
@@ -329,7 +329,7 @@ exports.js_return_vec = () => {
     }
 };
 
-exports.js_clamped = (a, offset) => {
+export const js_clamped = (a, offset) => {
   assert.ok(a instanceof Uint8ClampedArray);
   assert.equal(a.length, 3);
   assert.equal(a[0], offset + 0);

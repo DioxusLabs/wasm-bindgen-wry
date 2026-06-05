@@ -1,5 +1,5 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 const isWasm64 = () => typeof wasm.wasm64_return_usize === 'function';
 
@@ -7,24 +7,24 @@ const wasm64IsizeMin = Number(-(1n << 63n));
 const wasm64IsizeMax = Number((1n << 63n) - 1n);
 const wasm64UsizeMax = Number((1n << 64n) - 1n);
 
-exports.optional_i32_js_identity = a => a;
-exports.optional_u32_js_identity = a => a;
-exports.optional_isize_js_identity = a => a;
-exports.optional_usize_js_identity = a => a;
-exports.optional_f32_js_identity = a => a;
-exports.optional_f64_js_identity = a => a;
-exports.optional_i8_js_identity = a => a;
-exports.optional_u8_js_identity = a => a;
-exports.optional_i16_js_identity = a => a;
-exports.optional_u16_js_identity = a => a;
-exports.optional_i64_js_identity = a => a;
-exports.optional_u64_js_identity = a => a;
-exports.optional_i128_js_identity = a => a;
-exports.optional_u128_js_identity = a => a;
-exports.optional_bool_js_identity = a => a;
-exports.optional_char_js_identity = a => a;
+export const optional_i32_js_identity = a => a;
+export const optional_u32_js_identity = a => a;
+export const optional_isize_js_identity = a => a;
+export const optional_usize_js_identity = a => a;
+export const optional_f32_js_identity = a => a;
+export const optional_f64_js_identity = a => a;
+export const optional_i8_js_identity = a => a;
+export const optional_u8_js_identity = a => a;
+export const optional_i16_js_identity = a => a;
+export const optional_u16_js_identity = a => a;
+export const optional_i64_js_identity = a => a;
+export const optional_u64_js_identity = a => a;
+export const optional_i128_js_identity = a => a;
+export const optional_u128_js_identity = a => a;
+export const optional_bool_js_identity = a => a;
+export const optional_char_js_identity = a => a;
 
-exports.js_works = () => {
+export const js_works = () => {
     assert.strictEqual(wasm.optional_i32_identity(wasm.optional_i32_none()), undefined);
     assert.strictEqual(wasm.optional_i32_identity(wasm.optional_i32_zero()), 0);
     assert.strictEqual(wasm.optional_i32_identity(wasm.optional_i32_one()), 1);

@@ -45,10 +45,13 @@ pub(super) fn generate_static(
         TokenStream::new()
     };
 
-    if matches!(st.thread_local, Some(ThreadLocal::V1)) {
+    // A plain `static` (no thread-local attribute) and the deprecated `thread_local`
+    // both lower to `JsStatic`, which derefs to the value so it reads like the JS
+    // global. `thread_local_v2` lowers to the `.with()`-accessed `JsThreadLocal`.
+    if matches!(st.thread_local, Some(ThreadLocal::V1) | None) {
         let thread_local_ident = format_ident!("__WRY_BINDGEN_STATIC_{}", rust_name);
         return Ok(quote_spanned! {span=>
-            ::std::thread_local! {
+            #krate::__rt::std::thread_local! {
                 static #thread_local_ident: #ty = #js_call;
             }
 
@@ -60,13 +63,7 @@ pub(super) fn generate_static(
         });
     }
 
-    if !matches!(st.thread_local, Some(ThreadLocal::V2)) {
-        return Err(syn::Error::new(
-            span,
-            "imported statics require `thread_local` or `thread_local_v2`",
-        ));
-    }
-    // Generate a lazily-initialized thread-local static.
+    // Generate a lazily-initialized thread-local static (thread_local_v2).
     // Type information is now passed through the generated JS-function call.
     Ok(quote_spanned! {span=>
         #vis static #rust_name: #krate::JsThreadLocal<#ty> = {
@@ -119,7 +116,7 @@ pub(super) fn generate_static_string(
     if matches!(st.thread_local, ThreadLocal::V1) {
         let thread_local_ident = format_ident!("__WRY_BINDGEN_STATIC_STRING_{}", rust_name);
         return Ok(quote_spanned! {span=>
-            ::std::thread_local! {
+            #krate::__rt::std::thread_local! {
                 static #thread_local_ident: #ty = #js_call;
             }
 

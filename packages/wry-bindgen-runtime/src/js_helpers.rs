@@ -4,12 +4,15 @@ use crate::batch::{run_js_sync, with_runtime};
 use crate::wire::{BinaryEncode, FunctionTypeInfo, JsFunctionSpec, TypeDef};
 
 fn drop_heap_ref_js() -> String {
-    "heapId => window.jsHeap.remove(heapId)".into()
+    // The id arrives as a BigInt (it crosses as a `u64`); the heap Map is keyed
+    // by Number, so coerce it back. Heap ids are small slab indices, so the
+    // conversion is lossless.
+    "heapId => window.jsHeap.remove(Number(heapId))".into()
 }
 
 fn dispose_rust_function_js() -> String {
     r#"heapId => {
-  const value = window.jsHeap.get(heapId);
+  const value = window.jsHeap.get(Number(heapId));
   const rustFunction = value && value.__wryRustFunction;
   if (rustFunction && typeof rustFunction.disposeFromRust === "function") {
     rustFunction.disposeFromRust();

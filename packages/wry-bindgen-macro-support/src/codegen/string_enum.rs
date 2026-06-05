@@ -35,10 +35,10 @@ pub(super) fn generate_string_enum(
         impl #enum_name {
             /// Convert a string to this enum variant.
             #allows
-            pub fn from_str(s: &str) -> ::core::option::Option<#enum_name> {
+            pub fn from_str(s: &str) -> #krate::__rt::core::option::Option<#enum_name> {
                 match s {
-                    #(#variant_values => ::core::option::Option::Some(#variant_paths),)*
-                    _ => ::core::option::Option::None,
+                    #(#variant_values => #krate::__rt::core::option::Option::Some(#variant_paths),)*
+                    _ => #krate::__rt::core::option::Option::None,
                 }
             }
 
@@ -46,14 +46,14 @@ pub(super) fn generate_string_enum(
             pub fn to_str(&self) -> &'static str {
                 match self {
                     #(#variant_paths => #variant_values,)*
-                    #enum_name::__Invalid => ::core::panic!(#invalid_to_str_msg),
+                    #enum_name::__Invalid => #krate::__rt::core::panic!(#invalid_to_str_msg),
                 }
             }
 
             /// Convert a JsValue (if it's a string) to this enum variant.
             #allows
-            #vis fn from_js_value(obj: &#krate::JsValue) -> ::core::option::Option<#enum_name> {
-                ::core::option::Option::and_then(obj.as_string(), |s| Self::from_str(&s))
+            #vis fn from_js_value(obj: &#krate::JsValue) -> #krate::__rt::core::option::Option<#enum_name> {
+                #krate::__rt::core::option::Option::and_then(obj.as_string(), |s| Self::from_str(&s))
             }
         }
     };
@@ -80,11 +80,11 @@ pub(super) fn generate_string_enum(
     // Generate BinaryDecode implementation - decode u32 to variant
     let binary_decode_impl = quote! {
         impl #krate::__rt::BinaryDecode for #enum_name {
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self, #krate::__rt::DecodeError> {
                 let discriminant = <u32 as #krate::__rt::BinaryDecode>::decode(decoder)?;
                 match discriminant {
-                    #(#variant_indices => ::core::result::Result::Ok(#variant_paths),)*
-                    _ => ::core::result::Result::Ok(#enum_name::__Invalid),
+                    #(#variant_indices => #krate::__rt::core::result::Result::Ok(#variant_paths),)*
+                    _ => #krate::__rt::core::result::Result::Ok(#enum_name::__Invalid),
                 }
             }
         }
@@ -98,7 +98,7 @@ pub(super) fn generate_string_enum(
     // Generate From<EnumName> for JsValue
     let into_jsvalue_impl = quote! {
         #[automatically_derived]
-        impl ::core::convert::From<#enum_name> for #krate::JsValue {
+        impl #krate::__rt::core::convert::From<#enum_name> for #krate::JsValue {
             fn from(val: #enum_name) -> Self {
                 #krate::JsValue::from_str(val.to_str())
             }
@@ -108,7 +108,7 @@ pub(super) fn generate_string_enum(
     let try_from_jsvalue_impl = quote! {
         #[automatically_derived]
         impl #krate::convert::TryFromJsValue for #enum_name {
-            fn try_from_js_value_ref(value: &#krate::JsValue) -> ::core::option::Option<Self> {
+            fn try_from_js_value_ref(value: &#krate::JsValue) -> #krate::__rt::core::option::Option<Self> {
                 Self::from_js_value(value)
             }
         }

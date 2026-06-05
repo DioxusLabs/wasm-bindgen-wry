@@ -638,12 +638,20 @@ pub(crate) fn test_try_from_f64() {
     );
     assert_eq!(result.unwrap(), 42.5);
 
-    // Failed conversion (string is not a number)
+    // A string coerces via the unary `+` operator (matching wasm-bindgen): a
+    // non-numeric string becomes NaN rather than erroring.
     let js_str = get_string("not a number");
     let result: Result<f64, _> = js_str.try_into();
     assert!(
+        result.unwrap().is_nan(),
+        "TryFrom<JsValue> for f64 coerces a non-numeric string to NaN"
+    );
+
+    // A Symbol cannot be coerced (`+sym` throws), so it errors.
+    let result: Result<f64, _> = JsValue::symbol(None).try_into();
+    assert!(
         result.is_err(),
-        "TryFrom<JsValue> for f64 should fail for string"
+        "TryFrom<JsValue> for f64 errors for a Symbol"
     );
 
     // Test TryFrom<&JsValue> for f64

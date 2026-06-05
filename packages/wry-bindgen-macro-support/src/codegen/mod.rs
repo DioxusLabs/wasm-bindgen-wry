@@ -68,10 +68,15 @@ fn module_spec_expr(
 ) -> syn::Result<TokenStream> {
     Ok(match module {
         ast::ImportModule::Named(module_path, span) => {
+            // Match upstream wasm-bindgen's `module` resolution: a leading `/` or a bare
+            // path (e.g. "tests/wasm/foo.js") is relative to the crate root
+            // (`CARGO_MANIFEST_DIR`). `./` and `../` are relative to the source file.
             let include_expr = if module_path.starts_with('/') {
                 quote_spanned! {*span=> include_str!(concat!(env!("CARGO_MANIFEST_DIR"), #module_path)) }
-            } else {
+            } else if module_path.starts_with("./") || module_path.starts_with("../") {
                 quote_spanned! {*span=> include_str!(#module_path) }
+            } else {
+                quote_spanned! {*span=> include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", #module_path)) }
             };
             quote_spanned! {*span=> #krate::__rt::JsModuleSpec::new(#include_expr) }
         }
@@ -103,8 +108,23 @@ pub(crate) fn generate(output: &ParseOutput) -> syn::Result<TokenStream> {
     tokens.extend(output.tokens.clone());
 
     let krate = program.wasm_bindgen.to_token_stream();
-    let js_sys = program.js_sys.to_token_stream();
-    let wasm_bindgen_futures = program.wasm_bindgen_futures.to_token_stream();
+    let configured_wasm_bindgen_futures = program.wasm_bindgen_futures.to_token_stream();
+    let configured_js_sys = program.js_sys.to_token_stream();
+    // Match upstream wasm-bindgen's async codegen switch. By default async
+    // code goes through `wasm_bindgen_futures` and its `js_sys` re-export, so
+    // callers don't need a direct `js-sys` dependency. Crates that opt in with
+    // `--cfg=wasm_bindgen_use_js_sys` use `js_sys::futures` and `js_sys::Promise`.
+    let use_js_sys_futures = ast::use_js_sys_futures();
+    let futures = if use_js_sys_futures {
+        quote_spanned! { proc_macro2::Span::call_site()=> #configured_js_sys::futures }
+    } else {
+        configured_wasm_bindgen_futures.clone()
+    };
+    let js_sys = if use_js_sys_futures {
+        configured_js_sys
+    } else {
+        quote_spanned! { proc_macro2::Span::call_site()=> #configured_wasm_bindgen_futures::js_sys }
+    };
 
     let mut module_bindings = HashMap::<ModuleKey, Ident>::new();
     for import in &program.imports {
@@ -179,7 +199,7 @@ pub(crate) fn generate(output: &ParseOutput) -> syn::Result<TokenStream> {
                 &vendor_prefixes,
                 &krate,
                 &js_sys,
-                &wasm_bindgen_futures,
+                &futures,
                 module_ident,
                 prefix,
             )?),
@@ -215,19 +235,9 @@ pub(crate) fn generate(output: &ParseOutput) -> syn::Result<TokenStream> {
     }
     for export in &program.exports {
         if export.rust_class.is_some() {
-            tokens.extend(generate_export_method(
-                export,
-                &krate,
-                &js_sys,
-                &wasm_bindgen_futures,
-            )?);
+            tokens.extend(generate_export_method(export, &krate, &js_sys, &futures)?);
         } else {
-            tokens.extend(generate_export_function(
-                export,
-                &krate,
-                &js_sys,
-                &wasm_bindgen_futures,
-            )?);
+            tokens.extend(generate_export_function(export, &krate, &js_sys, &futures)?);
         }
     }
     if let Some(main) = &output.main {

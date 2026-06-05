@@ -70,17 +70,17 @@ pub(super) fn generate_dynamic_union(
         quote_spanned! {span=> #enum_name::#variant => #krate::JsValue::from_str(#value) }
     });
     let typed_into_arms = typed_variants.iter().map(|(variant, _)| {
-        quote_spanned! {span=> #enum_name::#variant(__wry_value) => ::core::convert::Into::<#krate::JsValue>::into(__wry_value) }
+        quote_spanned! {span=> #enum_name::#variant(__wry_value) => #krate::__rt::core::convert::Into::<#krate::JsValue>::into(__wry_value) }
     });
 
     let known_from_block = if known_variants.is_empty() {
         TokenStream::new()
     } else {
         let known_from_arms = known_variants.iter().map(|(variant, value)| {
-            quote_spanned! {span=> #value => return ::core::result::Result::Ok(#enum_name::#variant), }
+            quote_spanned! {span=> #value => return #krate::__rt::core::result::Result::Ok(#enum_name::#variant), }
         });
         quote_spanned! {span=>
-            if let ::core::option::Option::Some(__wry_string) = __wry_value.as_string() {
+            if let #krate::__rt::core::option::Option::Some(__wry_string) = __wry_value.as_string() {
                 match __wry_string.as_str() {
                     #(#known_from_arms)*
                     _ => {}
@@ -100,16 +100,16 @@ pub(super) fn generate_dynamic_union(
         .map(|(index, (variant, ty))| {
             if Some(index) == last_fallback_idx {
                 quote_spanned! {span=>
-                    return ::core::result::Result::Ok(#enum_name::#variant(
+                    return #krate::__rt::core::result::Result::Ok(#enum_name::#variant(
                         <#krate::JsValue as #krate::JsCast>::unchecked_into::<#ty>(__wry_value)
                     ));
                 }
             } else {
                 quote_spanned! {span=>
-                    if let ::core::result::Result::Ok(__wry_inner) =
+                    if let #krate::__rt::core::result::Result::Ok(__wry_inner) =
                         <#ty as #krate::convert::TryFromJsValue>::try_from_js_value(__wry_value.clone())
                     {
-                        return ::core::result::Result::Ok(#enum_name::#variant(__wry_inner));
+                        return #krate::__rt::core::result::Result::Ok(#enum_name::#variant(__wry_inner));
                     }
                 }
             }
@@ -117,7 +117,7 @@ pub(super) fn generate_dynamic_union(
     let from_tail = if last_fallback_idx.is_some() {
         TokenStream::new()
     } else {
-        quote_spanned! {span=> ::core::result::Result::Err(__wry_value) }
+        quote_spanned! {span=> #krate::__rt::core::result::Result::Err(__wry_value) }
     };
     let encode_arms = union
         .variants
@@ -157,7 +157,7 @@ pub(super) fn generate_dynamic_union(
                 }
             }
 
-            fn __wry_from_js_value(__wry_value: #krate::JsValue) -> ::core::result::Result<Self, #krate::JsValue> {
+            fn __wry_from_js_value(__wry_value: #krate::JsValue) -> #krate::__rt::core::result::Result<Self, #krate::JsValue> {
                 #known_from_block
                 #(#typed_from_arms)*
                 #from_tail
@@ -184,7 +184,7 @@ pub(super) fn generate_dynamic_union(
 
         #[automatically_derived]
         impl #krate::__rt::BinaryDecode for #enum_name {
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self, #krate::__rt::DecodeError> {
                 let __wry_value = <#krate::JsValue as #krate::__rt::BinaryDecode>::decode(decoder)?;
                 Self::__wry_from_js_value(__wry_value)
                     .map_err(|_| #krate::__rt::DecodeError::custom(#invalid_msg))
@@ -195,7 +195,7 @@ pub(super) fn generate_dynamic_union(
         impl #krate::__rt::BatchableResult for #enum_name {}
 
         #[automatically_derived]
-        impl ::core::convert::From<#enum_name> for #krate::JsValue {
+        impl #krate::__rt::core::convert::From<#enum_name> for #krate::JsValue {
             fn from(value: #enum_name) -> Self {
                 value.__wry_into_js_value()
             }
@@ -203,11 +203,11 @@ pub(super) fn generate_dynamic_union(
 
         #[automatically_derived]
         impl #krate::convert::TryFromJsValue for #enum_name {
-            fn try_from_js_value(value: #krate::JsValue) -> ::core::result::Result<Self, #krate::JsValue> {
+            fn try_from_js_value(value: #krate::JsValue) -> #krate::__rt::core::result::Result<Self, #krate::JsValue> {
                 Self::__wry_from_js_value(value)
             }
 
-            fn try_from_js_value_ref(value: &#krate::JsValue) -> ::core::option::Option<Self> {
+            fn try_from_js_value_ref(value: &#krate::JsValue) -> #krate::__rt::core::option::Option<Self> {
                 Self::__wry_from_js_value(value.clone()).ok()
             }
         }

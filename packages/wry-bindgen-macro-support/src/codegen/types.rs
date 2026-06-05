@@ -51,14 +51,14 @@ pub(super) fn generate_type(
     } else {
         quote_spanned! {span=>
             #[doc(hidden)]
-            pub generics: ::core::marker::PhantomData<fn() -> (#(#type_params,)*)>,
+            pub generics: #krate::__rt::core::marker::PhantomData<fn() -> (#(#type_params,)*)>,
         }
     };
     let generic_init = if type_params.is_empty() {
         quote! {}
     } else {
         quote_spanned! {span=>
-            generics: ::core::marker::PhantomData,
+            generics: #krate::__rt::core::marker::PhantomData,
         }
     };
     let from_jsvalue_obj = if ty.extends.is_empty() {
@@ -82,22 +82,22 @@ pub(super) fn generate_type(
 
     // Generate AsRef<JsValue> implementation
     let as_ref_impl = quote_spanned! {span=>
-        impl #impl_generics ::core::convert::AsRef<#krate::JsValue> for #rust_name #ty_generics #where_clause {
+        impl #impl_generics #krate::__rt::core::convert::AsRef<#krate::JsValue> for #rust_name #ty_generics #where_clause {
             fn as_ref(&self) -> &#krate::JsValue {
-                ::core::convert::AsRef::as_ref(&self.obj)
+                #krate::__rt::core::convert::AsRef::as_ref(&self.obj)
             }
         }
     };
 
     // Generate From<Type> for JsValue and From<JsValue> for Type
     let into_jsvalue = quote_spanned! {span=>
-        impl #impl_generics ::core::convert::From<#rust_name #ty_generics> for #krate::JsValue #where_clause {
+        impl #impl_generics #krate::__rt::core::convert::From<#rust_name #ty_generics> for #krate::JsValue #where_clause {
             fn from(val: #rust_name #ty_generics) -> Self {
-                ::core::convert::Into::into(val.obj)
+                #krate::__rt::core::convert::Into::into(val.obj)
             }
         }
 
-        impl #impl_generics ::core::convert::From<#krate::JsValue> for #rust_name #ty_generics #where_clause {
+        impl #impl_generics #krate::__rt::core::convert::From<#krate::JsValue> for #rust_name #ty_generics #where_clause {
             fn from(val: #krate::JsValue) -> Self {
                 Self { obj: #from_jsvalue_obj, #generic_init }
             }
@@ -110,7 +110,7 @@ pub(super) fn generate_type(
             quote! {}
         } else if let Some(inner) = js_option_inner {
             quote_spanned! {span=>
-                impl<#inner: #krate::JsGeneric> ::core::ops::Deref for #rust_name<#inner> {
+                impl<#inner: #krate::JsGeneric> #krate::__rt::core::ops::Deref for #rust_name<#inner> {
                     type Target = #inner;
                     fn deref(&self) -> &#inner {
                         <#inner as #krate::JsCast>::unchecked_from_js_ref(&self.obj)
@@ -120,10 +120,10 @@ pub(super) fn generate_type(
         } else {
             let deref_to = &storage_ty;
             quote_spanned! {span=>
-                impl #impl_generics ::core::ops::Deref for #rust_name #ty_generics #where_clause {
+                impl #impl_generics #krate::__rt::core::ops::Deref for #rust_name #ty_generics #where_clause {
                     type Target = #deref_to;
                     fn deref(&self) -> &#deref_to {
-                        <Self as ::core::convert::AsRef<#deref_to>>::as_ref(self)
+                        <Self as #krate::__rt::core::convert::AsRef<#deref_to>>::as_ref(self)
                     }
                 }
             }
@@ -137,7 +137,7 @@ pub(super) fn generate_type(
     // to implement Clone, which plain extern types do not do by default.
     let mut from_parents = TokenStream::new();
     from_parents.extend(quote_spanned! {span=>
-        impl #impl_generics ::core::convert::AsRef<#rust_name #ty_generics> for #rust_name #ty_generics #where_clause {
+        impl #impl_generics #krate::__rt::core::convert::AsRef<#rust_name #ty_generics> for #rust_name #ty_generics #where_clause {
             #[inline]
             fn as_ref(&self) -> &#rust_name #ty_generics {
                 self
@@ -148,21 +148,21 @@ pub(super) fn generate_type(
         let parent_from_owned = if index == 0 {
             quote_spanned! {span=> val.obj }
         } else {
-            quote_spanned! {span=> <#parent as #krate::JsCast>::unchecked_from_js(::core::convert::Into::into(val.obj)) }
+            quote_spanned! {span=> <#parent as #krate::JsCast>::unchecked_from_js(#krate::__rt::core::convert::Into::into(val.obj)) }
         };
         let parent_ref = if index == 0 {
             quote_spanned! {span=> &self.obj }
         } else {
-            quote_spanned! {span=> <#parent as #krate::JsCast>::unchecked_from_js_ref(::core::convert::AsRef::<#krate::JsValue>::as_ref(self)) }
+            quote_spanned! {span=> <#parent as #krate::JsCast>::unchecked_from_js_ref(#krate::__rt::core::convert::AsRef::<#krate::JsValue>::as_ref(self)) }
         };
         from_parents.extend(quote_spanned! {span=>
-            impl #impl_generics ::core::convert::From<#rust_name #ty_generics> for #parent #where_clause {
+            impl #impl_generics #krate::__rt::core::convert::From<#rust_name #ty_generics> for #parent #where_clause {
                 fn from(val: #rust_name #ty_generics) -> #parent {
                     #parent_from_owned
                 }
             }
 
-            impl #impl_generics ::core::convert::AsRef<#parent> for #rust_name #ty_generics #where_clause {
+            impl #impl_generics #krate::__rt::core::convert::AsRef<#parent> for #rust_name #ty_generics #where_clause {
                 #[inline]
                 fn as_ref(&self) -> &#parent {
                     #parent_ref
@@ -202,8 +202,8 @@ pub(super) fn generate_type(
     // Generate BinaryDecode implementation
     let binary_decode_impl = quote_spanned! {span=>
         impl #impl_generics #krate::__rt::BinaryDecode for #rust_name #ty_generics #where_clause {
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
-                ::core::result::Result::map(#krate::JsValue::decode(decoder), ::core::convert::Into::into)
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self, #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::map(#krate::JsValue::decode(decoder), #krate::__rt::core::convert::Into::into)
             }
         }
     };
@@ -211,8 +211,8 @@ pub(super) fn generate_type(
     // Generate BatchableResult implementation
     let batchable_impl = quote_spanned! {span=>
         impl #impl_generics #krate::__rt::BatchableResult for #rust_name #ty_generics #where_clause {
-            fn try_placeholder(batch: &mut #krate::__rt::Runtime) -> ::core::option::Option<Self> {
-                ::core::option::Option::Some(::core::convert::Into::into(<#krate::JsValue as #krate::__rt::BatchableResult>::try_placeholder(batch)?))
+            fn try_placeholder(batch: &mut #krate::__rt::Runtime) -> #krate::__rt::core::option::Option<Self> {
+                #krate::__rt::core::option::Option::Some(#krate::__rt::core::convert::Into::into(<#krate::JsValue as #krate::__rt::BatchableResult>::try_placeholder(batch)?))
             }
         }
     };
@@ -293,7 +293,7 @@ pub(super) fn generate_type(
                 }
 
                 fn unchecked_from_js(val: #krate::JsValue) -> Self {
-                    ::core::convert::Into::into(val)
+                    #krate::__rt::core::convert::Into::into(val)
                 }
 
                 fn unchecked_from_js_ref(val: &#krate::JsValue) -> &Self {
@@ -312,7 +312,7 @@ pub(super) fn generate_type(
                 #is_type_of_impl
 
                 fn unchecked_from_js(val: #krate::JsValue) -> Self {
-                    ::core::convert::Into::into(val)
+                    #krate::__rt::core::convert::Into::into(val)
                 }
 
                 fn unchecked_from_js_ref(val: &#krate::JsValue) -> &Self {

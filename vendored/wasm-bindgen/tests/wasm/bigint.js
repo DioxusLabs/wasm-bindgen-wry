@@ -1,10 +1,10 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.i64_js_identity = a => a;
-exports.u64_js_identity = a => a;
+export const i64_js_identity = a => a;
+export const u64_js_identity = a => a;
 
-exports.js_works = () => {
+export const js_works = () => {
     assert.strictEqual(wasm.zero(), BigInt('0'));
     assert.strictEqual(wasm.one(), BigInt('1'));
     assert.strictEqual(wasm.neg_one(), BigInt('-1'));

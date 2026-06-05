@@ -106,8 +106,8 @@ pub(super) fn generate_args(
             fn_types.push(quote_spanned! {span=> #concrete_ty });
             call_values.push(quote_spanned! {span=>
                 unsafe {
-                    ::core::mem::transmute_copy(
-                        &::core::mem::ManuallyDrop::new(#name)
+                    #krate::__rt::core::mem::transmute_copy(
+                        &#krate::__rt::core::mem::ManuallyDrop::new(#name)
                     )
                 }
             });

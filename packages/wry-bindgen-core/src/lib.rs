@@ -30,5 +30,5 @@ pub use wry_bindgen_runtime::wire::{
     BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData,
     JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsFreeExportSpec,
     JsFunctionSpec, JsModuleSpec, JsReexportSpec, JsRef, JsRefEncode, ObjectHandle, RustCallback,
-    TypeDef,
+    ThrowingResult, TypeDef,
 };

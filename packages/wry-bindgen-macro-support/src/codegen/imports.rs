@@ -14,7 +14,7 @@ use super::erasure::{
     collect_constraining_type_params, generate_args, import_function_is_instance_method,
     receiver_impl_type, split_method_generics,
 };
-use super::js::{async_promise_guard_js_code, generate_js_code};
+use super::js::{generate_js_code, mark_async_promise_handled_js_code};
 
 fn import_ret(func: &ImportFunction) -> Option<&syn::Type> {
     func.function.ret.as_ref().map(|ret| &ret.r#type)
@@ -67,7 +67,7 @@ pub(super) fn generate_function(
     vendor_prefixes: &HashMap<String, Vec<String>>,
     krate: &TokenStream,
     js_sys: &TokenStream,
-    wasm_bindgen_futures: &TokenStream,
+    futures: &TokenStream,
     module: Option<&Ident>,
     prefix: &str,
 ) -> syn::Result<TokenStream> {
@@ -90,13 +90,13 @@ pub(super) fn generate_function(
 
     if func.function.r#async {
         let js_code_str = generate_js_code(func, js_namespace, vendor_prefixes, prefix, true);
-        let js_code_str = async_promise_guard_js_code(&js_code_str);
+        let js_code_str = mark_async_promise_handled_js_code(&js_code_str);
         let mut tokens = generate_async_function(
             func,
             type_generics,
             krate,
             js_sys,
-            wasm_bindgen_futures,
+            futures,
             module,
             &js_code_str,
             &args,
@@ -136,8 +136,8 @@ pub(super) fn generate_function(
         quote_spanned! {span=>
             let __wry_ret = #js_call;
             unsafe {
-                ::core::mem::transmute_copy(
-                    &::core::mem::ManuallyDrop::new(__wry_ret)
+                #krate::__rt::core::mem::transmute_copy(
+                    &#krate::__rt::core::mem::ManuallyDrop::new(__wry_ret)
                 )
             }
         }
@@ -163,7 +163,7 @@ pub(super) fn generate_function(
                 && type_names.contains(&ns[0])
             {
                 let (impl_type, impl_generics, mut method_generics) =
-                    class_impl_parts_for_name(func, &ns[0], type_generics);
+                    namespaced_class_impl_parts(func, &ns[0], type_generics);
                 add_js_call_bounds_to_generics(&mut method_generics, func, krate, true);
                 let (impl_generics, _, impl_where_clause) = impl_generics.split_for_impl();
                 let (method_generics, _, method_where_clause) = method_generics.split_for_impl();
@@ -270,7 +270,7 @@ fn constructor_impl_parts(
     type_generics: &HashMap<String, syn::Generics>,
 ) -> (syn::Type, syn::Generics, syn::Generics) {
     if let Some(class) = class_name_from_ty(rust_ty) {
-        class_impl_parts_for_name(func, &class, type_generics)
+        namespaced_class_impl_parts(func, &class, type_generics)
     } else {
         class_impl_parts_for_ty(func, rust_ty)
     }
@@ -284,15 +284,17 @@ fn class_impl_parts_for_ty(
     (rust_ty.clone(), impl_generics, method_generics)
 }
 
-fn class_impl_parts_for_name(
+fn namespaced_class_impl_parts(
     func: &ImportFunction,
     class: &str,
     type_generics: &HashMap<String, syn::Generics>,
 ) -> (syn::Type, syn::Generics, syn::Generics) {
+    // Upstream hoists class generics for constructors/static functions whose
+    // return type is the class itself, e.g. `fn new<T>() -> Promise<T>`.
     if type_generics
         .get(class)
         .is_some_and(|generics| !generics.params.is_empty())
-        && let Some(class_type) = class_return_type(func, class)
+        && let Some(class_type) = return_type_matching_class(func, class)
     {
         let (impl_generics, method_generics) = split_method_generics(&func.generics, &class_type);
         return (class_type, impl_generics, method_generics);
@@ -306,7 +308,7 @@ fn class_impl_parts_for_name(
     )
 }
 
-fn class_return_type(func: &ImportFunction, class: &str) -> Option<syn::Type> {
+fn return_type_matching_class(func: &ImportFunction, class: &str) -> Option<syn::Type> {
     let ret = import_ret(func)
         .and_then(|ret| extract_result_ok_type(ret).or_else(|| Some(ret.clone())))?;
     let syn::Type::Path(path) = &ret else {
@@ -344,7 +346,7 @@ fn generate_async_function(
     type_generics: &HashMap<String, syn::Generics>,
     krate: &TokenStream,
     js_sys: &TokenStream,
-    wasm_bindgen_futures: &TokenStream,
+    futures: &TokenStream,
     module: Option<&Ident>,
     js_code_str: &str,
     args: &GeneratedArgs,
@@ -371,7 +373,7 @@ fn generate_async_function(
     let async_body = quote_spanned! {span=>
         {
             let __wry_promise = #js_call;
-            #wasm_bindgen_futures::JsFuture::from(__wry_promise).await
+            #futures::JsFuture::from(__wry_promise).await
         }
     };
 

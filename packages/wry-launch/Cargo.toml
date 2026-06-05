@@ -30,10 +30,16 @@ futures-channel = "0.3.31"
 rand = "0.9.2"
 libtest-mimic = "0.8"
 criterion = "0.5.1"
+wasm-bindgen-test = { path = "../wasm-bindgen-test" }
 
 [[test]]
 name = "main_thread_tests"
 path = "tests/main_thread_tests/main.rs"
+harness = false
+
+[[test]]
+name = "upstream_tests"
+path = "tests/upstream_tests/main.rs"
 harness = false
 
 [[bench]]

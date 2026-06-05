@@ -1,4 +1,4 @@
-const wbg = require('wasm-bindgen-test.js');
+const wbg = new Proxy({}, { get: (_t, n) => window[n] });
 
 // Run `fn` and assert that it throws a TypeError whose message includes
 // `expected_substr`. Used to verify that a gate fired (rather than the
@@ -23,7 +23,7 @@ function assertGateThrew(fn, expected_substr, label) {
     }
 }
 
-exports.js_instanceof_works = () => {
+export const js_instanceof_works = () => {
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     if (!(dog instanceof wbg.InheritanceDog)) {
         throw new Error('expected dog instanceof InheritanceDog');
@@ -44,7 +44,7 @@ exports.js_instanceof_works = () => {
 // that wasm can soundly interpret as an Animal.  Each ancestor is stored on
 // the instance as `this.__wbg_ptr_<Ancestor>`, and the parent class's
 // emitted method body reads from that per-class field.
-exports.js_inherited_method_dispatch_works = () => {
+export const js_inherited_method_dispatch_works = () => {
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     if (dog.name() !== 'Rex') {
         throw new Error('expected dog.name() === Rex, got: ' + dog.name());
@@ -68,7 +68,7 @@ exports.js_inherited_method_dispatch_works = () => {
 // not silently hand the descendant pointer to the parent's wasm shim. The
 // generated `Parent.__unwrap` rejects with a 0 return, which trips
 // `assert_not_null` in the Rust shim and surfaces as a JS exception here.
-exports.js_owned_parent_rejects_subclass_works = () => {
+export const js_owned_parent_rejects_subclass_works = () => {
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     assertGateThrew(
         () => wbg.inheritance_take_animal_by_value(dog),
@@ -87,7 +87,7 @@ exports.js_owned_parent_rejects_subclass_works = () => {
 // a wasm-bindgen descendant would otherwise hand the descendant pointer
 // to the parent's wasm shim. The cli-support guard throws before the
 // __destroy_into_raw call.
-exports.js_owned_self_method_rejects_subclass_works = () => {
+export const js_owned_self_method_rejects_subclass_works = () => {
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     assertGateThrew(
         () => dog.into_name(),
@@ -111,7 +111,7 @@ exports.js_owned_self_method_rejects_subclass_works = () => {
 // cli-support emits `class InheritanceBetaChild extends RenamedAnimal`
 // before `class RenamedAnimal`, the module fails to load with a TDZ
 // ReferenceError — so this test guards both concerns at once.
-exports.js_renamed_parent_extends_works = () => {
+export const js_renamed_parent_extends_works = () => {
     const child = new wbg.InheritanceBetaChild('Aristotle', 'extra-bit');
     if (!(child instanceof wbg.RenamedAnimal)) {
         throw new Error('child should be instanceof RenamedAnimal');
@@ -128,7 +128,7 @@ exports.js_renamed_parent_extends_works = () => {
 // Parent with `skip_typescript`: the child's `.d.ts` must not say
 // `extends Parent` (the parent has no declaration), but the runtime JS
 // `class extends` and prototype-chain dispatch must still work.
-exports.js_skip_typescript_parent_child_works = () => {
+export const js_skip_typescript_parent_child_works = () => {
     const child = new wbg.InheritanceChildOfSkipped(7, 9);
     if (!(child instanceof wbg.InheritanceSkippedParent)) {
         throw new Error('child should still be instanceof InheritanceSkippedParent');
@@ -151,7 +151,7 @@ exports.js_skip_typescript_parent_child_works = () => {
 // ("Rex"), not the Dog's `breed` ("Labrador"). The test asserts that
 // dispatch must either return the correct name or throw — never silently
 // return the descendant field.
-exports.js_borrowed_parent_with_subclass_works = () => {
+export const js_borrowed_parent_with_subclass_works = () => {
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     let result;
     let threw = false;
@@ -180,7 +180,7 @@ exports.js_borrowed_parent_with_subclass_works = () => {
 // Same lowering in method position: another class's method takes
 // `&InheritanceAnimal`. Pass a Dog (subclass) — must return the Animal's
 // name "Rex", not the Dog's breed "Labrador" (the type-confusion symptom).
-exports.js_borrowed_parent_method_with_subclass_works = () => {
+export const js_borrowed_parent_method_with_subclass_works = () => {
     const observer = new wbg.InheritanceObserver('seen');
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     const result = observer.describe_animal(dog);
@@ -209,7 +209,7 @@ exports.js_borrowed_parent_method_with_subclass_works = () => {
 // JS-only subclasses pass because the slots agree, while Rust descendants
 // (whose per-class slot is an upcasted ancestor pointer that differs from
 // `__wbg_ptr`) are still rejected.
-exports.js_js_only_subclass_passes_pointer_check_works = () => {
+export const js_js_only_subclass_passes_pointer_check_works = () => {
     class JsOnlyAnimal extends wbg.InheritanceAnimal {}
 
     // (a) Leaf-class consume-self method dispatched on a JS-only subclass.
@@ -237,7 +237,7 @@ exports.js_js_only_subclass_passes_pointer_check_works = () => {
 // descendant's `__wbg_ptr` from `__destroy_into_raw()` and pass it to the
 // *parent's* wasm free shim — type-confused free / UB. The guard injected
 // into the participating-class `free()` body throws cleanly instead.
-exports.js_parent_free_dispatched_on_subclass_throws_works = () => {
+export const js_parent_free_dispatched_on_subclass_throws_works = () => {
     const dog = new wbg.InheritanceDog('Rex', 'Labrador');
     assertGateThrew(
         () => wbg.InheritanceAnimal.prototype.free.call(dog),
@@ -252,7 +252,7 @@ exports.js_parent_free_dispatched_on_subclass_throws_works = () => {
 // consume-self gates fire at every depth — i.e. the per-class pointer
 // check works whether the receiver is one or two prototype-chain hops
 // away from the method's defining class.
-exports.js_three_level_chain_gates_at_every_depth_works = () => {
+export const js_three_level_chain_gates_at_every_depth_works = () => {
     const c = new wbg.ChainC('alpha', 'beta', 'gamma');
 
     // free guard: dispatching either ancestor's `free` on a grandchild
@@ -306,7 +306,7 @@ exports.js_three_level_chain_gates_at_every_depth_works = () => {
     }
 };
 
-exports.js_super_does_not_double_alloc = () => {
+export const js_super_does_not_double_alloc = () => {
     wbg.inheritance_reset_counters();
 
     // new InheritanceDog should:

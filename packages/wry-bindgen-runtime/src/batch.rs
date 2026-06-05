@@ -181,6 +181,17 @@ impl Runtime {
         )
     }
 
+    /// Build a response carrying an error string; JS throws it as an exception.
+    pub(crate) fn finish_respond_error_message(&mut self, message: &str) -> IPCMessage {
+        let mut encoder = EncodedData::default();
+        AbiBinaryEncode::encode(message, &mut encoder);
+        self.finish_rust_to_js_message(
+            MessageType::RespondError,
+            EncodedParts::from_encoded(encoder),
+            None,
+        )
+    }
+
     fn finish_rust_to_js_message(
         &mut self,
         message_type: MessageType,

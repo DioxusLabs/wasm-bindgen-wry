@@ -22,7 +22,8 @@ mod registry;
 
 pub use callback::RustCallback;
 pub use encode::{
-    BinaryDecode, BinaryEncode, EncodeTypeDef, FunctionTypeInfo, JsRefEncode, TypeDef,
+    BinaryDecode, BinaryEncode, EncodeTypeDef, FunctionTypeInfo, JsRefEncode, ThrowingResult,
+    TypeDef,
 };
 pub use ipc::{DecodeError, DecodedData, EncodedData};
 pub use js_ref::JsRef;

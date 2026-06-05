@@ -10,6 +10,10 @@ pub(crate) use crate::wire::{DecodedData, EncodedData};
 pub(crate) enum MessageType {
     Evaluate = 0,
     Respond = 1,
+    /// A response carrying an error string; JS throws it as an exception. Used when an
+    /// exported call fails (e.g. an argument can't be decoded), matching wasm-bindgen's
+    /// behavior of throwing rather than aborting.
+    RespondError = 2,
 }
 
 #[derive(Debug, Clone)]
