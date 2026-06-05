@@ -10,13 +10,17 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 default = ["std"]
 std = []
 # Mirror upstream wasm-bindgen's feature surface so downstream crates that enable
-# these features still build against the shim. Features that map to optional
-# upstream dependencies (serde, serde_json) or other crates' features (gg-alloc,
-# strict-macro) are declared as no-ops here since the shim has no such deps.
+# these features still build against the shim. Features that map to other crates'
+# features (gg-alloc, strict-macro) are declared as no-ops here since the shim has
+# no such deps.
 enable-interning = ["std"]
-serde-serialize = ["serde", "serde_json", "std"]
-serde = []
-serde_json = []
+# `serde-serialize` gates `JsValue::{from,into}_serde`. Forward it to whichever
+# backend is live so the methods exist downstream: `wry-bindgen` (desktop, and
+# wasm32 under `unstable_force_wry_backend`) or upstream wasm-bindgen (normal
+# wasm32). The `?` keeps the forward from force-enabling the optional backend.
+serde-serialize = ["wry-bindgen?/serde-serialize", "wasm-bindgen-upstream/serde-serialize", "std"]
+serde = ["serde-serialize"]
+serde_json = ["serde-serialize"]
 spans = []
 strict-macro = []
 gg-alloc = []
