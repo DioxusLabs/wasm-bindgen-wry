@@ -23,10 +23,12 @@
 #             backend in on wasm32. This compiles their bindings against the wry
 #             backend instead of upstream.
 #
-# Crates listed under EXCLUDE are pinned for documentation but not built, each
-# with a reason (environmental build failure, or a known gap tracked elsewhere).
+# Every crate is built. A failure is the point of the test: it is a shim gap to
+# fix (a missing/incompatible API the macro or runtime needs to grow), surfaced
+# loudly. Do NOT add an exclude list to make this green -- that hides exactly the
+# gaps this test exists to find. Fix the shim until the crate builds.
 #
-# Exit status is non-zero if any built crate fails to compile.
+# Exit status is non-zero if any crate fails to compile.
 
 set -u
 
@@ -84,6 +86,12 @@ NATIVE=(
   "leptos"
   "leptos_dom"
   "leptos_router"
+  "libp2p-wasm-ext"
+  "wasm-bindgen-test"
+  "worker"
+  "worker-sys"
+  "worker-macros"
+  "sqlite-wasm-rs"
 )
 
 # Build for wasm32-unknown-unknown with unstable_force_wry_backend (bindings are
@@ -150,20 +158,10 @@ WASM=(
   "dateparser"
   "embassy-time"
   "titlecase"
-)
-
-# Pinned but not built. Format: "crate -> reason".
-EXCLUDE=(
-  "wasm-bindgen-test -> crates.io build needs LazyCell Deref (the shim's gap); the vendored copy is patched (patches 0002/0003) and validated separately"
-  "libp2p-wasm-ext   -> real shim gap: JsFunction::call trait bounds unsatisfied; tracked, fix before adding"
-  "worker            -> build reads worker-sys 'cloudflare:sockets' file absent off-Workers (environmental)"
-  "worker-sys        -> same as worker (environmental)"
-  "worker-macros     -> same as worker (environmental)"
-  "sqlite-wasm-rs    -> build script fails outside a wasm/emscripten sysroot (environmental)"
-  "packed_simd_2     -> requires nightly portable-simd (environmental)"
-  "wasmer            -> a wasm runtime engine, not a wasm-bindgen consumer for this target (environmental)"
-  "wasmer-wasi       -> same as wasmer (environmental)"
-  "wasmer-wasix      -> same as wasmer (environmental)"
+  "packed_simd_2"
+  "wasmer"
+  "wasmer-wasi"
+  "wasmer-wasix"
 )
 
 # ---------------------------------------------------------------------------
@@ -193,13 +191,22 @@ build_one() {
     # wasm32 mode: force the wry backend on for the whole build graph.
     if [ "$mode" = wasm32 ]; then
       echo 'wasm-bindgen = { version = "*", features = ["unstable_force_wry_backend"] }'
+      # getrandom refuses to build for wasm32 without an explicit RNG backend
+      # (its own opt-in, unrelated to the shim). Select the JS backend the way
+      # any real wasm32 app does, so transitive getrandom does not mask the
+      # crate's own bindings. Covers getrandom 0.2 (feature) and 0.3 (cfg, set
+      # via RUSTFLAGS below).
+      echo 'getrandom = { version = "0.2", features = ["js"] }'
     fi
   } > "$dir/Cargo.toml"
 
-  local target_args=()
-  [ "$mode" = wasm32 ] && target_args=(--target "$WASM_TARGET")
+  local target_args=() env_args=()
+  if [ "$mode" = wasm32 ]; then
+    target_args=(--target "$WASM_TARGET")
+    env_args=(env "RUSTFLAGS=--cfg getrandom_backend=\"wasm_js\"")
+  fi
 
-  if (cd "$dir" && cargo build "${PATCH[@]}" "${target_args[@]}" >"$dir/log" 2>&1); then
+  if (cd "$dir" && "${env_args[@]}" cargo build "${PATCH[@]}" "${target_args[@]}" >"$dir/log" 2>&1); then
     printf '  ok   %-7s %s\n' "$mode" "$crate"
     passes=$((passes + 1))
   else
@@ -222,12 +229,10 @@ for entry in "${WASM[@]}"; do
   build_one wasm32 "${parts[@]}"
 done
 
-echo "== excluded (pinned, not built) =="
-for e in "${EXCLUDE[@]}"; do echo "  skip $e"; done
-
 echo
-echo "built ok: $passes   failed: ${#fails[@]}   excluded: ${#EXCLUDE[@]}"
+echo "built ok: $passes   failed: ${#fails[@]}"
 if [ "$fail" -ne 0 ]; then
-  printf 'FAILED: %s\n' "${fails[@]}"
+  echo "shim gaps to fix (or crate-specific blockers to investigate):"
+  printf '  - %s\n' "${fails[@]}"
 fi
 exit "$fail"
