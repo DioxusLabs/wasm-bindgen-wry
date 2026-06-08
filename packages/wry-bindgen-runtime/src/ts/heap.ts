@@ -115,6 +115,7 @@ class JSHeap {
     // Reservation stack starts empty
     this.reservationStack = [];
     this.deferredHeapRefs = [];
+    this.takingOwnership = false;
   }
 
   insertAt(id: number, value: unknown): void {
@@ -189,6 +190,21 @@ class JSHeap {
     const id = scope.ids[scope.nextIndex];
     scope.nextIndex++;
     this.insertAt(id, value);
+  }
+
+  // While true, decoding an owned heap reference *takes* ownership (removing the
+  // slot) instead of borrowing it. Set only while decoding an export's return
+  // value: a return transfers ownership to JS, mirroring wasm-bindgen's
+  // `takeObject`. The Rust side forgets the value rather than queuing a drop, so
+  // taking here is what frees the slot.
+  declare private takingOwnership: boolean;
+
+  setTakingOwnership(value: boolean): void {
+    this.takingOwnership = value;
+  }
+
+  isTakingOwnership(): boolean {
+    return this.takingOwnership;
   }
 
   get(id: number): unknown | undefined {

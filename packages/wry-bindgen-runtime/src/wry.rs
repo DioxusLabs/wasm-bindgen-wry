@@ -300,7 +300,12 @@ impl ProtocolHandler {
         // Serve inline_js modules from __wbg__/snippets/
         if let Some(path_without_snippets) = path_without_wbg.strip_prefix("snippets/") {
             let responder = WryBindgenResponder::from(responder);
-            if let Some(content) = FUNCTION_REGISTRY.get_module(path_without_snippets) {
+            // Inventory-collected modules first, then any registered at runtime by
+            // `link_to!` (whose content is only known once the macro call runs).
+            if let Some(content) = FUNCTION_REGISTRY
+                .get_module(path_without_snippets)
+                .or_else(|| crate::function_registry::linked_module(path_without_snippets))
+            {
                 responder.respond(module_response(content));
                 return None;
             }

@@ -9,11 +9,6 @@ use core::fmt;
 use core::ptr::NonNull;
 use wry_bindgen_core::Clamped;
 
-#[inline]
-fn is_special_value_id(id: JsRef) -> bool {
-    id.is_special_value()
-}
-
 /// An opaque reference to a JavaScript heap object.
 ///
 /// This type is the wry-bindgen equivalent of wasm-bindgen's `JsValue`.
@@ -179,13 +174,12 @@ impl JsValue {
 impl Clone for JsValue {
     #[inline]
     fn clone(&self) -> JsValue {
-        // Special constants don't need cloning. Borrow-stack IDs are below
-        // JSIDX_OFFSET and must be promoted to owned heap refs when cloned.
-        if is_special_value_id(self.idx) {
-            return JsValue::from_ref(self.idx);
-        }
-
-        // Clone the value on the JS heap
+        // Mirror wasm-bindgen's externref table, where cloning any `JsValue`
+        // (even `null`/`undefined`/`true`/`false`) takes a fresh, counted heap
+        // slot that is reclaimed on drop. Routing special constants through the
+        // JS heap keeps `externref_heap_live_count` accurate; the value-based
+        // predicates (`is_null`, `as_bool`, ...) still recognize the clone via
+        // their JS fallback, so promoting a constant to an owned ref is sound.
         crate::js_helpers::js_clone_heap_ref(self)
     }
 }

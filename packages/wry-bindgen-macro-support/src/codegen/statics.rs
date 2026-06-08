@@ -164,9 +164,34 @@ fn generate_static_js_expr(
     prefix: &str,
 ) -> String {
     let js_name = &st.js_name;
+    let segments: &[String] = js_namespace.unwrap_or(&[]);
 
-    // Build the prefix with namespace if present
-    let full_prefix = namespace_prefix(prefix, js_namespace);
+    // A namespaced static reads through one or more intermediate objects, e.g.
+    // `module.test.UNDECLARED_NAMESPACE`. Optional chaining (`?.`) makes a
+    // missing intermediate yield `undefined` instead of throwing, which is how
+    // an undeclared `Option<T>` import reads back as `None`.
+    if segments.is_empty() {
+        let full_prefix = namespace_prefix(prefix, js_namespace);
+        return format!("{full_prefix}{js_name}");
+    }
 
-    format!("{full_prefix}{js_name}")
+    // `prefix` is either empty (a global namespace) or ends in `.` for a
+    // module object. With a module object the whole chain is optional; for a
+    // bare global the first segment is the root, then the rest is optional.
+    let base = prefix.trim_end_matches('.');
+    let mut expr = String::new();
+    let mut rest = segments;
+    if base.is_empty() {
+        expr.push_str(&segments[0]);
+        rest = &segments[1..];
+    } else {
+        expr.push_str(base);
+    }
+    for segment in rest {
+        expr.push_str("?.");
+        expr.push_str(segment);
+    }
+    expr.push_str("?.");
+    expr.push_str(js_name);
+    expr
 }

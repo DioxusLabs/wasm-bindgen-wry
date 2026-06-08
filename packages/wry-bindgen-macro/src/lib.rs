@@ -54,8 +54,8 @@ pub fn __wasm_bindgen_class_marker(attr: TokenStream, input: TokenStream) -> Tok
 
 /// Link to a JS file for use with workers/worklets.
 ///
-/// This macro is only meaningful in WASM contexts. When running outside of WASM,
-/// it will panic at runtime.
+/// Registers the referenced JS with the runtime and returns the URL the WebView
+/// serves it from, so it can be handed to APIs like `Worker::new`.
 ///
 /// # Example
 ///
@@ -64,9 +64,9 @@ pub fn __wasm_bindgen_class_marker(attr: TokenStream, input: TokenStream) -> Tok
 /// let worker = Worker::new(&wasm_bindgen::link_to!(module = "/src/worker.js"));
 /// ```
 #[proc_macro]
-pub fn link_to(_input: TokenStream) -> TokenStream {
-    quote::quote! {
-        panic!("link_to! cannot be used when running outside of wasm")
+pub fn link_to(input: TokenStream) -> TokenStream {
+    match wry_bindgen_macro_support::expand_link_to(input.into()) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_token_stream().into(),
     }
-    .into()
 }

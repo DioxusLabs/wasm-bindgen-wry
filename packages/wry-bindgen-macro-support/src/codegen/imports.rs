@@ -7,7 +7,7 @@ use wasm_bindgen_macro_support::ast::{ImportFunction, ImportFunctionKind, Method
 
 use super::common::{
     clippy_allows, extract_result_ok_type, generate_js_reexport_spec,
-    generate_wry_call_js_function, is_unit_type, namespace_tokens,
+    generate_wry_call_js_function, namespace_tokens,
 };
 use super::erasure::{
     GeneratedArgs, GenericEraseContext, add_js_call_bounds, add_js_call_bounds_to_generics,
@@ -158,12 +158,17 @@ pub(super) fn generate_function(
 
     match &func.kind {
         ImportFunctionKind::Normal => {
+            // A `js_namespace` whose last segment names an imported type means
+            // this free function is a static method on that class (single
+            // `js_namespace = Class` or nested `js_namespace = ["a", "Class"]`).
+            // The JS side still routes through the full dotted namespace; only
+            // the Rust placement (`impl Class`) keys off the last segment.
             if let Some(ns) = js_namespace
-                && ns.len() == 1
-                && type_names.contains(&ns[0])
+                && ns.last().is_some_and(|last| type_names.contains(last))
             {
+                let class = ns.last().unwrap();
                 let (impl_type, impl_generics, mut method_generics) =
-                    namespaced_class_impl_parts(func, &ns[0], type_generics);
+                    namespaced_class_impl_parts(func, class, type_generics);
                 add_js_call_bounds_to_generics(&mut method_generics, func, krate, true);
                 let (impl_generics, _, impl_where_clause) = impl_generics.split_for_impl();
                 let (method_generics, _, method_where_clause) = method_generics.split_for_impl();
@@ -377,41 +382,20 @@ fn generate_async_function(
         }
     };
 
-    let (ret_clause, ret_handling) = match import_ret(func) {
-        Some(ty) => {
-            if let Some(ok_type) = extract_result_ok_type(ty) {
-                if is_unit_type(&ok_type) {
-                    (
-                        quote_spanned! {span=> -> #ty },
-                        quote_spanned! {span=> .map(|_| ()) },
-                    )
-                } else {
-                    (
-                        quote_spanned! {span=> -> #ty },
-                        quote_spanned! {span=>
-                            .map(|v| {
-                                <#ok_type as #krate::convert::TryFromJsValue>::try_from_js_value(v)
-                                    .expect("async function returned incompatible value")
-                            })
-                        },
-                    )
-                }
-            } else {
-                (
-                    quote_spanned! {span=> -> #ty },
-                    quote_spanned! {span=>
-                        .map(|v| {
-                            <#ty as #krate::convert::TryFromJsValue>::try_from_js_value(v)
-                                .expect("async function returned incompatible value")
-                        })
-                        .expect("async function failed")
-                    },
-                )
-            }
-        }
+    // The settled promise yields `Result<JsValue, JsValue>`; `FromJsFuture`
+    // reconstructs the declared return type from it (dispatching `Result` by
+    // type, so it sees through aliases). A function with no return type awaits
+    // and discards, panicking on rejection.
+    let (ret_clause, async_eval) = match import_ret(func) {
+        Some(ty) => (
+            quote_spanned! {span=> -> #ty },
+            quote_spanned! {span=>
+                #krate::convert::FromJsFuture::from_js_future(#async_body)
+            },
+        ),
         None => (
             quote_spanned! {span=> },
-            quote_spanned! {span=> .expect("async function failed"); },
+            quote_spanned! {span=> #async_body.expect("async function failed"); },
         ),
     };
 
@@ -422,7 +406,7 @@ fn generate_async_function(
             #allows
             #(#rust_attrs)*
             #vis #unsafety async fn #rust_name #fn_generics (#fn_params) #ret_clause #fn_where_clause {
-                #async_body #ret_handling
+                #async_eval
             }
         }),
         ImportFunctionKind::Method { ty, .. } if import_function_is_instance_method(func) => {
@@ -442,7 +426,7 @@ fn generate_async_function(
                     #allows
                     #(#rust_attrs)*
                     #vis #unsafety async fn #rust_name #method_generics (#method_args) #ret_clause #method_where_clause {
-                        #async_body #ret_handling
+                        #async_eval
                     }
                 }
             })
@@ -462,7 +446,7 @@ fn generate_async_function(
                     #allows
                     #(#rust_attrs)*
                     #vis #unsafety async fn #rust_name #method_generics (#fn_params) #ret_clause #method_where_clause {
-                        #async_body #ret_handling
+                        #async_eval
                     }
                 }
             })
@@ -477,7 +461,7 @@ fn generate_async_function(
                     #allows
                     #(#rust_attrs)*
                     #vis #unsafety async fn #rust_name #method_generics (#fn_params) #ret_clause #method_where_clause {
-                        #async_body #ret_handling
+                        #async_eval
                     }
                 }
             })

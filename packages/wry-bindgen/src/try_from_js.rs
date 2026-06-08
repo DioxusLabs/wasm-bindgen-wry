@@ -145,46 +145,34 @@ impl<T: convert::TryFromJsValue> convert::TryFromJsValue for Vec<T> {
     }
 }
 
-fn js_number_is_integer_in_range(number: f64, min: f64, max: f64) -> bool {
-    number.is_finite() && number.fract() == 0.0 && (min..=max).contains(&number)
+/// ECMAScript `ToUint32` of a JS number: a non-number is rejected, otherwise the
+/// value is truncated toward zero and reduced modulo 2^32. Mirrors
+/// wasm-bindgen's `to_uint_32` so the narrowing integer casts below follow the
+/// same WebAssembly `ToWebAssemblyValue` wrapping semantics rather than range
+/// checking (e.g. `i8::try_from_js_value(128.0)` wraps to `-128`).
+fn to_uint_32(v: &JsValue) -> Option<u32> {
+    v.as_f64().map(|n| {
+        if n.is_infinite() {
+            0
+        } else {
+            (n as i64) as u32
+        }
+    })
 }
 
-macro_rules! try_from_js_value_signed_int {
+macro_rules! try_from_js_value_int {
     ($($ty:ty),* $(,)?) => {
         $(
             impl convert::TryFromJsValue for $ty {
                 fn try_from_js_value_ref(val: &JsValue) -> Option<$ty> {
-                    let number = val.as_f64()?;
-                    if js_number_is_integer_in_range(number, <$ty>::MIN as f64, <$ty>::MAX as f64) {
-                        Some(number as $ty)
-                    } else {
-                        None
-                    }
+                    to_uint_32(val).map(|n| n as $ty)
                 }
             }
         )*
     };
 }
 
-macro_rules! try_from_js_value_unsigned_int {
-    ($($ty:ty),* $(,)?) => {
-        $(
-            impl convert::TryFromJsValue for $ty {
-                fn try_from_js_value_ref(val: &JsValue) -> Option<$ty> {
-                    let number = val.as_f64()?;
-                    if js_number_is_integer_in_range(number, 0.0, <$ty>::MAX as f64) {
-                        Some(number as $ty)
-                    } else {
-                        None
-                    }
-                }
-            }
-        )*
-    };
-}
-
-try_from_js_value_signed_int!(i8, i16, i32);
-try_from_js_value_unsigned_int!(u8, u16, u32);
+try_from_js_value_int!(i8, u8, i16, u16, i32, u32);
 
 impl convert::TryFromJsValue for f32 {
     fn try_from_js_value_ref(val: &JsValue) -> Option<f32> {

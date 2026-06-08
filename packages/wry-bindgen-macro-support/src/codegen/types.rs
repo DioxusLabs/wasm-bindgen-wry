@@ -6,6 +6,23 @@ use super::common::{generate_js_reexport_spec, generate_wry_call_js_function, na
 use super::erasure::add_static_bounds;
 use super::js::namespace_prefix;
 
+/// A reference to a global value by name, reached through `globalThis[...]` so
+/// names that are reserved words (`default`) or contain special characters
+/// (`kebab-case`) stay valid where a bare identifier would be a syntax error.
+fn global_candidate(name: &str) -> String {
+    let mut literal = String::with_capacity(name.len() + 2);
+    literal.push('"');
+    for ch in name.chars() {
+        match ch {
+            '"' => literal.push_str("\\\""),
+            '\\' => literal.push_str("\\\\"),
+            ch => literal.push(ch),
+        }
+    }
+    literal.push('"');
+    format!("globalThis[{literal}]")
+}
+
 pub(super) fn generate_type(
     ty: &ImportType,
     js_namespace: Option<&[String]>,
@@ -46,15 +63,19 @@ pub(super) fn generate_type(
     } else {
         None
     };
-    let generic_field = if type_params.is_empty() {
+    // A `PhantomData` marker must mention every lifetime and type parameter so
+    // they are considered used; an extern type with only a lifetime (e.g.
+    // `LifetimeOnly<'a>`) would otherwise fail to compile (`'a` is never used).
+    let lifetimes: Vec<_> = generics.lifetimes().map(|param| &param.lifetime).collect();
+    let generic_field = if lifetimes.is_empty() && type_params.is_empty() {
         quote! {}
     } else {
         quote_spanned! {span=>
             #[doc(hidden)]
-            pub generics: #krate::__rt::core::marker::PhantomData<fn() -> (#(#type_params,)*)>,
+            pub generics: #krate::__rt::core::marker::PhantomData<fn() -> (#(&#lifetimes (),)* #(#type_params,)*)>,
         }
     };
-    let generic_init = if type_params.is_empty() {
+    let generic_init = if lifetimes.is_empty() && type_params.is_empty() {
         quote! {}
     } else {
         quote_spanned! {span=>
@@ -208,6 +229,37 @@ pub(super) fn generate_type(
         }
     };
 
+    // Borrowed-decode support, so this type can be a `&T` callback argument
+    // (e.g. `dyn FnMut(&Event)`). The borrowed value rides JS's borrow stack.
+    // The anchor borrows through `JsCast`, so the impl is gated on `Self: JsCast`
+    // — matching the conditional `JsCast` impl a generic extern type carries.
+    let ref_self_ty: syn::Type = syn::parse_quote!(#rust_name #ty_generics);
+    let mut ref_generics = generics.clone();
+    ref_generics
+        .make_where_clause()
+        .predicates
+        .push(syn::parse_quote!(#ref_self_ty: #krate::JsCast));
+    let (ref_impl_generics, _, ref_where_clause) = ref_generics.split_for_impl();
+    let ref_from_binary_decode_impl = quote_spanned! {span=>
+        impl #ref_impl_generics #krate::convert::RefFromBinaryDecode for #rust_name #ty_generics #ref_where_clause {
+            type Anchor = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
+            fn ref_decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
+            }
+        }
+        // Direct `&Self` export argument: an imported JS-handle value is decoded
+        // owned (a heap-ref read does not consume the JS object) and lent by ref.
+        impl #ref_impl_generics #krate::convert::BorrowArg for #rust_name #ty_generics #ref_where_clause {
+            type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
+            type Anchor = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
+            fn borrow_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(#krate::convert::OwnedArgAnchor::from_value(
+                    <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
+                ))
+            }
+        }
+    };
+
     // Generate BatchableResult implementation
     let batchable_impl = quote_spanned! {span=>
         impl #impl_generics #krate::__rt::BatchableResult for #rust_name #ty_generics #where_clause {
@@ -239,16 +291,18 @@ pub(super) fn generate_type(
     // For inline/module imports, prefer the module export but fall back to the
     // global constructor. This lets `type Array;` in an inline_js extern block
     // still refer to the built-in `Array` when the module only exports helper
-    // functions.
+    // functions. The global fallback is reached through `globalThis[...]` so a
+    // `js_name` that is a reserved word (`default`) or contains special
+    // characters stays valid (a bare `typeof default` would be a syntax error).
     let mut constructor_candidates = vec![format!("{prefix}{js_name}")];
     if !prefix.is_empty() {
-        constructor_candidates.push(js_name.to_string());
+        constructor_candidates.push(global_candidate(js_name));
     }
     for vendor_prefix in &ty.vendor_prefixes {
         let prefixed = format!("{vendor_prefix}{js_name}");
         constructor_candidates.push(format!("{prefix}{prefixed}"));
         if !prefix.is_empty() {
-            constructor_candidates.push(prefixed);
+            constructor_candidates.push(global_candidate(&prefixed));
         }
     }
     let mut class_expr = String::new();
@@ -450,6 +504,7 @@ pub(super) fn generate_type(
         #binary_encode_impl
         #js_ref_encode_impl
         #binary_decode_impl
+        #ref_from_binary_decode_impl
         #batchable_impl
         #jscast_impl
         #generic_trait_impls

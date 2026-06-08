@@ -65,14 +65,22 @@ pub(super) fn import_function_is_instance_method(func: &ImportFunction) -> bool 
 
 pub(super) fn function_argument_parts(
     argument: &wasm_bindgen_macro_support::ast::FunctionArgumentData,
-) -> syn::Result<(&Ident, &syn::Type)> {
-    let syn::Pat::Ident(ident) = argument.pat_type.pat.as_ref() else {
-        return Err(syn::Error::new_spanned(
-            &argument.pat_type.pat,
+    index: usize,
+) -> syn::Result<(Ident, &syn::Type)> {
+    let ty = argument.pat_type.ty.as_ref();
+    match argument.pat_type.pat.as_ref() {
+        syn::Pat::Ident(ident) => Ok((ident.ident.clone(), ty)),
+        // A wildcard argument (`fn f(_: u8)`) carries no binding name; synthesize
+        // a positional one so the value still rides the boundary to JS.
+        syn::Pat::Wild(wild) => Ok((
+            Ident::new(&format!("__wry_arg{index}"), wild.underscore_token.span),
+            ty,
+        )),
+        pat => Err(syn::Error::new_spanned(
+            pat,
             "complex patterns are not supported by wry-bindgen codegen",
-        ));
-    };
-    Ok((&ident.ident, argument.pat_type.ty.as_ref()))
+        )),
+    }
 }
 
 /// Generate argument lists
@@ -93,13 +101,14 @@ pub(super) fn generate_args(
     }
 
     // Add explicit arguments
-    for arg in func
+    for (index, arg) in func
         .function
         .arguments
         .iter()
         .skip(usize::from(skip_receiver))
+        .enumerate()
     {
-        let (name, ty) = function_argument_parts(arg)?;
+        let (name, ty) = function_argument_parts(arg, index)?;
         fn_params.push(quote_spanned! {span=> #name: #ty });
         if erase.type_uses_erased_params(ty) {
             let concrete_ty = erase.concrete_type(ty, krate);

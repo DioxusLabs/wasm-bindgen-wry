@@ -29,6 +29,7 @@ pub use thread_local::{JsThreadLocal, LazyCell};
 pub use wry_bindgen_runtime::wire::{
     BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData,
     JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsFreeExportSpec,
-    JsFunctionSpec, JsModuleSpec, JsReexportSpec, JsRef, JsRefEncode, ObjectHandle, RustCallback,
-    ThrowingResult, TypeDef,
+    JsFunctionSpec, JsModuleSpec, JsReexportSpec, JsRef, JsRefEncode, MutSliceArg,
+    ObjectBorrowError, ObjectHandle, ObjectRef, ObjectRefMut, ObjectTakeError, RefFromBinaryDecode,
+    RustCallback, ThrowingResult, TypeDef, link_to_raw_specifier, register_linked_module,
 };

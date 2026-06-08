@@ -50,6 +50,8 @@ pub(super) fn generate_numeric_enum(e: &Enum, krate: &TokenStream) -> syn::Resul
     } else {
         quote_spanned! {enum_name.span()=> u32 }
     };
+    let signed = e.signed;
+    let raw_values: Vec<u32> = e.variants.iter().map(|variant| variant.value).collect();
     let invalid_msg = format!("invalid value for enum {enum_name}");
     let js_name = &e.js_name;
     let enum_object = if e.private {
@@ -69,7 +71,7 @@ pub(super) fn generate_numeric_enum(e: &Enum, krate: &TokenStream) -> syn::Resul
     Ok(quote_spanned! {enum_name.span()=>
         impl #krate::__rt::EncodeTypeDef for #enum_name {
             fn encode_type_def(type_def: &mut #krate::__rt::TypeDef) {
-                <#backing_ty as #krate::__rt::EncodeTypeDef>::encode_type_def(type_def);
+                type_def.numeric_enum(#signed, &[#(#raw_values),*]);
             }
         }
 
@@ -89,6 +91,9 @@ pub(super) fn generate_numeric_enum(e: &Enum, krate: &TokenStream) -> syn::Resul
         }
 
         impl #krate::__rt::BatchableResult for #enum_name {}
+
+        impl #krate::convert::IntoWasmAbi for #enum_name {}
+        impl #krate::convert::FromWasmAbi for #enum_name {}
 
         impl #krate::__rt::core::convert::From<#enum_name> for #krate::JsValue {
             fn from(value: #enum_name) -> Self {

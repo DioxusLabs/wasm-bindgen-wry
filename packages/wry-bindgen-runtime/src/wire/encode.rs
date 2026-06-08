@@ -16,6 +16,20 @@ pub trait JsRefEncode {
     fn js_ref(&self) -> JsRef;
 }
 
+/// Decode a value that a callback borrows for the duration of the call (the
+/// wry-bindgen equivalent of wasm-bindgen's `RefFromWasmAbi`). The `Anchor`
+/// owns whatever keeps the `&Self` valid across the closure invocation. The
+/// trait lives here so the runtime's closure-encode impls can borrow-decode a
+/// first argument; the impls themselves (JS handles, exported structs) live in
+/// the higher-level crates that define those types.
+pub trait RefFromBinaryDecode {
+    /// The anchor type that keeps the decoded reference valid.
+    type Anchor: core::ops::Deref<Target = Self>;
+
+    /// Decode a reference anchor from binary data.
+    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
+}
+
 pub(crate) const TYPE_CACHED: u8 = 0xFF;
 pub(crate) const TYPE_FULL: u8 = 0xFE;
 
@@ -50,6 +64,15 @@ enum TypeTag {
     DynamicUnion = 25,
     Char = 26,
     ThrowingResult = 27,
+    NumericEnum = 28,
+    RustValue = 29,
+    RustBorrow = 30,
+    // A `&mut [T]` argument. It rides the wire exactly like `Array` (a
+    // length-prefixed element list), but the distinct tag tells the receiving
+    // side to copy the (possibly mutated) elements back to the caller after the
+    // call returns — wry has no shared linear memory, so the write-back travels
+    // as data appended to the response. The element type def follows the tag.
+    MutArray = 31,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -104,13 +127,73 @@ impl TypeDef {
         self.push_tag(TypeTag::HeapRef);
     }
 
+    /// The wire type for an exported Rust struct passed or returned by value.
+    /// On the wire it behaves exactly like a [`heap_ref`](Self::heap_ref) (the
+    /// object wrapper rides the JS heap), but the distinct tag lets JS apply
+    /// wasm-bindgen's moved-value semantics: passing the wrapper by value
+    /// transfers ownership to Rust, so JS zeroes the wrapper's handle and a later
+    /// use throws "Attempt to use a moved value".
+    #[doc(hidden)]
+    pub fn rust_value(&mut self, class_name: &str) {
+        self.push_tag(TypeTag::RustValue);
+        // The class name lets JS find an inheritance descendant's per-class
+        // ancestor slot, so a by-value pass of a descendant as its ancestor can
+        // be rejected (the descendant's own handle differs from the ancestor
+        // view's). A non-participating struct has no such slot, so the check is a
+        // no-op for it.
+        self.push_str(class_name);
+    }
+
     #[doc(hidden)]
     pub fn borrowed_ref(&mut self) {
         self.push_tag(TypeTag::BorrowedRef);
     }
 
+    /// A borrowed `&T` to an exported struct: the routed object handle rides the
+    /// wire as a plain `u32` (like a method receiver), so no borrow-stack
+    /// round-trip is needed to read it. `class_name` lets JS route an inheritance
+    /// descendant passed as `&Ancestor` to its shared ancestor-view handle.
+    #[doc(hidden)]
+    pub fn rust_borrow(&mut self, class_name: &str) {
+        self.push_tag(TypeTag::RustBorrow);
+        self.push_str(class_name);
+    }
+
+    /// Build the type def of `T` and, if it is an exported struct (`RustValue`
+    /// tag), return its class name. Used to forward an exported struct's class
+    /// name onto a borrowed `&T` argument so JS can route inheritance descendants
+    /// to their ancestor view.
+    #[doc(hidden)]
+    pub fn rust_value_class_name<T: EncodeTypeDef + ?Sized>() -> Option<alloc::string::String> {
+        let def = TypeDef::of::<T>();
+        let bytes = def.bytes();
+        if bytes.first().copied() != Some(TypeTag::RustValue as u8) {
+            return None;
+        }
+        let len_bytes = bytes.get(1..5)?;
+        let len = u32::from_le_bytes(len_bytes.try_into().ok()?) as usize;
+        let name_bytes = bytes.get(5..5 + len)?;
+        core::str::from_utf8(name_bytes).ok().map(Into::into)
+    }
+
     #[doc(hidden)]
     pub fn u8_clamped(&mut self) {
+        self.push_tag(TypeTag::U8Clamped);
+    }
+
+    /// A mutable array (`&mut [T]`): the inner array type def follows (an
+    /// `Array` of `T`). JS copies the mutated elements back to the caller's
+    /// array after the call.
+    pub fn mut_array<T: EncodeTypeDef + ?Sized>(&mut self) {
+        self.push_tag(TypeTag::MutArray);
+        self.push_tag(TypeTag::Array);
+        T::encode_type_def(self);
+    }
+
+    /// A mutable clamped array (`Clamped<&mut [u8]>`). The inner array type is a
+    /// `U8Clamped` (the element is always `u8`); JS copies the mutated bytes back.
+    pub fn mut_u8_clamped(&mut self) {
+        self.push_tag(TypeTag::MutArray);
         self.push_tag(TypeTag::U8Clamped);
     }
 
@@ -119,6 +202,18 @@ impl TypeDef {
         self.push_u8(u8::try_from(variants.len()).expect("too many string enum variants"));
         for variant in variants {
             self.push_str(variant);
+        }
+    }
+
+    /// A C-style enum: JS validates that a value is one of `values` (decoded as
+    /// `i32` when `signed`, else `u32`) so a non-enum value is rejected rather
+    /// than silently coerced.
+    pub fn numeric_enum(&mut self, signed: bool, values: &[u32]) {
+        self.push_tag(TypeTag::NumericEnum);
+        self.push_u8(signed as u8);
+        self.push_u8(u8::try_from(values.len()).expect("too many numeric enum variants"));
+        for value in values {
+            self.bytes.extend_from_slice(&value.to_le_bytes());
         }
     }
 
@@ -491,8 +586,7 @@ impl<T: EncodeTypeDef> EncodeTypeDef for &[T] {
 
 impl<T: EncodeTypeDef> EncodeTypeDef for &mut [T] {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.push_tag(TypeTag::Array);
-        T::encode_type_def(type_def);
+        type_def.mut_array::<T>();
     }
 }
 
@@ -500,6 +594,61 @@ impl<T: EncodeTypeDef> EncodeTypeDef for Box<[T]> {
     fn encode_type_def(type_def: &mut TypeDef) {
         type_def.push_tag(TypeTag::Array);
         T::encode_type_def(type_def);
+    }
+}
+
+/// The wire form of a `&mut [T]` export argument. JS sends the array (under the
+/// `MutArray` tag), Rust decodes it into an owned buffer the export mutates, and
+/// the mutated buffer is copied back to JS in the response (`write_back`). The
+/// export codegen advertises this type, decodes it, mutably borrows `buffer`,
+/// then re-encodes it after the return value.
+pub struct MutSliceArg<T> {
+    pub buffer: Vec<T>,
+}
+
+impl<T: EncodeTypeDef> EncodeTypeDef for MutSliceArg<T> {
+    fn encode_type_def(type_def: &mut TypeDef) {
+        type_def.mut_array::<T>();
+    }
+}
+
+impl<T: BinaryDecode> BinaryDecode for MutSliceArg<T> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
+        Ok(MutSliceArg {
+            buffer: Vec::<T>::decode(decoder)?,
+        })
+    }
+}
+
+impl<T> MutSliceArg<T> {
+    pub fn as_mut_slice(&mut self) -> &mut [T] {
+        self.buffer.as_mut_slice()
+    }
+
+    /// Append the (possibly mutated) elements to the export response so JS can
+    /// copy them back into the caller's array.
+    pub fn write_back(self, encoder: &mut EncodedData)
+    where
+        T: BinaryEncode,
+    {
+        encoder.push_u32(self.buffer.len() as u32);
+        for val in self.buffer {
+            val.encode(encoder);
+        }
+    }
+}
+
+impl<T> core::ops::Deref for MutSliceArg<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        self.buffer.as_slice()
+    }
+}
+
+impl<T> core::ops::DerefMut for MutSliceArg<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.buffer.as_mut_slice()
     }
 }
 
@@ -526,7 +675,11 @@ impl<T: BinaryDecode> BinaryDecode for Vec<T> {
         let len = decoder.take_u32()? as usize;
         let mut vec = Vec::with_capacity(len);
         for _ in 0..len {
-            vec.push(T::decode(decoder)?);
+            // A failed element decode means JS supplied an array element of the
+            // wrong type; report it with wasm-bindgen's message.
+            let item = T::decode(decoder)
+                .map_err(|_| DecodeError::custom("array contains a value of the wrong type"))?;
+            vec.push(item);
         }
         Ok(vec)
     }
@@ -560,6 +713,30 @@ ref_encode_via_clone!(
     bool, char, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, usize, isize, String,
 );
 
+/// Register the write-back for a `&mut [T]` argument passed to a JS import.
+///
+/// wry has no shared linear memory, so a JS function that mutates a `&mut [T]`
+/// argument cannot write into the Rust slice directly. Instead the receiver (JS)
+/// appends the mutated array after the call's return value, and this queues a
+/// closure that — once the return value is decoded — reads the array back and
+/// copies it into the original slice. The whole encode -> call -> decode ->
+/// write-back runs synchronously inside `run_js_sync`, so the raw slice pointer
+/// captured here stays valid until the write-back runs.
+fn register_slice_write_back<T: BinaryDecode + 'static>(slice: &mut [T]) {
+    let ptr = slice.as_mut_ptr();
+    let len = slice.len();
+    crate::batch::push_write_back(Box::new(move |decoder: &mut DecodedData| {
+        let updated = Vec::<T>::decode(decoder).expect("failed to decode &mut [T] write-back");
+        // SAFETY: `ptr`/`len` describe the caller's `&mut [T]`, which outlives
+        // this synchronous write-back (see the doc comment). JS returns an array
+        // of the same length, but clamp to `len` defensively.
+        let target = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        for (dst, src) in target.iter_mut().zip(updated) {
+            *dst = src;
+        }
+    }));
+}
+
 macro_rules! slice_encode_via_copy {
     ($($ty:ty),* $(,)?) => {
         $(
@@ -575,9 +752,10 @@ macro_rules! slice_encode_via_copy {
             impl BinaryEncode for &mut [$ty] {
                 fn encode(self, encoder: &mut EncodedData) {
                     encoder.push_u32(self.len() as u32);
-                    for val in self {
+                    for val in self.iter() {
                         (*val).encode(encoder);
                     }
+                    register_slice_write_back(self);
                 }
             }
         )*
@@ -588,6 +766,29 @@ slice_encode_via_copy!(
     bool, char, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, usize, isize
 );
 
+// A `&[String]` argument (e.g. a `slice_to_array` import taking `&[String]`).
+// `String` is neither a copy-primitive nor a handle type, so it falls outside
+// both the primitive and `JsRefEncode` slice impls; each element is cloned and
+// encoded as a length-prefixed UTF-8 string, matching `Vec<String>`.
+impl BinaryEncode for &[String] {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.len() as u32);
+        for val in self {
+            val.clone().encode(encoder);
+        }
+    }
+}
+
+impl BinaryEncode for &mut [String] {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.len() as u32);
+        for val in self.iter() {
+            val.clone().encode(encoder);
+        }
+        register_slice_write_back(self);
+    }
+}
+
 impl<T: JsRefEncode> BinaryEncode for &[T] {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.len() as u32);
@@ -597,12 +798,13 @@ impl<T: JsRefEncode> BinaryEncode for &[T] {
     }
 }
 
-impl<T: JsRefEncode> BinaryEncode for &mut [T] {
+impl<T: JsRefEncode + BinaryDecode + 'static> BinaryEncode for &mut [T] {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.len() as u32);
-        for val in self {
+        for val in self.iter() {
             val.js_ref().raw().encode(encoder);
         }
+        register_slice_write_back(self);
     }
 }
 

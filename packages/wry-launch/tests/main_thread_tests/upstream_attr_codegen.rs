@@ -301,7 +301,7 @@ pub struct CodegenBase {
     value: u32,
 }
 
-#[wasm_bindgen(js_class = RenamedBase)]
+#[wasm_bindgen(js_class = RenamedBase, js_namespace = ["WryCodegen", "classes"])]
 impl CodegenBase {
     #[wasm_bindgen(constructor)]
     pub fn new(value: u32) -> CodegenBase {
@@ -355,7 +355,7 @@ pub struct CodegenChild {
     value: u32,
 }
 
-#[wasm_bindgen(js_class = RenamedChild)]
+#[wasm_bindgen(js_class = RenamedChild, js_namespace = ["WryCodegen", "classes"])]
 impl CodegenChild {
     #[wasm_bindgen(constructor)]
     pub fn new(value: u32) -> CodegenChild {
@@ -375,7 +375,7 @@ pub struct HiddenCodegenClass {
     value: u32,
 }
 
-#[wasm_bindgen(js_class = HiddenClass)]
+#[wasm_bindgen(js_class = HiddenClass, js_namespace = ["WryCodegen", "classes"])]
 impl HiddenCodegenClass {
     #[wasm_bindgen(constructor)]
     pub fn new(value: u32) -> HiddenCodegenClass {
@@ -392,7 +392,7 @@ pub struct CodegenAsyncConstructed {
     value: u32,
 }
 
-#[wasm_bindgen(js_class = AsyncConstructed)]
+#[wasm_bindgen(js_class = AsyncConstructed, js_namespace = ["WryCodegen", "classes"])]
 impl CodegenAsyncConstructed {
     #[wasm_bindgen(constructor)]
     pub async fn new(value: u32) -> CodegenAsyncConstructed {

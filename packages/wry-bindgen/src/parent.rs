@@ -46,6 +46,21 @@ impl<T> Parent<T> {
             inner: self.inner.borrow_mut(),
         }
     }
+
+    /// Clone the shared backing cell. Used by generated upcast exports to publish
+    /// an ancestor view that shares the same `T` as the descendant's parent field.
+    #[doc(hidden)]
+    pub fn share_cell(&self) -> alloc::rc::Rc<core::cell::RefCell<T>> {
+        alloc::rc::Rc::clone(&self.inner)
+    }
+
+    /// Reconstruct a `Parent<T>` from a previously [`share_cell`](Self::share_cell)d
+    /// backing cell, so an ancestor view stored by handle resolves to the same
+    /// shared `T`.
+    #[doc(hidden)]
+    pub fn from_cell(inner: alloc::rc::Rc<core::cell::RefCell<T>>) -> Self {
+        Self { inner }
+    }
 }
 
 impl<T> From<T> for Parent<T> {

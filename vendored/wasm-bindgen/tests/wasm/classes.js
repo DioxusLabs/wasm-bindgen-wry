@@ -32,8 +32,9 @@ export const js_strings = () => {
 
 export const js_exceptions = (is_panic_unwind) => {
     // this test only works when `--debug` is passed to `wasm-bindgen` (or the
-    // equivalent thereof)
-    if (require('process').env.WASM_BINDGEN_NO_DEBUG)
+    // equivalent thereof). `process` is a nodejs global with no wry analogue, so
+    // the debug gate reads as unset here and the debug checks apply.
+    if (globalThis.process?.env?.WASM_BINDGEN_NO_DEBUG)
         return;
     assert.throws(() => new wasm.ClassesExceptions1(), /cannot invoke `new` directly/);
     let a = wasm.ClassesExceptions1.new();
@@ -43,15 +44,12 @@ export const js_exceptions = (is_panic_unwind) => {
     let b = wasm.ClassesExceptions1.new();
     b.foo(b);
     assert.throws(() => b.bar(b), /recursive use of an object/);
-    if (is_panic_unwind) {
-        // In this case it works
-        b.free();
-    } else {
-        // throws because it tries to borrow_mut, but the throw_str from the previous line doesn't clean up the
-        // RefMut so the object is left in a broken state.
-        // We still try to call free here so the object is removed from the FinalizationRegistry when weak refs are enabled.
-        assert.throws(() => b.free(), /attempted to take ownership/);
-    }
+    // wasm-bindgen-implementation-specific: on wasm a failed `borrow_mut`'s
+    // `throw_str` leaves a dangling `RefMut`, so a later `free()` throws
+    // "attempted to take ownership". wry unwinds the failed borrow cleanly (the
+    // borrow guard reinserts the object), so `b` stays usable; the broken-state
+    // assertion has no native analogue. `free()` still cleans `b` up.
+    b.free();
 
     let c = wasm.ClassesExceptions1.new();
     let d = wasm.ClassesExceptions2.new();
@@ -176,15 +174,14 @@ export const js_renamed_field = () => {
 }
 
 export const js_conditional_skip = () => {
-    const x = new wasm.ConditionalSkipClass();
-    assert.strictEqual(x.skipped_field, undefined);
-    assert.ok(x.not_skipped_field === 42);
-    assert.strictEqual(x.needs_clone, 'foo');
+    // wasm-specific: `ConditionalSkip` is `#[cfg_attr(target_family="wasm", wasm_bindgen(...))]`,
+    // so on the native wry target the struct gets no `#[wasm_bindgen]` and is never
+    // exported as a JS class; N/A here.
 }
 
 export const js_conditional_bindings = () => {
-    const x = new wasm.ConditionalBindings();
-    x.free();
+    // wasm-specific: `ConditionalBindings` is `#[cfg_attr(target_family="wasm", wasm_bindgen)]`,
+    // so on the native wry target it is never exported as a JS class; N/A here.
 };
 
 export const js_assert_none = x => {
@@ -206,44 +203,17 @@ export const js_test_option_classes = () => {
   wasm.option_class_assert_some(c);
 };
 
-/**
- * Invokes `console.log`, but logs to a string rather than stdout
- * @param {any} data Data to pass to `console.log`
- * @returns {string} Output from `console.log`, without color or trailing newlines
- */
-const console_log_to_string = data => {
-    // Store the original stdout.write and create a console that logs without color
-    const original_write = process.stdout.write;
-    const colorless_console = new console.Console({
-      stdout: process.stdout,
-      colorMode: false
-    });
-    let output = '';
-
-    // Change stdout.write to append to our string, then restore the original function
-    process.stdout.write = chunk => output += chunk.trim();
-    colorless_console.log(data);
-    process.stdout.write = original_write;
-
-    return output;
-};
-
 export const js_test_inspectable_classes = () => {
     const inspectable = wasm.Inspectable.new();
     const not_inspectable = wasm.NotInspectable.new();
     // Inspectable classes have a toJSON and toString implementation generated
     assert.deepStrictEqual(inspectable.toJSON(), { a: inspectable.a });
     assert.strictEqual(inspectable.toString(), `{"a":${inspectable.a}}`);
-    // Inspectable classes in Node.js have improved console.log formatting as well
-    assert(console_log_to_string(inspectable).endsWith(`{ a: ${inspectable.a} }`));
+    // nodejs-specific: the `console.log`-formatting assertions use nodejs
+    // `process.stdout`/`console.Console`; N/A on the native wry target.
     // Non-inspectable classes do not have a toJSON or toString generated
     assert.strictEqual(not_inspectable.toJSON, undefined);
     assert.strictEqual(not_inspectable.toString(), '[object Object]');
-    // Non-inspectable classes in Node.js have no special console.log formatting
-    const not_inspectable_output = console_log_to_string(not_inspectable);
-    assert.match(not_inspectable_output, new RegExp(
-        `^NotInspectable \\{ __wbg_ptr: ${not_inspectable.__wbg_ptr} \\}$`
-    ));
     inspectable.free();
     not_inspectable.free();
 };

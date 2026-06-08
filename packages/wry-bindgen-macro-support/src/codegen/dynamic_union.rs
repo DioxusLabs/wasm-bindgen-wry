@@ -194,6 +194,9 @@ pub(super) fn generate_dynamic_union(
         #[automatically_derived]
         impl #krate::__rt::BatchableResult for #enum_name {}
 
+        impl #krate::convert::IntoWasmAbi for #enum_name {}
+        impl #krate::convert::FromWasmAbi for #enum_name {}
+
         #[automatically_derived]
         impl #krate::__rt::core::convert::From<#enum_name> for #krate::JsValue {
             fn from(value: #enum_name) -> Self {

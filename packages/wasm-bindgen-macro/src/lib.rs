@@ -52,18 +52,23 @@ pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
 
 /// The link_to proc-macro for JavaScript module linking.
 ///
-/// This only works on wasm32 targets; on desktop it panics.
+/// On wasm32 it delegates to upstream wasm-bindgen; on desktop it expands to a
+/// wry-bindgen runtime registration (see `expand_link_to`).
 #[proc_macro]
 pub fn link_to(input: TokenStream) -> TokenStream {
     let input2: TokenStream2 = input.into();
 
-    // link_to only makes sense on wasm32 - delegate to upstream macro there.
-    // Under `unstable_force_wry_backend` there is no upstream backend, so emit the
-    // desktop arm (which panics) on every target.
+    // The desktop expansion registers the JS with the wry runtime and returns its
+    // served URL. On wasm32 the upstream macro handles linking; under
+    // `unstable_force_wry_backend` there is no upstream backend, so the wry
+    // expansion is used on every target.
+    let wry_expansion = match wry_bindgen_macro_support::expand_link_to(input2.clone()) {
+        Ok(tokens) => tokens,
+        Err(e) => e.to_token_stream(),
+    };
+
     let output = if cfg!(feature = "unstable_force_wry_backend") {
-        quote! {
-            { panic!("link_to! cannot be used outside of wasm32 target") }
-        }
+        wry_expansion
     } else {
         quote! {
             {
@@ -72,9 +77,7 @@ pub fn link_to(input: TokenStream) -> TokenStream {
                     ::wasm_bindgen::__wasm_bindgen_upstream_link_to!(#input2)
                 }
                 #[cfg(not(target_arch = "wasm32"))]
-                {
-                    panic!("link_to! cannot be used outside of wasm32 target")
-                }
+                #wry_expansion
             }
         }
     };

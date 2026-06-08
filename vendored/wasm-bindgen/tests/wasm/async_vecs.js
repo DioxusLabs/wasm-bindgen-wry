@@ -9,9 +9,9 @@ export const js_works = async () => {
     assert.deepStrictEqual(await wasm.async_enum_vec(), [wasm.AnotherEnum.C, wasm.AnotherEnum.A, wasm.AnotherEnum.B]);
 
     const numberVec = await wasm.async_number_vec();
-    assert.deepStrictEqual(numberVec, new Int32Array([1, -3, 7, 12]));
-    // Make sure `numberVec` is a fresh `Int32Array`, not a view into Wasm memory,
-    // so that it can be GC'd without the whole Wasm module having to be GC'd as
-    // well.
-    assert.strictEqual(numberVec.byteLength, numberVec.buffer.byteLength);
+    assert.deepStrictEqual(numberVec, [1, -3, 7, 12]);
+    // wry returns a numeric `Vec<T>` as a plain `Array`, not a typed array
+    // backed by linear memory, so the `Int32Array`/`.buffer` identity check
+    // (that it is a fresh, GC-able view) does not apply here.
+    // assert.strictEqual(numberVec.byteLength, numberVec.buffer.byteLength);
 };

@@ -3,7 +3,10 @@
 //! These traits provide compatibility with code that uses wasm-bindgen's
 //! low-level ABI conversion types.
 
-use crate::__rt::{BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, JsRef};
+use crate::__rt::{
+    BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData, JsRef,
+    MutSliceArg,
+};
 use crate::JsValue;
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
@@ -124,12 +127,109 @@ where
     }
 }
 
-impl<T> IntoWasmAbi for T where T: BinaryEncode + EncodeTypeDef {}
-impl<T> FromWasmAbi for T where T: BinaryDecode + EncodeTypeDef {}
+// `IntoWasmAbi`/`FromWasmAbi` are implemented per-type, mirroring upstream
+// wasm-bindgen, rather than through a single blanket over `BinaryEncode`. This
+// keeps `Result` outside `IntoWasmAbi`, which is what lets `ReturnWasmAbi` carve
+// out `Result` for throwing returns (see below) without a coherence conflict.
+//
+// Every JS heap value is `JsGeneric`, which already requires the wire traits, so
+// one blanket covers js-sys/web-sys and every generated `extern` type.
+impl<T: JsGeneric> IntoWasmAbi for T {}
+impl<T: JsGeneric> FromWasmAbi for T {}
+
+// The value types that are not `JsGeneric` are enumerated explicitly.
+macro_rules! value_wasm_abi {
+    ($($ty:ty),* $(,)?) => {$(
+        impl IntoWasmAbi for $ty {}
+        impl FromWasmAbi for $ty {}
+    )*};
+}
+value_wasm_abi!(
+    (),
+    bool,
+    char,
+    f32,
+    f64,
+    usize,
+    isize,
+    alloc::string::String,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+);
+
+// Value types upcast to themselves (identity) and widen to `JsValue`, so a
+// closure that yields/accepts a value type can be viewed through the wider JS
+// type (e.g. `dyn Fn() -> i32` -> `dyn Fn() -> JsValue`). The wire encoding is
+// unchanged — a primitive already rides the boundary as its JS value — so these
+// markers only authorize the type-level reinterpretation.
+macro_rules! value_upcast {
+    ($($ty:ty),* $(,)?) => {$(
+        impl UpcastFrom<$ty> for $ty {}
+        impl UpcastFrom<$ty> for JsValue {}
+    )*};
+}
+value_upcast!(
+    bool, char, f32, f64, usize, isize, i8, i16, i32, i64, i128, u8, u16, u32, u64, u128,
+);
+
+impl<T: BinaryEncode + EncodeTypeDef> IntoWasmAbi for alloc::vec::Vec<T> {}
+impl<T: BinaryDecode + EncodeTypeDef> FromWasmAbi for alloc::vec::Vec<T> {}
+impl<T: BinaryEncode + EncodeTypeDef> IntoWasmAbi for core::option::Option<T> {}
+impl<T: BinaryDecode + EncodeTypeDef> FromWasmAbi for core::option::Option<T> {}
+impl<T: BinaryEncode + EncodeTypeDef> IntoWasmAbi for alloc::boxed::Box<[T]> {}
+impl<T: BinaryDecode + EncodeTypeDef> FromWasmAbi for alloc::boxed::Box<[T]> {}
+
+// A shared `&JsValue` flows across the boundary by id, matching wasm-bindgen's
+// `IntoWasmAbi for &JsValue`.
+impl IntoWasmAbi for &JsValue {}
+
 impl<T> OptionIntoWasmAbi for T where T: IntoWasmAbi {}
 impl<T> OptionFromWasmAbi for T where T: FromWasmAbi {}
 impl<T: ?Sized> WasmAbi for T {}
 impl<T: ?Sized> RefFromWasmAbi for T {}
+
+/// Converts the return value of an exported function into wire bytes. Mirrors
+/// wasm-bindgen's `ReturnWasmAbi`: a blanket implementation forwards every
+/// `IntoWasmAbi` value directly, while `Result` is carved out so its `Err` is
+/// thrown in JS. Because `Result` is not `IntoWasmAbi`, the two implementations
+/// do not overlap, and dispatch is by type (so it sees through type aliases).
+pub trait ReturnWasmAbi {
+    /// The type whose `TypeDef` is advertised to JS for this return value.
+    type Wire: EncodeTypeDef;
+
+    /// Encode `self` as the function's return payload.
+    fn return_abi(self, encoder: &mut crate::__rt::EncodedData);
+}
+
+impl<T: IntoWasmAbi> ReturnWasmAbi for T {
+    type Wire = T;
+
+    #[inline]
+    fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
+        self.encode(encoder);
+    }
+}
+
+impl<T, E> ReturnWasmAbi for Result<T, E>
+where
+    T: BinaryEncode + EncodeTypeDef,
+    E: Into<JsValue>,
+{
+    type Wire = crate::__rt::ThrowingResult<T, JsValue>;
+
+    #[inline]
+    fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
+        crate::__rt::ThrowingResult(self.map_err(Into::into)).encode(encoder);
+    }
+}
 
 /// Converts a `JsValue` into a Rust type by checking at runtime.
 pub trait TryFromJsValue: Sized {
@@ -138,6 +238,68 @@ pub trait TryFromJsValue: Sized {
     }
 
     fn try_from_js_value_ref(value: &JsValue) -> Option<Self>;
+}
+
+/// Lowers the output of an exported `async fn` to the `Result<JsValue, JsValue>`
+/// that backs a JS promise (an `Err` becomes a rejected promise). Mirrors
+/// wasm-bindgen's `IntoJsResult`, with an added `Resolution` associated type so
+/// the macro can advertise the `Promise<…>` wire type. `Result` is carved out by
+/// type — seen through aliases — and does not overlap the blanket because
+/// `Result` is not `Into<JsValue>`.
+pub trait IntoJsResult {
+    /// The resolution type of the `Promise` this return value produces.
+    type Resolution;
+
+    fn into_js_result(self) -> Result<JsValue, JsValue>;
+}
+
+impl<T: Into<JsValue> + crate::sys::Promising> IntoJsResult for T {
+    type Resolution = <T as crate::sys::Promising>::Resolution;
+
+    #[inline]
+    fn into_js_result(self) -> Result<JsValue, JsValue> {
+        Ok(self.into())
+    }
+}
+
+impl<T: Into<JsValue> + crate::sys::Promising, E: Into<JsValue>> IntoJsResult for Result<T, E> {
+    type Resolution = <T as crate::sys::Promising>::Resolution;
+
+    #[inline]
+    fn into_js_result(self) -> Result<JsValue, JsValue> {
+        match self {
+            Ok(value) => Ok(value.into()),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+/// Reconstructs the declared return type of an `async` import from the
+/// `Result<JsValue, JsValue>` a settled JS promise yields. A `Result<T, E>`
+/// return propagates a rejection as `Err`; any other return type panics on
+/// rejection. `Result` is dispatched by type, so it is seen through aliases.
+pub trait FromJsFuture: Sized {
+    fn from_js_future(result: Result<JsValue, JsValue>) -> Self;
+}
+
+impl<T: TryFromJsValue> FromJsFuture for T {
+    #[inline]
+    fn from_js_future(result: Result<JsValue, JsValue>) -> Self {
+        let value = result.expect("async function failed");
+        T::try_from_js_value(value).expect("async function returned incompatible value")
+    }
+}
+
+impl<T: TryFromJsValue, E: From<JsValue>> FromJsFuture for Result<T, E> {
+    #[inline]
+    fn from_js_future(result: Result<JsValue, JsValue>) -> Self {
+        match result {
+            Ok(value) => Ok(
+                T::try_from_js_value(value).expect("async function returned incompatible value")
+            ),
+            Err(error) => Err(E::from(error)),
+        }
+    }
 }
 
 use crate::{__rt::marker::ErasableGeneric, JsCast};
@@ -379,6 +541,18 @@ macro_rules! impl_fn_upcasts {
 
 impl_fn_upcasts!();
 
+// A `ScopedClosure` upcasts wherever its underlying closure type does — return
+// covariance and argument contravariance both reduce to an upcast of the inner
+// `dyn Fn(..)`/`dyn FnMut(..)` signature (e.g. `dyn Fn() -> i32` ->
+// `dyn Fn() -> Number`). All `ScopedClosure`s erase to the same repr, so the
+// pointer cast in `Upcast::upcast` is sound.
+impl<'a, T: ?Sized, U: ?Sized> UpcastFrom<crate::ScopedClosure<'a, U>>
+    for crate::ScopedClosure<'a, T>
+where
+    T: UpcastFrom<U>,
+{
+}
+
 /// Convenience bound for JS values whose generic parameters erase to `JsValue`.
 pub trait JsGeneric:
     crate::__rt::marker::ErasableGeneric<Repr = JsValue>
@@ -436,18 +610,10 @@ impl<T: IntoJsGeneric + Clone> IntoJsGeneric for &T {
 
 impl UpcastFrom<JsValue> for JsValue {}
 
-/// Trait for types that can be decoded as references from binary data.
-///
-/// This is the wry-bindgen equivalent of wasm-bindgen's `RefFromWasmAbi`.
-/// The `Anchor` type holds the decoded value and keeps the reference valid
-/// during callback invocation.
-pub trait RefFromBinaryDecode {
-    /// The anchor type that keeps the decoded reference valid.
-    type Anchor: core::ops::Deref<Target = Self>;
-
-    /// Decode a reference anchor from binary data.
-    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
-}
+// `RefFromBinaryDecode` is defined in the runtime (so its closure-encode impls
+// can borrow-decode a first argument) and re-exported here; the impls for JS
+// handles (below) and exported structs (generated) live in this crate.
+pub use crate::__rt::RefFromBinaryDecode;
 
 /// Anchor type for JsCast references.
 ///
@@ -466,18 +632,182 @@ impl<T: JsCast> core::ops::Deref for JsCastAnchor<T> {
     }
 }
 
-// Blanket implementation for all JsCast types (including JsValue)
-impl<T: JsCast + 'static> RefFromBinaryDecode for T {
-    type Anchor = JsCastAnchor<T>;
+impl<T: JsCast> JsCastAnchor<T> {
+    /// Anchor the next borrowed reference JS pushed onto its borrow stack. A
+    /// borrowed arg arrives without a heap id, so the value is taken by position
+    /// from the runtime's borrow stack.
+    #[doc(hidden)]
+    pub fn next_borrowed() -> Self {
+        JsCastAnchor {
+            value: JsValue::from_ref(JsRef::next_borrowed_ref()),
+            _marker: PhantomData,
+        }
+    }
+}
+
+// `RefFromBinaryDecode` is implemented per JS-handle type (not via a blanket over
+// `JsCast`): the trait now lives in the runtime, so a blanket `impl<T: JsCast>`
+// here would violate the orphan rule. Imported `extern` types get this impl from
+// codegen; `JsValue` is the hand-written base case.
+impl RefFromBinaryDecode for JsValue {
+    type Anchor = JsCastAnchor<JsValue>;
 
     fn ref_decode(_decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        // For borrowed refs, we use the borrow stack (indices 1-127) instead of heap IDs.
-        // JS puts the value on its borrow stack without sending an ID, so we sync by
-        // taking the next borrowed ref from the runtime.
-        let value = JsValue::from_ref(JsRef::next_borrowed_ref());
-        Ok(JsCastAnchor {
-            value,
-            _marker: PhantomData,
+        Ok(JsCastAnchor::next_borrowed())
+    }
+}
+
+/// Position marker for a `&T` argument's wire type. A by-value `T` advertises its
+/// own type def (an exported struct's `RustValue`, an imported type's `HeapRef`),
+/// but a *borrowed* `T` rides the borrow stack, so it advertises `BorrowedRef`
+/// and is decoded through `RefFromBinaryDecode` (borrow, not consume). Generated
+/// code uses this only to compute the arg's advertised type def; the value itself
+/// is anchored via `T::ref_decode`.
+pub struct RefArg<T: ?Sized>(core::marker::PhantomData<T>);
+
+impl<T: EncodeTypeDef + ?Sized> EncodeTypeDef for RefArg<T> {
+    fn encode_type_def(type_def: &mut crate::__rt::TypeDef) {
+        // An exported struct rides the wire as a plain routed handle (`RustBorrow`,
+        // carrying its class name so JS routes an inheritance descendant passed as
+        // `&Ancestor` to its shared ancestor view). A JS-handle borrow (`&JsValue`,
+        // imported types) keeps its own type def and owned-decode path unchanged.
+        match crate::__rt::TypeDef::rust_value_class_name::<T>() {
+            Some(class_name) => type_def.rust_borrow(&class_name),
+            None => T::encode_type_def(type_def),
+        }
+    }
+}
+
+/// Decode a `&T` export argument. An exported struct is *borrowed* — checked out
+/// of the store for the call and re-inserted afterward, so the wrapper is not
+/// invalidated — while a JS-handle type (`JsValue`, imported types) is decoded
+/// owned and held by reference (a heap-ref read does not consume). The macro
+/// routes every shared-reference export argument through this trait.
+pub trait BorrowArg {
+    /// The wire type JS sees for this argument.
+    type Wire: EncodeTypeDef;
+
+    /// The anchor that keeps the decoded `&Self` valid for the call's duration.
+    type Anchor: Deref<Target = Self>;
+
+    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
+}
+
+/// Anchor holding an owned JS-handle value by reference. A heap-ref decode does
+/// not consume the underlying JS object, so holding the owned wrapper and lending
+/// `&T` matches wasm-bindgen's borrowed-handle semantics.
+pub struct OwnedArgAnchor<T> {
+    value: T,
+}
+
+impl<T> OwnedArgAnchor<T> {
+    #[doc(hidden)]
+    pub fn from_value(value: T) -> Self {
+        OwnedArgAnchor { value }
+    }
+}
+
+impl<T> Deref for OwnedArgAnchor<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl BorrowArg for JsValue {
+    type Wire = RefArg<JsValue>;
+    type Anchor = OwnedArgAnchor<JsValue>;
+
+    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        Ok(OwnedArgAnchor {
+            value: JsValue::decode(decoder)?,
         })
+    }
+}
+
+impl BorrowArg for str {
+    type Wire = alloc::string::String;
+    type Anchor = alloc::string::String;
+
+    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        alloc::string::String::decode(decoder)
+    }
+}
+
+impl<T> BorrowArg for [T]
+where
+    T: BinaryDecode + EncodeTypeDef,
+{
+    type Wire = alloc::vec::Vec<T>;
+    type Anchor = alloc::vec::Vec<T>;
+
+    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        alloc::vec::Vec::<T>::decode(decoder)
+    }
+}
+
+/// Position marker for a `&mut T` argument's wire type. Like [`RefArg`], an
+/// exported struct rides the wire as a routed handle (`RustBorrow`) so the call
+/// borrows it from the store rather than consuming it; a JS-handle type keeps its
+/// owned-decode path.
+pub struct RefMutArg<T: ?Sized>(core::marker::PhantomData<T>);
+
+impl<T: EncodeTypeDef + ?Sized> EncodeTypeDef for RefMutArg<T> {
+    fn encode_type_def(type_def: &mut crate::__rt::TypeDef) {
+        match crate::__rt::TypeDef::rust_value_class_name::<T>() {
+            Some(class_name) => type_def.rust_borrow(&class_name),
+            None => T::encode_type_def(type_def),
+        }
+    }
+}
+
+/// Decode a `&mut T` export argument. An exported struct is borrowed *mutably*
+/// from the store (an exclusive borrow that composes with the receiver's borrow,
+/// so aliasing the receiver reports "recursive use of an object" rather than
+/// silently consuming it); a JS-handle type is decoded owned and lent `&mut`.
+pub trait BorrowMutArg {
+    /// The wire type JS sees for this argument.
+    type Wire: EncodeTypeDef;
+
+    /// The anchor that keeps the decoded `&mut Self` valid for the call's duration.
+    type Anchor: core::ops::DerefMut<Target = Self>;
+
+    fn borrow_mut_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
+
+    /// Append any post-call write-back data to the export response.
+    fn write_back(_anchor: Self::Anchor, _encoder: &mut EncodedData) {}
+}
+
+impl<T> core::ops::DerefMut for OwnedArgAnchor<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.value
+    }
+}
+
+impl BorrowMutArg for JsValue {
+    type Wire = RefMutArg<JsValue>;
+    type Anchor = OwnedArgAnchor<JsValue>;
+
+    fn borrow_mut_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        Ok(OwnedArgAnchor {
+            value: JsValue::decode(decoder)?,
+        })
+    }
+}
+
+impl<T> BorrowMutArg for [T]
+where
+    T: BinaryDecode + BinaryEncode + EncodeTypeDef,
+{
+    type Wire = MutSliceArg<T>;
+    type Anchor = MutSliceArg<T>;
+
+    fn borrow_mut_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        MutSliceArg::decode(decoder)
+    }
+
+    fn write_back(anchor: Self::Anchor, encoder: &mut EncodedData) {
+        MutSliceArg::write_back(anchor, encoder);
     }
 }

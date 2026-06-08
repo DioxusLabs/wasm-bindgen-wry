@@ -61,7 +61,10 @@ class NewConstructor {
 }
 
 export const NewConstructors = NewConstructor;
-export const default = NewConstructor;
+// `export const default = ...` is a syntax error (reserved word); the canonical
+// ESM form `export default` exposes the same binding as `module.default`, which
+// is how `js_class = default` references it.
+export default NewConstructor;
 
 let switch_called = false;
 class SwitchMethods {

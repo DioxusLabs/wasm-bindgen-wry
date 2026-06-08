@@ -20,7 +20,11 @@ fn generate_vendor_prefixed_constructor(class: &str, prefixes: &[String], prefix
         }
     }
 
-    result.push(')');
+    // Close the opening paren plus the still-open paren of every non-final
+    // prefix branch (each adds a nested ternary). The final branch closed its
+    // own paren above. Without this, two or more prefixes produce unbalanced
+    // parentheses and the whole generated bundle is a syntax error.
+    result.push_str(&")".repeat(prefixes.len()));
     result
 }
 
@@ -53,6 +57,13 @@ pub(super) fn generate_js_code(
     };
     let call_args_str = spread_args(&args);
 
+    // A `final` (non-`structural`) namespaced free function resolves its callee
+    // once, when the binding is created, rather than re-reading the property on
+    // every call. This matches wasm-bindgen's `final`: the function "never
+    // changes after it was imported", so later reassignment of the property is
+    // not observed. Only applies when there is an object to read from.
+    let mut hoisted_callee: Option<String> = None;
+
     let (params, body) = match &func.kind {
         ImportFunctionKind::Normal => {
             let callee = if prefix.is_empty() {
@@ -61,10 +72,18 @@ pub(super) fn generate_js_code(
                 let object = prefix.trim_end_matches('.');
                 js_property_access(object, js_name)
             };
-            (
-                format!("({args_str})"),
-                format!("{callee}({call_args_str})"),
-            )
+            if !func.structural && !prefix.is_empty() {
+                hoisted_callee = Some(callee);
+                (
+                    format!("({args_str})"),
+                    format!("__wry_callee({call_args_str})"),
+                )
+            } else {
+                (
+                    format!("({args_str})"),
+                    format!("{callee}({call_args_str})"),
+                )
+            }
         }
         ImportFunctionKind::Method {
             class,
@@ -91,11 +110,36 @@ pub(super) fn generate_js_code(
             ..
         } if operation.is_static => {
             let class_object = format!("{prefix}{class}");
-            let method = js_property_access(&class_object, js_name);
-            (
-                format!("({args_str})"),
-                format!("{method}({call_args_str})"),
-            )
+            match &operation.kind {
+                // A static getter/setter accesses the property on the class object
+                // itself (e.g. `Number.NAN`) rather than calling a static method.
+                OperationKind::Getter(property) => {
+                    let property = property
+                        .as_deref()
+                        .unwrap_or_else(|| func.function.infer_getter_property());
+                    (
+                        "()".to_string(),
+                        js_property_access(&class_object, property),
+                    )
+                }
+                OperationKind::Setter(property) => {
+                    let property = property
+                        .clone()
+                        .or_else(|| func.function.infer_setter_property().ok())
+                        .unwrap_or_else(|| "value".to_string());
+                    (
+                        "(value)".to_string(),
+                        format!("{} = value", js_property_access(&class_object, &property)),
+                    )
+                }
+                _ => {
+                    let method = js_property_access(&class_object, js_name);
+                    (
+                        format!("({args_str})"),
+                        format!("{method}({call_args_str})"),
+                    )
+                }
+            }
         }
         ImportFunctionKind::Method {
             kind: MethodKind::Operation(operation),
@@ -148,7 +192,15 @@ pub(super) fn generate_js_code(
         body
     };
 
-    format!("{params} => {body}")
+    match hoisted_callee {
+        Some(callee) => {
+            // `{{`/`}}` escape literal braces: this string is itself a Rust
+            // format template (the `{__wry_module}` placeholder is substituted
+            // when the binding is rendered).
+            format!("(() => {{{{ const __wry_callee = {callee}; return {params} => {body}; }}}})()")
+        }
+        None => format!("{params} => {body}"),
+    }
 }
 
 fn js_property_access(object: &str, property: &str) -> String {

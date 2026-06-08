@@ -154,6 +154,8 @@ pub(super) struct ClassSpec<'a> {
     pub(super) extends: TokenStream,
     pub(super) extends_js_class: TokenStream,
     pub(super) extends_js_namespace: TokenStream,
+    pub(super) inspectable: TokenStream,
+    pub(super) public_fields: TokenStream,
 }
 
 pub(super) fn generate_js_class_spec(
@@ -170,6 +172,8 @@ pub(super) fn generate_js_class_spec(
         extends,
         extends_js_class,
         extends_js_namespace,
+        inspectable,
+        public_fields,
         ..
     } = spec;
 
@@ -184,6 +188,8 @@ pub(super) fn generate_js_class_spec(
                 #extends,
                 #extends_js_class,
                 #extends_js_namespace,
+                #inspectable,
+                #public_fields,
             );
 
             #krate::__rt::inventory::submit! {
@@ -201,6 +207,8 @@ pub(super) struct ClassMemberSpec<'a> {
     pub(super) arg_count: TokenStream,
     pub(super) type_helpers: TokenStream,
     pub(super) member_kind: TokenStream,
+    /// `true` when the member takes `self` by value (consuming the receiver).
+    pub(super) consumes_self: TokenStream,
 }
 
 pub(super) fn generate_js_class_member_spec(
@@ -216,6 +224,7 @@ pub(super) fn generate_js_class_member_spec(
         arg_count,
         type_helpers,
         member_kind,
+        consumes_self,
         ..
     } = spec;
 
@@ -231,7 +240,8 @@ pub(super) fn generate_js_class_member_spec(
                 #arg_count,
                 __wry_arg_types,
                 __wry_return_type,
-                #member_kind
+                #member_kind,
+                #consumes_self,
             );
 
             #krate::__rt::inventory::submit! {
@@ -251,6 +261,7 @@ pub(super) fn generate_js_free_export_spec(
     this: TokenStream,
     public: TokenStream,
     start: TokenStream,
+    variadic: TokenStream,
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
@@ -271,6 +282,7 @@ pub(super) fn generate_js_free_export_spec(
                 #this,
                 #public,
                 #start,
+                #variadic,
             );
 
             #krate::__rt::inventory::submit! {
@@ -293,9 +305,4 @@ pub(super) fn extract_result_ok_type(ty: &syn::Type) -> Option<syn::Type> {
         }
     }
     None
-}
-
-/// Check if a type is the unit type ()
-pub(super) fn is_unit_type(ty: &syn::Type) -> bool {
-    matches!(ty, syn::Type::Tuple(tuple) if tuple.elems.is_empty())
 }

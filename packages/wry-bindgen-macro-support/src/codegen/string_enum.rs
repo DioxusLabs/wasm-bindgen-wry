@@ -95,6 +95,13 @@ pub(super) fn generate_string_enum(
         impl #krate::__rt::BatchableResult for #enum_name {}
     };
 
+    // A string enum is a value type (not `JsGeneric`); carry the ABI markers
+    // explicitly so it flows through `ReturnWasmAbi` when returned by an export.
+    let wasm_abi_impl = quote! {
+        impl #krate::convert::IntoWasmAbi for #enum_name {}
+        impl #krate::convert::FromWasmAbi for #enum_name {}
+    };
+
     // Generate From<EnumName> for JsValue
     let into_jsvalue_impl = quote! {
         #[automatically_derived]
@@ -142,6 +149,7 @@ pub(super) fn generate_string_enum(
         #binary_encode_impl
         #binary_decode_impl
         #batchable_impl
+        #wasm_abi_impl
         #into_jsvalue_impl
         #try_from_jsvalue_impl
         #promising_impl

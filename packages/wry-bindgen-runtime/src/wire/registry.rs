@@ -138,9 +138,16 @@ pub struct JsClassSpec {
     extends: Option<&'static str>,
     extends_js_class: Option<&'static str>,
     extends_js_namespace: &'static [&'static str],
+    /// `#[wasm_bindgen(inspectable)]`: emit JS `toJSON`/`toString` methods (over
+    /// the public field getters) unless the user defines their own.
+    inspectable: bool,
+    /// The JS names of the public (getter-exposed) fields, for the generated
+    /// `toJSON` body when `inspectable`.
+    public_fields: &'static [&'static str],
 }
 
 impl JsClassSpec {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         class_name: &'static str,
         js_name: &'static str,
@@ -149,6 +156,8 @@ impl JsClassSpec {
         extends: Option<&'static str>,
         extends_js_class: Option<&'static str>,
         extends_js_namespace: &'static [&'static str],
+        inspectable: bool,
+        public_fields: &'static [&'static str],
     ) -> Self {
         Self {
             class_name,
@@ -158,6 +167,8 @@ impl JsClassSpec {
             extends,
             extends_js_class,
             extends_js_namespace,
+            inspectable,
+            public_fields,
         }
     }
 }
@@ -169,6 +180,8 @@ pub(super) type JsClassParts = (
     bool,
     Option<&'static str>,
     Option<&'static str>,
+    &'static [&'static str],
+    bool,
     &'static [&'static str],
 );
 
@@ -182,6 +195,8 @@ impl JsClassSpec {
             self.extends,
             self.extends_js_class,
             self.extends_js_namespace,
+            self.inspectable,
+            self.public_fields,
         )
     }
 }
@@ -242,6 +257,8 @@ pub enum JsClassMemberKind {
     StaticMethod,
     Getter,
     Setter,
+    StaticGetter,
+    StaticSetter,
 }
 
 #[derive(Clone, Copy)]
@@ -253,6 +270,10 @@ pub struct JsClassMemberSpec {
     arg_types: fn() -> Vec<TypeDef>,
     return_type: fn() -> Option<TypeDef>,
     kind: JsClassMemberKind,
+    /// Whether the member takes `self` by value, consuming the receiver. The
+    /// generated wrapper zeroes `this.__handle` after the call so a later use
+    /// throws "Attempt to use a moved value" (wasm-bindgen's behavior).
+    consumes_self: bool,
 }
 
 impl JsClassMemberSpec {
@@ -264,6 +285,7 @@ impl JsClassMemberSpec {
         arg_types: fn() -> Vec<TypeDef>,
         return_type: fn() -> Option<TypeDef>,
         kind: JsClassMemberKind,
+        consumes_self: bool,
     ) -> Self {
         Self {
             class_name,
@@ -273,6 +295,7 @@ impl JsClassMemberSpec {
             arg_types,
             return_type,
             kind,
+            consumes_self,
         }
     }
 }
@@ -285,6 +308,7 @@ pub(super) type JsClassMemberParts = (
     Vec<TypeDef>,
     Option<TypeDef>,
     JsClassMemberKind,
+    bool,
 );
 
 impl JsClassMemberSpec {
@@ -297,6 +321,7 @@ impl JsClassMemberSpec {
             (self.arg_types)(),
             (self.return_type)(),
             self.kind,
+            self.consumes_self,
         )
     }
 }
@@ -314,9 +339,14 @@ pub struct JsFreeExportSpec {
     this: bool,
     public: bool,
     start: bool,
+    /// Whether the export is `#[wasm_bindgen(variadic)]`: the generated JS
+    /// wrapper collects its trailing arguments into the final parameter (a rest
+    /// parameter) so a spread call like `f(...arr)` reaches Rust as one array.
+    variadic: bool,
 }
 
 impl JsFreeExportSpec {
+    #[allow(clippy::too_many_arguments)]
     pub const fn new(
         name: &'static str,
         namespace: &'static [&'static str],
@@ -327,6 +357,7 @@ impl JsFreeExportSpec {
         this: bool,
         public: bool,
         start: bool,
+        variadic: bool,
     ) -> Self {
         Self {
             name,
@@ -338,6 +369,7 @@ impl JsFreeExportSpec {
             this,
             public,
             start,
+            variadic,
         }
     }
 }
@@ -349,6 +381,7 @@ pub(super) type JsFreeExportParts = (
     &'static [&'static str],
     Vec<TypeDef>,
     Option<TypeDef>,
+    bool,
     bool,
     bool,
     bool,
@@ -366,6 +399,7 @@ impl JsFreeExportSpec {
             self.this,
             self.public,
             self.start,
+            self.variadic,
         )
     }
 }

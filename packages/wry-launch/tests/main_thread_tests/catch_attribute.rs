@@ -92,3 +92,55 @@ pub(crate) fn test_catch_method() {
     let result = calc.divide(10.0, 0.0);
     assert!(result.is_err(), "Expected error from method");
 }
+
+// A `Result` return type reached through an alias whose name is not `Result`.
+// The export still throws its `Err` in JS, because the wire type is resolved by
+// `ReturnWasmAbi` (after the alias is normalized) rather than by matching the
+// spelling `Result` in the macro.
+type FallibleAlias = Result<u32, JsValue>;
+
+#[wasm_bindgen]
+pub struct AliasFixture;
+
+#[wasm_bindgen]
+impl AliasFixture {
+    #[wasm_bindgen(js_name = fallible)]
+    pub fn fallible(fail: bool) -> FallibleAlias {
+        if fail {
+            Err(JsValue::from_str("aliased boom"))
+        } else {
+            Ok(7)
+        }
+    }
+}
+
+pub(crate) fn test_result_alias_export_throws() {
+    // `fallible` returns the `Ok` value directly; on `Err` the export call
+    // throws, so the catch path runs and returns the sentinel `99`. With the old
+    // name-matching codegen the aliased return would have been a non-throwing
+    // `{ ok, err }` value, so the catch would never run.
+    #[wasm_bindgen(inline_js = r#"
+        export function call_aliased_fallible(fail) {
+            try {
+                return window.AliasFixture.fallible(fail);
+            } catch (e) {
+                return 99;
+            }
+        }
+    "#)]
+    extern "C" {
+        #[wasm_bindgen(js_name = call_aliased_fallible)]
+        fn call_aliased_fallible(fail: bool) -> u32;
+    }
+
+    // `Ok` returns the value (no throw).
+    assert_eq!(call_aliased_fallible(false), 7);
+
+    // `Err` is thrown in JS rather than returned as a value, even though the
+    // return type is spelled via an alias rather than `Result`.
+    assert_eq!(
+        call_aliased_fallible(true),
+        99,
+        "expected the aliased Result export to throw on Err"
+    );
+}

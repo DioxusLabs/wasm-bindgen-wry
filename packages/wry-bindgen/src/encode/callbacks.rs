@@ -350,6 +350,48 @@ impl_fnmut_stub!(A1, A2, A3, A4, A5, A6);
 impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7);
 impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7, A8);
 
+// `AssertUnwindSafe<F>` is a transparent unwind-safety assertion, so its closure
+// conversions forward to the inner `F`. These explicit impls cover the case
+// where it wraps a closure with arguments (std only implements the `Fn` traits
+// for `AssertUnwindSafe` with zero arguments), which is how upstream tests pass
+// a non-`UnwindSafe` capture through `Closure::borrow`/`wrap`.
+impl<T: ?Sized, F> IntoWasmClosure<T> for core::panic::AssertUnwindSafe<F>
+where
+    F: IntoWasmClosure<T>,
+{
+    fn into_closure(self) -> crate::Closure<T> {
+        F::into_closure(self.0)
+    }
+
+    fn into_closure_box(self: alloc::boxed::Box<Self>) -> crate::Closure<T> {
+        F::into_closure(self.0)
+    }
+}
+
+impl<T: ?Sized, F> IntoWasmClosureRef<T> for core::panic::AssertUnwindSafe<F>
+where
+    F: IntoWasmClosureRef<T>,
+{
+    fn into_scoped_closure_ref<'a>(t: &'a Self) -> crate::ScopedClosure<'a, T::Static>
+    where
+        T: crate::WasmClosure,
+    {
+        F::into_scoped_closure_ref(&t.0)
+    }
+}
+
+impl<T: ?Sized, F> IntoWasmClosureRefMut<T> for core::panic::AssertUnwindSafe<F>
+where
+    F: IntoWasmClosureRefMut<T>,
+{
+    fn into_scoped_closure_ref_mut<'a>(t: &'a mut Self) -> crate::ScopedClosure<'a, T::Static>
+    where
+        T: crate::WasmClosure,
+    {
+        F::into_scoped_closure_ref_mut(&mut t.0)
+    }
+}
+
 /// Marker type for closures that borrow the first argument.
 pub struct BorrowedFirstArg;
 

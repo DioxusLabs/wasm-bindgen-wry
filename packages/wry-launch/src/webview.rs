@@ -6,6 +6,7 @@ use tao::{
 use wry::WebViewBuilder;
 
 use std::{
+    future::{Future, IntoFuture},
     sync::Arc,
     task::{Context, Poll, Wake, Waker},
 };

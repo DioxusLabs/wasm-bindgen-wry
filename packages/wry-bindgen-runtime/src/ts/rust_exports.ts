@@ -2,7 +2,8 @@ import {
   CALL_EXPORT_FN_ID,
   sendEvaluateToRust,
 } from "./ipc";
-import { parseTypeDef, TypeClass } from "./types";
+import { parseTypeDef, RustValueType, MutArrayType, TypeClass } from "./types";
+import { DataDecoder } from "./encoding";
 
 function typeFromBytes(bytes: number[]): TypeClass {
   const offset = { value: 0 };
@@ -19,9 +20,33 @@ const U32_TYPE_DEF = [4];
  * FinalizationRegistry to notify Rust when exported object wrappers are GC'd.
  * The callback sends a drop message to Rust with the object handle.
  */
-const exportRegistry = new FinalizationRegistry<{ handle: number; className: string }>((info) => {
-  callExport(`${info.className}::__drop`, [U32_TYPE_DEF], null, [info.handle]);
+const exportRegistry = new FinalizationRegistry<{ drops: [string, number][] }>((info) => {
+  // An inheritance descendant carries the own object plus one ancestor view per
+  // ancestor (each a clone of the shared parent cell), so drop every backing
+  // object when the wrapper is collected.
+  for (const [className, handle] of info.drops) {
+    if (handle !== 0) {
+      callExport(`${className}::__drop`, [U32_TYPE_DEF], null, [handle]);
+    }
+  }
 });
+
+/**
+ * Copy each `&mut [T]` argument's write-back payload (appended to the response
+ * after the return value, in argument order) into the caller's original array.
+ */
+function copyBackMutArrays(
+  decoder: DataDecoder,
+  argTypes: TypeClass[],
+  args: any[],
+): void {
+  for (let i = 0; i < argTypes.length; i++) {
+    const argType = argTypes[i];
+    if (argType instanceof MutArrayType) {
+      argType.copyBack(decoder, args[i]);
+    }
+  }
+}
 
 /**
  * Call an exported Rust method by name.
@@ -41,18 +66,41 @@ function callExport(
 
   window.jsHeap.pushBorrowFrame();
 
+  // Parse the argument types once so by-value Rust struct arguments
+  // (`RustValueType`) can be zeroed out after the call: passing such a wrapper
+  // transfers ownership to Rust, mirroring wasm-bindgen's `__destroy_into_raw`.
+  const argTypes = argTypeDefs.map(typeFromBytes);
+
   try {
     const decoder = sendEvaluateToRust((encoder) => {
       encoder.pushU32(CALL_EXPORT_FN_ID);
       encoder.pushStr(exportName);
 
       for (let i = 0; i < args.length; i++) {
-        typeFromBytes(argTypeDefs[i]).encode(encoder, args[i]);
+        argTypes[i].encode(encoder, args[i]);
       }
     });
 
+    // Rust has now taken ownership of every by-value struct argument, so zero
+    // the wrapper's handle. A later method/getter/setter call on it sees the
+    // zeroed handle and throws "Attempt to use a moved value".
+    for (let i = 0; i < args.length; i++) {
+      if (argTypes[i] instanceof RustValueType && args[i] != null) {
+        args[i].__handle = 0;
+      }
+    }
+
     if (returnTypeDef === null) {
-      if (decoder && !decoder.isEmpty()) {
+      if (!decoder) {
+        // A `&mut [T]` argument still needs its write-back payload, so a missing
+        // response is only valid when there are no mutable-array arguments.
+        if (argTypes.some((t) => t instanceof MutArrayType)) {
+          throw new Error(`Missing response data for export ${exportName}`);
+        }
+        return undefined;
+      }
+      copyBackMutArrays(decoder, argTypes, args);
+      if (!decoder.isEmpty()) {
         throw new Error(`Unprocessed data remaining after export ${exportName}`);
       }
       return undefined;
@@ -62,7 +110,18 @@ function callExport(
       throw new Error(`Missing response data for export ${exportName}`);
     }
 
-    const result = typeFromBytes(returnTypeDef).decode(decoder);
+    // A return value transfers ownership to JS, so decode it in take mode: owned
+    // heap references are removed from the heap (the Rust side forgets them
+    // rather than queuing a drop) and their objects handed to the caller.
+    window.jsHeap.setTakingOwnership(true);
+    let result: any;
+    try {
+      result = typeFromBytes(returnTypeDef).decode(decoder);
+    } finally {
+      window.jsHeap.setTakingOwnership(false);
+    }
+    // `&mut [T]` write-backs follow the return value, in argument order.
+    copyBackMutArrays(decoder, argTypes, args);
     if (!decoder.isEmpty()) {
       throw new Error(`Unprocessed data remaining after export ${exportName}`);
     }
@@ -120,7 +179,7 @@ function createWrapper(handle: number, className: string): object {
   });
 
   // Register for GC notification
-  exportRegistry.register(proxy, { handle, className });
+  exportRegistry.register(proxy, { drops: [[className, handle]] });
 
   return proxy;
 }

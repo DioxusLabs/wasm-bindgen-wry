@@ -15,6 +15,7 @@ mod borrow_stack;
 mod callbacks;
 mod catch_attribute;
 mod clamped;
+mod closure_panic;
 mod closure_paths;
 mod deferred_heap_refs;
 mod export_call;
@@ -137,6 +138,7 @@ fn build_tests() -> Vec<TestCase> {
         closure_paths::test_max_arity_closure_paths,
         reentrant_callbacks::test_reentrant_fn_closure,
         reentrant_callbacks::test_interleaved_fn_closures,
+        closure_panic::test_closure_panic_surfaces_as_js_error,
         jsvalue::test_jsvalue_constants,
         jsvalue::test_jsvalue_bool,
         jsvalue::test_jsvalue_default,
@@ -175,10 +177,17 @@ fn build_tests() -> Vec<TestCase> {
         catch_attribute::test_catch_successful_call,
         catch_attribute::test_catch_with_arguments,
         catch_attribute::test_catch_method,
+        catch_attribute::test_result_alias_export_throws,
         structs::test_struct_bindings,
         structs::test_exported_struct_arg_before_heap_ref_arg,
         export_call::test_js_calls_exported_usize_js_thunk,
         export_call::test_js_calls_exported_usize_js_thunk_batched,
+        export_call::test_unit_export_write_back_free_function,
+        export_call::test_returning_export_write_back_order,
+        export_call::test_unit_export_write_back_constructor,
+        export_call::test_unit_export_write_back_static_method,
+        export_call::test_unit_export_write_back_instance_method,
+        export_call::test_unit_export_write_back_setter,
         clamped::test_clamped_is_uint8clampedarray,
         clamped::test_clamped_vec_is_uint8clampedarray,
         clamped::test_jsvalue_from_clamped_vec_is_uint8clampedarray,
@@ -235,6 +244,8 @@ fn build_tests() -> Vec<TestCase> {
         async_bindings::test_call_async_returning_js_value,
         async_bindings::test_catch_async_call_ok,
         async_bindings::test_catch_async_call_err,
+        async_bindings::test_async_import_result_alias_propagates_err,
+        async_bindings::test_async_export_result_alias_rejects,
         async_bindings::test_async_method,
         async_bindings::test_async_method_with_catch,
         async_bindings::test_async_static_method,

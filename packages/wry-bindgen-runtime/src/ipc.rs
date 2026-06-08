@@ -32,6 +32,10 @@ impl IPCMessage {
         match message_type {
             0 => Ok(DecodedVariant::Evaluate { data: decoded }),
             1 => Ok(DecodedVariant::Respond { data: decoded }),
+            // A non-`catch` JS import threw while running this batch.
+            3 => Ok(DecodedVariant::Threw {
+                message: <alloc::string::String as BinaryDecode>::decode(&mut decoded)?,
+            }),
             value => Err(DecodeError::custom(format!(
                 "invalid message type: {value}"
             ))),
@@ -44,8 +48,16 @@ impl IPCMessage {
 }
 
 pub(crate) enum DecodedVariant<'a> {
-    Respond { data: DecodedData<'a> },
-    Evaluate { data: DecodedData<'a> },
+    Respond {
+        data: DecodedData<'a>,
+    },
+    Evaluate {
+        data: DecodedData<'a>,
+    },
+    /// A non-`catch` JS import threw; the Rust caller must unwind.
+    Threw {
+        message: alloc::string::String,
+    },
 }
 
 #[derive(Default)]
