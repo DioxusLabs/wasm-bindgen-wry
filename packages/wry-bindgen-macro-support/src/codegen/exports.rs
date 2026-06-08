@@ -151,6 +151,7 @@ struct DecodedArgs {
 
 fn generate_decode_args_parts(
     arguments: &[ast::FunctionArgumentData],
+    is_async: bool,
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> syn::Result<DecodedArgs> {
@@ -191,10 +192,21 @@ fn generate_decode_args_parts(
             };
             let elem = unwrap_group(&reference.elem);
             let anchor_name = format_ident!("__wry_{}_anchor", arg_name);
-            wire_types.push(quote_spanned! {span=> <#elem as #krate::convert::RefFromBinaryDecode>::Wire });
-            decode_args.extend(quote_spanned! {span=>
-                let #anchor_name = <#elem as #krate::convert::RefFromBinaryDecode>::ref_decode(decoder)?;
-            });
+            if is_async {
+                wire_types.push(
+                    quote_spanned! {span=> <#elem as #krate::convert::LongRefFromBinaryDecode>::Wire },
+                );
+                decode_args.extend(quote_spanned! {span=>
+                    let #anchor_name = <#elem as #krate::convert::LongRefFromBinaryDecode>::long_ref_decode(decoder)?;
+                });
+            } else {
+                wire_types.push(
+                    quote_spanned! {span=> <#elem as #krate::convert::RefFromBinaryDecode>::Wire },
+                );
+                decode_args.extend(quote_spanned! {span=>
+                    let #anchor_name = <#elem as #krate::convert::RefFromBinaryDecode>::ref_decode(decoder)?;
+                });
+            }
             borrow_bindings.extend(quote_spanned! {span=>
                 let #arg_name = #krate::__rt::core::ops::Deref::deref(&#anchor_name);
             });
@@ -202,10 +214,10 @@ fn generate_decode_args_parts(
             continue;
         }
 
-        // A mutable `&mut T` argument is decoded through `BorrowMutArg`: exported
-        // structs borrow from the store, `&mut [T]` decodes into a `MutSliceArg<T>`
-        // guard that writes back after the return value, and other impls can
-        // choose their own wire/anchor shape.
+        // A mutable `&mut T` argument is decoded through
+        // `RefMutFromBinaryDecode`: exported structs borrow from the store,
+        // `&mut [T]` decodes into a `MutSliceArg<T>` guard that writes back after
+        // the return value, and other impls can choose their own wire/anchor shape.
         let is_borrowable_mut_ref = matches!(arg_ty, syn::Type::Reference(reference)
             if reference.mutability.is_some());
 
@@ -215,16 +227,17 @@ fn generate_decode_args_parts(
             };
             let elem = unwrap_group(&reference.elem);
             let anchor_name = format_ident!("__wry_{}_anchor", arg_name);
-            wire_types
-                .push(quote_spanned! {span=> <#elem as #krate::convert::BorrowMutArg>::Wire });
+            wire_types.push(
+                quote_spanned! {span=> <#elem as #krate::convert::RefMutFromBinaryDecode>::Wire },
+            );
             decode_args.extend(quote_spanned! {span=>
-                let mut #anchor_name = <#elem as #krate::convert::BorrowMutArg>::borrow_mut_decode(decoder)?;
+                let mut #anchor_name = <#elem as #krate::convert::RefMutFromBinaryDecode>::ref_mut_decode(decoder)?;
             });
             borrow_bindings.extend(quote_spanned! {span=>
                 let #arg_name = #krate::__rt::core::ops::DerefMut::deref_mut(&mut #anchor_name);
             });
             write_backs.push(quote_spanned! {span=>
-                <#elem as #krate::convert::BorrowMutArg>::write_back(#anchor_name, &mut encoder);
+                <#elem as #krate::convert::RefMutFromBinaryDecode>::write_back(#anchor_name, &mut encoder);
             });
             call_args.push(quote_spanned! {span=> #arg_name });
             continue;
@@ -402,13 +415,20 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
                 #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
             }
         }
+        impl #krate::convert::LongRefFromBinaryDecode for #rust_name {
+            type Wire = #krate::convert::RefArg<#rust_name>;
+            type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
+            fn long_ref_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+                #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
+            }
+        }
         // Direct `&mut Self` export argument: a mutable borrow out of the store
         // that composes with the receiver's borrow, so aliasing the receiver
         // (`x.mutate(x)`) reports "recursive use of an object".
-        impl #krate::convert::BorrowMutArg for #rust_name {
+        impl #krate::convert::RefMutFromBinaryDecode for #rust_name {
             type Wire = #krate::convert::RefMutArg<#rust_name>;
             type Anchor = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
-            fn borrow_mut_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+            fn ref_mut_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
                 #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)
             }
         }
@@ -533,7 +553,12 @@ pub(super) fn generate_export_function(
     let js_name = &function.function.name;
     let span = rust_name.span();
 
-    let decoded_args = generate_decode_args_parts(&function.function.arguments, krate, span)?;
+    let decoded_args = generate_decode_args_parts(
+        &function.function.arguments,
+        function.function.r#async,
+        krate,
+        span,
+    )?;
     let decode_args = &decoded_args.decode_args;
     let borrow_bindings = &decoded_args.borrow_bindings;
     let call_args = &decoded_args.call_args;
@@ -854,7 +879,12 @@ pub(super) fn generate_export_method(
     let class_id = qualified_class_name(method.js_namespace.as_deref(), &js_class_str);
     let export_name = format!("{class_id}::{js_name}");
 
-    let decoded_args = generate_decode_args_parts(&method.function.arguments, krate, span)?;
+    let decoded_args = generate_decode_args_parts(
+        &method.function.arguments,
+        method.function.r#async,
+        krate,
+        span,
+    )?;
     let decode_args = &decoded_args.decode_args;
     let borrow_bindings = &decoded_args.borrow_bindings;
     let call_args = &decoded_args.call_args;

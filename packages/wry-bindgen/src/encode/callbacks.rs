@@ -10,7 +10,7 @@ use crate::{
     Closure, IntoWasmClosure, IntoWasmClosureRef, IntoWasmClosureRefMut, WasmClosureFnOnce,
     WasmClosureFnOnceAbort,
 };
-use wry_bindgen_core::{CallbackKey, RustCallback};
+use wry_bindgen_core::{CallbackKey, IntoRustCallback};
 
 use super::{BinaryDecode, BinaryEncode, EncodeTypeDef, IntoClosure, RequireFlush, TypeDef};
 
@@ -209,20 +209,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(unused)]
             fn into_scoped_closure_ref<'a>(t: &'a Self) -> crate::ScopedClosure<'a, <dyn Fn($($arg),*) -> R as crate::WasmClosure>::Static> {
                 let t: &(dyn Fn($($arg),*) -> R) = t;
-                let ptr = t as *const dyn Fn($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -243,20 +230,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_scoped_closure_ref<'a>(t: &'a Self) -> crate::ScopedClosure<'a, <dyn Fn($($arg),*) -> R as crate::WasmClosure>::Static> {
-                let ptr = t as *const dyn Fn($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -278,20 +252,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(unused)]
             fn into_scoped_closure_ref_mut<'a>(t: &'a mut Self) -> crate::ScopedClosure<'a, <dyn FnMut($($arg),*) -> R as crate::WasmClosure>::Static> {
                 let t: &mut dyn FnMut($($arg),*) -> R = t;
-                let ptr = t as *mut dyn FnMut($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn_mut(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *mut dyn FnMut($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &mut dyn FnMut($($arg),*) -> R = unsafe { &mut *ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -312,20 +273,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_scoped_closure_ref_mut<'a>(t: &'a mut Self) -> crate::ScopedClosure<'a, <dyn FnMut($($arg),*) -> R as crate::WasmClosure>::Static> {
-                let ptr = t as *mut dyn FnMut($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn_mut(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *mut dyn FnMut($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &mut dyn FnMut($($arg),*) -> R = unsafe { &mut *ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),

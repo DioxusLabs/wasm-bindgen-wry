@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::panic::AssertUnwindSafe;
-use core::{ ptr::NonNull};
+use core::ptr::NonNull;
 
 use cfg_if::cfg_if;
 

@@ -20,7 +20,7 @@ mod js_ref;
 mod object_store;
 mod registry;
 
-pub use callback::RustCallback;
+pub use callback::{IntoRustCallback, RustCallback};
 pub use encode::{
     BinaryDecode, BinaryEncode, EncodeTypeDef, FunctionTypeInfo, JsRefEncode, MutSliceArg,
     RefFromBinaryDecode, ThrowingResult, TypeDef,

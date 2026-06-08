@@ -248,6 +248,16 @@ pub(super) fn generate_type(
                 #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
             }
         }
+
+        impl #impl_generics #krate::convert::LongRefFromBinaryDecode for #rust_name #ty_generics #where_clause {
+            type Wire = #rust_name #ty_generics;
+            type Anchor = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
+            fn long_ref_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(#krate::convert::OwnedArgAnchor::from_value(
+                    <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
+                ))
+            }
+        }
     };
 
     // Generate BatchableResult implementation

@@ -54,6 +54,11 @@ impl RustCallback {
     }
 }
 
+#[doc(hidden)]
+pub trait IntoRustCallback {
+    fn into_rust_callback(self) -> RustCallback;
+}
+
 const RUST_OWNED_CALLBACK_POLICY: u32 = 0;
 
 fn encode_rust_owned_callback(handle: ObjectHandle, encoder: &mut EncodedData) {
@@ -82,44 +87,206 @@ macro_rules! insert_callback {
     ($callback:expr) => {{ crate::batch::with_runtime(|rt| rt.insert_object_box(Box::new($callback))) }};
 }
 
-macro_rules! encode_callback_ref {
-    (
-        impl ($($self_ty:tt)*) via *mut dyn FnMut, $ctor:ident;
-        $($arg:ident),*
-    ) => {
+unsafe fn scoped_callback_ref<From, To>(value: &From) -> &'static To
+where
+    From: ?Sized,
+    To: ?Sized,
+{
+    assert_eq!(core::mem::size_of::<&From>(), core::mem::size_of::<&To>());
+    // SAFETY: callers pass the same callback trait object with its object
+    // lifetime changed to `'static`.
+    unsafe { core::mem::transmute_copy::<&From, &'static To>(&value) }
+}
+
+unsafe fn scoped_callback_ref_mut<From, To>(value: &mut From) -> &'static mut To
+where
+    From: ?Sized,
+    To: ?Sized,
+{
+    assert_eq!(
+        core::mem::size_of::<&mut From>(),
+        core::mem::size_of::<&mut To>()
+    );
+    // SAFETY: callers pass the same callback trait object with its object
+    // lifetime changed to `'static`.
+    unsafe { core::mem::transmute_copy::<&mut From, &'static mut To>(&value) }
+}
+
+macro_rules! impl_into_rust_callback_ref {
+    ($($arg:ident),*) => {
         #[allow(coherence_leak_check)]
-        impl<R, $($arg,)*> BinaryEncode for $($self_ty)*
+        impl<'borrow, 'object, R, $($arg,)*> IntoRustCallback
+            for &'borrow mut (dyn FnMut($($arg),*) -> R + 'object)
         where
             $($arg: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
             #[allow(non_snake_case)]
-            fn encode(self, encoder: &mut EncodedData) {
-                encoder.mark_needs_flush();
-
-                let ptr = self as *mut dyn FnMut($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-
-                let callback = RustCallback::$ctor(
+            fn into_rust_callback(self) -> RustCallback {
+                // SAFETY: this changes only the trait-object lifetime. The
+                // resulting callback is owned by an operation- or
+                // closure-scoped handle that is dropped before `self` can be
+                // invalidated, and it is the only callback path holding this
+                // mutable borrow while registered.
+                let f: &'static mut (dyn FnMut($($arg),*) -> R + 'static) =
+                    unsafe { scoped_callback_ref_mut(self) };
+                RustCallback::new_fn_mut(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *mut dyn FnMut($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &mut dyn FnMut($($arg),*) -> R = unsafe { &mut *ptr };
                         $(let $arg = <$arg as BinaryDecode>::decode(_decoder)?;)*
                         let result = f($($arg),*);
                         result.encode(encoder);
                         Ok(())
                     },
-                );
-                let handle = insert_callback!(callback);
-                encode_rust_owned_callback(handle, encoder);
-                crate::batch::drop_rust_object(handle);
+                )
+            }
+        }
+
+        #[allow(coherence_leak_check)]
+        impl<'borrow, 'object, R, $($arg,)*> IntoRustCallback
+            for &'borrow (dyn Fn($($arg),*) -> R + 'object)
+        where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            fn into_rust_callback(self) -> RustCallback {
+                // SAFETY: this changes only the trait-object lifetime. The
+                // resulting callback is owned by an operation- or
+                // closure-scoped handle that is dropped before `self` can be
+                // invalidated.
+                let f: &'static (dyn Fn($($arg),*) -> R + 'static) =
+                    unsafe { scoped_callback_ref(self) };
+                RustCallback::new_fn(
+                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        $(let $arg = <$arg as BinaryDecode>::decode(_decoder)?;)*
+                        let result = f($($arg),*);
+                        result.encode(encoder);
+                        Ok(())
+                    },
+                )
+            }
+        }
+
+        #[allow(coherence_leak_check)]
+        impl<'borrow, 'object, R, $($arg,)*> IntoRustCallback
+            for &'borrow mut (dyn Fn($($arg),*) -> R + 'object)
+        where
+            $($arg: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            fn into_rust_callback(self) -> RustCallback {
+                // SAFETY: this changes only the trait-object lifetime. The
+                // resulting callback is owned by an operation- or
+                // closure-scoped handle that is dropped before `self` can be
+                // invalidated.
+                let f: &'static (dyn Fn($($arg),*) -> R + 'static) =
+                    unsafe { scoped_callback_ref(&*self) };
+                RustCallback::new_fn(
+                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        $(let $arg = <$arg as BinaryDecode>::decode(_decoder)?;)*
+                        let result = f($($arg),*);
+                        result.encode(encoder);
+                        Ok(())
+                    },
+                )
             }
         }
     };
+}
+
+macro_rules! impl_into_rust_callback_borrow_first {
+    ($first:ident $(, $rest:ident)*) => {
+        #[allow(coherence_leak_check)]
+        impl<'borrow, 'object, R, $first, $($rest,)*> IntoRustCallback
+            for &'borrow mut (dyn FnMut(&$first, $($rest),*) -> R + 'object)
+        where
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            fn into_rust_callback(self) -> RustCallback {
+                // SAFETY: this changes only the trait-object lifetime. The
+                // resulting callback is owned by an operation- or
+                // closure-scoped handle that is dropped before `self` can be
+                // invalidated, and it is the only callback path holding this
+                // mutable borrow while registered.
+                let f: &'static mut (dyn FnMut(&$first, $($rest),*) -> R + 'static) =
+                    unsafe { scoped_callback_ref_mut(self) };
+                RustCallback::new_fn_mut(
+                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
+                        $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
+                        let result = f(&*__anchor, $($rest),*);
+                        result.encode(encoder);
+                        Ok(())
+                    },
+                )
+            }
+        }
+
+        #[allow(coherence_leak_check)]
+        impl<'borrow, 'object, R, $first, $($rest,)*> IntoRustCallback
+            for &'borrow (dyn Fn(&$first, $($rest),*) -> R + 'object)
+        where
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            fn into_rust_callback(self) -> RustCallback {
+                // SAFETY: this changes only the trait-object lifetime. The
+                // resulting callback is owned by an operation- or
+                // closure-scoped handle that is dropped before `self` can be
+                // invalidated.
+                let f: &'static (dyn Fn(&$first, $($rest),*) -> R + 'static) =
+                    unsafe { scoped_callback_ref(self) };
+                RustCallback::new_fn(
+                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
+                        $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
+                        let result = f(&*__anchor, $($rest),*);
+                        result.encode(encoder);
+                        Ok(())
+                    },
+                )
+            }
+        }
+
+        #[allow(coherence_leak_check)]
+        impl<'borrow, 'object, R, $first, $($rest,)*> IntoRustCallback
+            for &'borrow mut (dyn Fn(&$first, $($rest),*) -> R + 'object)
+        where
+            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
+            R: BinaryEncode + EncodeTypeDef + 'static,
+        {
+            #[allow(non_snake_case)]
+            fn into_rust_callback(self) -> RustCallback {
+                // SAFETY: this changes only the trait-object lifetime. The
+                // resulting callback is owned by an operation- or
+                // closure-scoped handle that is dropped before `self` can be
+                // invalidated.
+                let f: &'static (dyn Fn(&$first, $($rest),*) -> R + 'static) =
+                    unsafe { scoped_callback_ref(&*self) };
+                RustCallback::new_fn(
+                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
+                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
+                        $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
+                        let result = f(&*__anchor, $($rest),*);
+                        result.encode(encoder);
+                        Ok(())
+                    },
+                )
+            }
+        }
+    };
+}
+
+macro_rules! encode_callback_ref {
     (
-        impl ($($self_ty:tt)*) via *const dyn Fn, $ctor:ident;
+        impl ($($self_ty:tt)*);
         $($arg:ident),*
     ) => {
         #[allow(coherence_leak_check)]
@@ -132,21 +299,7 @@ macro_rules! encode_callback_ref {
             fn encode(self, encoder: &mut EncodedData) {
                 encoder.mark_needs_flush();
 
-                let ptr = self as *const dyn Fn($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-
-                let callback = RustCallback::$ctor(
-                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
-                        $(let $arg = <$arg as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f($($arg),*);
-                        result.encode(encoder);
-                        Ok(())
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(self);
                 let handle = insert_callback!(callback);
                 encode_rust_owned_callback(handle, encoder);
                 crate::batch::drop_rust_object(handle);
@@ -169,7 +322,7 @@ macro_rules! impl_callback_ref {
         }
 
         encode_callback_ref!(
-            impl (&mut dyn FnMut($($arg),*) -> R) via *mut dyn FnMut, new_fn_mut;
+            impl (&mut dyn FnMut($($arg),*) -> R);
             $($arg),*
         );
 
@@ -185,7 +338,7 @@ macro_rules! impl_callback_ref {
         }
 
         encode_callback_ref!(
-            impl (&dyn Fn($($arg),*) -> R) via *const dyn Fn, new_fn;
+            impl (&dyn Fn($($arg),*) -> R);
             $($arg),*
         );
 
@@ -201,7 +354,7 @@ macro_rules! impl_callback_ref {
         }
 
         encode_callback_ref!(
-            impl (&mut dyn Fn($($arg),*) -> R) via *const dyn Fn, new_fn;
+            impl (&mut dyn Fn($($arg),*) -> R);
             $($arg),*
         );
     };
@@ -212,7 +365,8 @@ macro_rules! impl_callback_ref {
 // (it rides JS's borrow stack and is anchored for the call), the rest by value.
 macro_rules! encode_callback_borrow_first {
     (
-        impl ($($self_ty:tt)*) via *mut dyn FnMut(& $first:ident $(, $rest:ident)*) -> R, $ctor:ident;
+        impl ($($self_ty:tt)*);
+        $first:ident $(, $rest:ident)*
     ) => {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> BinaryEncode for $($self_ty)*
@@ -225,58 +379,7 @@ macro_rules! encode_callback_borrow_first {
             fn encode(self, encoder: &mut EncodedData) {
                 encoder.mark_needs_flush();
 
-                let ptr = self as *mut dyn FnMut(&$first, $($rest),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-
-                let callback = RustCallback::$ctor(
-                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *mut dyn FnMut(&$first, $($rest),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &mut dyn FnMut(&$first, $($rest),*) -> R = unsafe { &mut *ptr };
-                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
-                        $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__anchor, $($rest),*);
-                        result.encode(encoder);
-                        Ok(())
-                    },
-                );
-                let handle = insert_callback!(callback);
-                encode_rust_owned_callback(handle, encoder);
-                crate::batch::drop_rust_object(handle);
-            }
-        }
-    };
-    (
-        impl ($($self_ty:tt)*) via *const dyn Fn(& $first:ident $(, $rest:ident)*) -> R, $ctor:ident;
-    ) => {
-        #[allow(coherence_leak_check)]
-        impl<R, $first, $($rest,)*> BinaryEncode for $($self_ty)*
-        where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
-            $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
-            R: BinaryEncode + EncodeTypeDef + 'static,
-        {
-            #[allow(non_snake_case)]
-            fn encode(self, encoder: &mut EncodedData) {
-                encoder.mark_needs_flush();
-
-                let ptr = self as *const dyn Fn(&$first, $($rest),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-
-                let callback = RustCallback::$ctor(
-                    move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *const dyn Fn(&$first, $($rest),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &dyn Fn(&$first, $($rest),*) -> R = unsafe { &*ptr };
-                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
-                        $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__anchor, $($rest),*);
-                        result.encode(encoder);
-                        Ok(())
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(self);
                 let handle = insert_callback!(callback);
                 encode_rust_owned_callback(handle, encoder);
                 crate::batch::drop_rust_object(handle);
@@ -300,8 +403,8 @@ macro_rules! impl_callback_borrow_first {
         }
 
         encode_callback_borrow_first!(
-            impl (&mut dyn FnMut(&$first, $($rest),*) -> R)
-                via *mut dyn FnMut(&$first $(, $rest)*) -> R, new_fn_mut;
+            impl (&mut dyn FnMut(&$first, $($rest),*) -> R);
+            $first $(, $rest)*
         );
 
         #[allow(coherence_leak_check)]
@@ -317,8 +420,8 @@ macro_rules! impl_callback_borrow_first {
         }
 
         encode_callback_borrow_first!(
-            impl (&dyn Fn(&$first, $($rest),*) -> R)
-                via *const dyn Fn(&$first $(, $rest)*) -> R, new_fn;
+            impl (&dyn Fn(&$first, $($rest),*) -> R);
+            $first $(, $rest)*
         );
 
         #[allow(coherence_leak_check)]
@@ -334,8 +437,8 @@ macro_rules! impl_callback_borrow_first {
         }
 
         encode_callback_borrow_first!(
-            impl (&mut dyn Fn(&$first, $($rest),*) -> R)
-                via *const dyn Fn(&$first $(, $rest)*) -> R, new_fn;
+            impl (&mut dyn Fn(&$first, $($rest),*) -> R);
+            $first $(, $rest)*
         );
     };
 }
@@ -348,6 +451,25 @@ impl_callback_borrow_first!(A1, A2, A3, A4, A5);
 impl_callback_borrow_first!(A1, A2, A3, A4, A5, A6);
 impl_callback_borrow_first!(A1, A2, A3, A4, A5, A6, A7);
 impl_callback_borrow_first!(A1, A2, A3, A4, A5, A6, A7, A8);
+
+impl_into_rust_callback_borrow_first!(A1);
+impl_into_rust_callback_borrow_first!(A1, A2);
+impl_into_rust_callback_borrow_first!(A1, A2, A3);
+impl_into_rust_callback_borrow_first!(A1, A2, A3, A4);
+impl_into_rust_callback_borrow_first!(A1, A2, A3, A4, A5);
+impl_into_rust_callback_borrow_first!(A1, A2, A3, A4, A5, A6);
+impl_into_rust_callback_borrow_first!(A1, A2, A3, A4, A5, A6, A7);
+impl_into_rust_callback_borrow_first!(A1, A2, A3, A4, A5, A6, A7, A8);
+
+impl_into_rust_callback_ref!();
+impl_into_rust_callback_ref!(A1);
+impl_into_rust_callback_ref!(A1, A2);
+impl_into_rust_callback_ref!(A1, A2, A3);
+impl_into_rust_callback_ref!(A1, A2, A3, A4);
+impl_into_rust_callback_ref!(A1, A2, A3, A4, A5);
+impl_into_rust_callback_ref!(A1, A2, A3, A4, A5, A6);
+impl_into_rust_callback_ref!(A1, A2, A3, A4, A5, A6, A7);
+impl_into_rust_callback_ref!(A1, A2, A3, A4, A5, A6, A7, A8);
 
 impl_callback_ref!();
 impl_callback_ref!(A1);
