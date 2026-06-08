@@ -60,7 +60,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
         with:
           components: rustfmt
-      - run: cargo fmt --all -- --check
+      - run: ./scripts/cargo-fmt-workspace.sh -- --check
 
   check:
     if: github.event.pull_request.draft == false

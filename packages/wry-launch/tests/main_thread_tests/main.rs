@@ -234,6 +234,7 @@ fn build_tests() -> Vec<TestCase> {
         wasm_bindgen_compat::test_u128_try_from_bigint_preserves_range,
         wasm_bindgen_compat::test_i128_try_from_bigint_preserves_full_width,
         wasm_bindgen_compat::test_try_from_js_value_signed_numbers_preserve_negative_values,
+        wasm_bindgen_compat::test_colon_module_specifier_compiles_as_raw_import,
     );
 
     async_trials!(tests;

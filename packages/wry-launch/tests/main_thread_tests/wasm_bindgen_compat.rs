@@ -303,3 +303,12 @@ pub(crate) fn test_try_from_js_value_signed_numbers_preserve_negative_values() {
         vec![-1, -2, i32::MIN, i32::MAX]
     );
 }
+
+pub(crate) fn test_colon_module_specifier_compiles_as_raw_import() {
+    #[wasm_bindgen(module = "cloudflare:sockets")]
+    extern "C" {
+        fn __wry_worker_sys_socket_marker();
+    }
+
+    let _ = __wry_worker_sys_socket_marker as fn();
+}

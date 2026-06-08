@@ -124,18 +124,18 @@ mod slice_jsvalue;
 // so the attribute parses and the slice arrives on the JS side as an `Array` —
 // exactly the shape `slice_to_array` requests. All element kinds (primitives,
 // `String`, imported types) and the mixed-arg method form run.
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/char.rs"]
+mod char;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/node.rs"]
+mod node;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/nullable.rs"]
+mod nullable;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/slice_to_array.rs"]
 mod slice_to_array;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/string_vecs.rs"]
 mod string_vecs;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/structural.rs"]
 mod structural;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/char.rs"]
-mod char;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/nullable.rs"]
-mod nullable;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/node.rs"]
-mod node;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/truthy_falsy.rs"]
 mod truthy_falsy;
 // `usize.rs`: the isize/usize codec round-trips run; the companion `js_works` is
@@ -144,24 +144,24 @@ mod truthy_falsy;
 // wasm32-only sub-cases are skipped in `usize.js`: `isize::MIN`/`usize::MAX`
 // assume the 32-bit pointer width (native is 64-bit), and numeric `Vec<T>`
 // returns as a plain `Array` rather than an `Int32Array`/`Uint32Array`.
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/usize.rs"]
-mod usize;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/variadic.rs"]
-mod variadic;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/result_jserror.rs"]
-mod result_jserror;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/arg_names.rs"]
 mod arg_names;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/bigint.rs"]
 mod bigint;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/js_namespace_exports.rs"]
 mod js_namespace_exports;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/unwind.rs"]
-mod unwind;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/result.rs"]
 mod result;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/result_jserror.rs"]
+mod result_jserror;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/struct_vecs.rs"]
 mod struct_vecs;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/unwind.rs"]
+mod unwind;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/usize.rs"]
+mod usize;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/variadic.rs"]
+mod variadic;
 // `optional_primitives.js` has its `isize`/`usize` MIN/MAX and 32-bit-wraparound
 // assertions skipped: those hardcode the wasm32 pointer width, while wry's
 // `isize`/`usize` are the native 64-bit width. The small-value round-trips
@@ -187,18 +187,18 @@ mod optional_primitives;
 mod classes;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/enum_vecs.rs"]
 mod enum_vecs;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/macro_rules.rs"]
-mod macro_rules;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/generics.rs"]
-mod generics;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/try_from_js_value.rs"]
-mod try_from_js_value;
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/gc.rs"]
-mod gc;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/enums.rs"]
 mod enums;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/gc.rs"]
+mod gc;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/generics.rs"]
+mod generics;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/getters_and_setters.rs"]
 mod getters_and_setters;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/macro_rules.rs"]
+mod macro_rules;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/try_from_js_value.rs"]
+mod try_from_js_value;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/vendor_prefix.rs"]
 mod vendor_prefix;
 // Async exports that resolve to a value work now: the returned `Promise`'s heap
@@ -207,10 +207,10 @@ mod vendor_prefix;
 // whole file): a `&mut [T]` argument is not written back into the caller's typed
 // array (no shared linear memory), and a numeric `Vec<T>` returns as a plain
 // `Array` rather than a typed array. See the comments in `futures.js`/`async_vecs.js`.
-#[path = "../../../../vendored/wasm-bindgen/tests/wasm/futures.rs"]
-mod futures;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/async_vecs.rs"]
 mod async_vecs;
+#[path = "../../../../vendored/wasm-bindgen/tests/wasm/futures.rs"]
+mod futures;
 // `closures.rs` largely compiles now (closure variance/upcasts, 8-arity, value
 // upcasts added). The remaining gap is the "reference as first argument" family
 // — `&dyn Fn(&T)` / `&mut dyn FnMut(&T)` passed to JS, and exported-struct
@@ -299,7 +299,6 @@ mod api;
 // returned verbatim and (being unregistered) fails the fetch.
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/link_to.rs"]
 mod link_to;
-
 
 fn build_tests() -> Vec<TestCase> {
     // Ensure the assert/exports shim module is loaded before any test runs.

@@ -71,6 +71,11 @@ fn module_spec_expr(
             // Match upstream wasm-bindgen's `module` resolution: a leading `/` or a bare
             // path (e.g. "tests/wasm/foo.js") is relative to the crate root
             // (`CARGO_MANIFEST_DIR`). `./` and `../` are relative to the source file.
+            // Colon-bearing bare specifiers such as `cloudflare:sockets` and `node:fs`
+            // are import specifiers, not local files.
+            if module_path.contains(':') {
+                return Ok(quote_spanned! {*span=> #krate::__rt::JsModuleSpec::raw(#module_path) });
+            }
             let include_expr = if module_path.starts_with('/') {
                 quote_spanned! {*span=> include_str!(concat!(env!("CARGO_MANIFEST_DIR"), #module_path)) }
             } else if module_path.starts_with("./") || module_path.starts_with("../") {

@@ -38,6 +38,9 @@
 #   - out-parameters: JS writing back into a Rust buffer (getrandom 0.3+'s
 #     `&mut [MaybeUninit<u8>]` wasm_js backend). A request/response wire has no
 #     shared memory to write back through.
+#   - wasm-bindgen-test: the test-runner crate reaches into upstream
+#     `wasm_bindgen::__rt` internals rather than exercising normal binding
+#     surface, so it is not a useful shim compatibility target.
 # These are documented at their removal sites. Everything else stays and fails
 # loudly until fixed.
 #
@@ -67,6 +70,7 @@ WB_SHARD_INDEX="${WB_SHARD_INDEX:-0}"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/wb-compat.XXXXXX")"
 export CARGO_TARGET_DIR="$WORK/target"
+export CARGO_TERM_COLOR=never
 trap 'rm -rf "$WORK"' EXIT
 
 # ---------------------------------------------------------------------------
@@ -108,11 +112,12 @@ NATIVE=(
   "leptos_dom"
   "leptos_router"
   "libp2p-wasm-ext"
-  "wasm-bindgen-test"
+  # wasm-bindgen-test is intentionally not tested: it is test-runner
+  # infrastructure that depends on upstream `wasm_bindgen::__rt` internals
+  # rather than a normal wasm-bindgen binding consumer.
   "worker"
   "worker-sys"
   "worker-macros"
-  "sqlite-wasm-rs"
 )
 
 # Build for wasm32-unknown-unknown with unstable_force_wry_backend (bindings are
@@ -137,6 +142,10 @@ WASM=(
   "jpeg-decoder"
   "raw-window-handle"
   "rusqlite"
+  # sqlite-wasm-rs is a wasm32-only SQLite binding. Its host build compiles the
+  # wasm C shim against native C headers, which fails before the bindgen shim is
+  # exercised.
+  "sqlite-wasm-rs"
   "trust-dns-proto nodefault"
   "winit"
   "slug"
@@ -172,7 +181,9 @@ WASM=(
   "bevy_render"
   "bevy_winit"
   "npyz"
-  "flutter_rust_bridge"
+  # flutter_rust_bridge's wasm transfer path passes raw `*mut
+  # TransferClosurePayload<_>` values through the wasm-bindgen ABI. Raw pointer
+  # ABIs cannot be marshalled over the wry request/response wire.
   "webauthn-rs-proto"
   "server_fn"
   "plotly"
@@ -233,12 +244,19 @@ build_one() {
     env_args=(env "RUSTFLAGS=--cfg getrandom_backend=\"wasm_js\"")
   fi
 
-  if (cd "$dir" && "${env_args[@]}" cargo build "${PATCH[@]}" "${target_args[@]}" >"$dir/log" 2>&1); then
+  if (
+    cd "$dir" || exit 2
+    if [ "$mode" = wasm32 ]; then
+      "${env_args[@]}" cargo build "${PATCH[@]}" "${target_args[@]}" >"$dir/log" 2>&1
+    else
+      cargo build "${PATCH[@]}" >"$dir/log" 2>&1
+    fi
+  ); then
     printf '  ok   %-7s %s\n' "$mode" "$crate"
     passes=$((passes + 1))
   else
     printf '  FAIL %-7s %s\n' "$mode" "$crate"
-    grep -m3 -E '^error' "$dir/log" | sed 's/^/         /'
+    tail -n 80 "$dir/log" | sed 's/^/         /'
     fails+=("$crate ($mode)")
     fail=1
   fi
