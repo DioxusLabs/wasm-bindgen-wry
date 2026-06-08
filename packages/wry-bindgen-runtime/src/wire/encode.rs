@@ -747,14 +747,11 @@ ref_encode_via_clone!(
 /// write-back runs synchronously inside `run_js_sync`, so the raw slice pointer
 /// captured here stays valid until the write-back runs.
 fn register_slice_write_back<T: BinaryDecode + 'static>(slice: &mut [T]) {
-    let ptr = slice.as_mut_ptr();
-    let len = slice.len();
+    let raw = slice as *mut [T];
     crate::batch::push_write_back(Box::new(move |decoder: &mut DecodedData| {
         let updated = Vec::<T>::decode(decoder).expect("failed to decode &mut [T] write-back");
-        // SAFETY: `ptr`/`len` describe the caller's `&mut [T]`, which outlives
-        // this synchronous write-back (see the doc comment). JS returns an array
-        // of the same length, but clamp to `len` defensively.
-        let target = unsafe { core::slice::from_raw_parts_mut(ptr, len) };
+        // SAFETY: The raw pointer was captured from the original slice, and the write-back runs synchronously inside `run_js_sync` after the return value is decoded, so the original slice is still valid and uniquely borrowed when we write back into it.
+        let target = unsafe { &mut *raw };
         for (dst, src) in target.iter_mut().zip(updated) {
             *dst = src;
         }
