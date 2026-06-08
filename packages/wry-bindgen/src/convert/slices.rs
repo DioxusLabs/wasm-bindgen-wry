@@ -1,9 +1,7 @@
-use crate::__rt::{
-    BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData, MutSliceArg,
-};
+use crate::__rt::{BinaryDecode, BinaryEncode, EncodeTypeDef};
 use core::ops::Deref;
 
-use super::{FromWasmAbi, IntoWasmAbi, LongRefFromBinaryDecode};
+use super::{FromWasmAbi, IntoWasmAbi};
 
 impl<T: BinaryEncode + EncodeTypeDef> IntoWasmAbi for alloc::vec::Vec<T> {}
 impl<T: BinaryDecode + EncodeTypeDef> FromWasmAbi for alloc::vec::Vec<T> {}
@@ -66,59 +64,5 @@ impl<T: EncodeTypeDef + ?Sized> EncodeTypeDef for RefMutArg<T> {
             Some(class_name) => type_def.rust_borrow(&class_name),
             None => T::encode_type_def(type_def),
         }
-    }
-}
-
-/// Decode a `&mut T` export argument. An exported struct is borrowed *mutably*
-/// from the store (an exclusive borrow that composes with the receiver's borrow,
-/// so aliasing the receiver reports "recursive use of an object" rather than
-/// silently consuming it); a JS-handle type is decoded owned and lent `&mut`.
-pub trait RefMutFromBinaryDecode {
-    /// The wire type JS sees for this argument.
-    type Wire: EncodeTypeDef;
-
-    /// The anchor that keeps the decoded `&mut Self` valid for the call's duration.
-    type Anchor: core::ops::DerefMut<Target = Self>;
-
-    fn ref_mut_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
-
-    /// Append any post-call write-back data to the export response.
-    fn write_back(_anchor: Self::Anchor, _encoder: &mut EncodedData) {}
-}
-
-impl<T> RefMutFromBinaryDecode for [T]
-where
-    T: BinaryDecode + BinaryEncode + EncodeTypeDef,
-{
-    type Wire = MutSliceArg<T>;
-    type Anchor = MutSliceArg<T>;
-
-    fn ref_mut_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        MutSliceArg::decode(decoder)
-    }
-
-    fn write_back(anchor: Self::Anchor, encoder: &mut EncodedData) {
-        MutSliceArg::write_back(anchor, encoder);
-    }
-}
-
-impl LongRefFromBinaryDecode for str {
-    type Wire = alloc::string::String;
-    type Anchor = alloc::string::String;
-
-    fn long_ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        alloc::string::String::decode(decoder)
-    }
-}
-
-impl<T> LongRefFromBinaryDecode for [T]
-where
-    T: BinaryDecode + EncodeTypeDef,
-{
-    type Wire = alloc::vec::Vec<T>;
-    type Anchor = alloc::vec::Vec<T>;
-
-    fn long_ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        alloc::vec::Vec::<T>::decode(decoder)
     }
 }

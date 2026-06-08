@@ -1,11 +1,10 @@
-use crate::__rt::{BinaryDecode, DecodeError, DecodedData, JsRef};
+use crate::__rt::{DecodeError, DecodedData, JsRef};
 use crate::{JsCast, JsValue};
 use core::marker::PhantomData;
 
 use super::{
-    FromWasmAbi, IntoWasmAbi, JsGeneric, LongRefFromBinaryDecode, OptionFromWasmAbi,
-    OptionIntoWasmAbi, OwnedArgAnchor, RefArg, RefFromBinaryDecode, RefFromWasmAbi, RefMutArg,
-    RefMutFromBinaryDecode, UpcastFrom, WasmAbi,
+    FromWasmAbi, IntoWasmAbi, JsGeneric, OptionFromWasmAbi, OptionIntoWasmAbi, RefArg,
+    RefFromBinaryDecode, RefFromWasmAbi, UpcastFrom, WasmAbi,
 };
 
 // `IntoWasmAbi`/`FromWasmAbi` are implemented per-type, mirroring upstream
@@ -124,23 +123,5 @@ impl RefFromBinaryDecode for JsValue {
 
     fn ref_decode(_decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
         Ok(JsCastAnchor::next_borrowed())
-    }
-}
-
-impl RefMutFromBinaryDecode for JsValue {
-    type Wire = RefMutArg<JsValue>;
-    type Anchor = OwnedArgAnchor<JsValue>;
-
-    fn ref_mut_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        Ok(OwnedArgAnchor::from_value(JsValue::decode(decoder)?))
-    }
-}
-
-impl LongRefFromBinaryDecode for JsValue {
-    type Wire = JsValue;
-    type Anchor = OwnedArgAnchor<JsValue>;
-
-    fn long_ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        Ok(OwnedArgAnchor::from_value(JsValue::decode(decoder)?))
     }
 }

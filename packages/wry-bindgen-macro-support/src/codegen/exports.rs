@@ -34,6 +34,22 @@ fn unwrap_group(mut ty: &syn::Type) -> &syn::Type {
     }
 }
 
+/// Drop the explicit lifetime from a top-level reference type so the generated
+/// export wrapper — which has none of the function's lifetime parameters in
+/// scope — can name it in `<#ty as ArgAbi<S>>`. `&'a [u8]` becomes `&[u8]`, whose
+/// borrow lifetime is then inferred from the decoded guard; non-reference types
+/// are returned unchanged.
+fn strip_ref_lifetime(ty: &syn::Type) -> syn::Type {
+    match ty {
+        syn::Type::Reference(reference) => {
+            let mut reference = reference.clone();
+            reference.lifetime = None;
+            syn::Type::Reference(reference)
+        }
+        other => other.clone(),
+    }
+}
+
 /// Wrap a call expression in an `unsafe` block so an exported `unsafe fn` can be
 /// invoked from the generated wrapper. `allow(unused_unsafe)` keeps the safe
 /// case (the overwhelming majority of exports) free of warnings.
@@ -180,76 +196,36 @@ fn generate_decode_args_parts(
         // argument type is matched as the reference/slice it really is.
         let arg_ty = unwrap_group(arg.pat_type.ty.as_ref());
 
-        // A shared `&T` argument is decoded through `RefFromBinaryDecode`:
-        // exported structs borrow from the store, `str`/slices choose their owned
-        // transport, and JS handles ride the borrow stack.
-        let is_borrowable_ref = matches!(arg_ty, syn::Type::Reference(reference)
-            if reference.mutability.is_none());
+        // Every argument is decoded through one uniform projection rather than a
+        // syntactic match on `&T`/`&mut T`/owned. Keying on the *full spelled*
+        // type lets trait resolution — which sees through type aliases — choose
+        // the behavior, so `fn f(x: U8Slice)` with `type U8Slice<'a> = &'a [u8]`
+        // decodes exactly like `fn f(x: &[u8])`. The borrow scope selects the
+        // async variant (`Anchored`), whose borrowed arguments anchor an owned
+        // copy that outlives the returned `Promise`; a sync export is `CallScoped`.
+        //
+        // A reference's explicit lifetime is dropped (`&'a [u8]` -> `&[u8]`)
+        // because the generated wrapper has none of the function's lifetime
+        // parameters in scope; the borrow lifetime is inferred from the guard.
+        let arg_ty = strip_ref_lifetime(arg_ty);
+        let scope = if is_async {
+            quote_spanned! {span=> #krate::convert::Anchored }
+        } else {
+            quote_spanned! {span=> #krate::convert::CallScoped }
+        };
+        let arg_trait = quote_spanned! {span=> #krate::convert::ArgAbi<#scope> };
+        let guard_name = format_ident!("__wry_{}_guard", arg_name);
 
-        if is_borrowable_ref {
-            let syn::Type::Reference(reference) = arg_ty else {
-                unreachable!("is_borrowable_ref implies a shared reference");
-            };
-            let elem = unwrap_group(&reference.elem);
-            let anchor_name = format_ident!("__wry_{}_anchor", arg_name);
-            if is_async {
-                wire_types.push(
-                    quote_spanned! {span=> <#elem as #krate::convert::LongRefFromBinaryDecode>::Wire },
-                );
-                decode_args.extend(quote_spanned! {span=>
-                    let #anchor_name = <#elem as #krate::convert::LongRefFromBinaryDecode>::long_ref_decode(decoder)?;
-                });
-            } else {
-                wire_types.push(
-                    quote_spanned! {span=> <#elem as #krate::convert::RefFromBinaryDecode>::Wire },
-                );
-                decode_args.extend(quote_spanned! {span=>
-                    let #anchor_name = <#elem as #krate::convert::RefFromBinaryDecode>::ref_decode(decoder)?;
-                });
-            }
-            borrow_bindings.extend(quote_spanned! {span=>
-                let #arg_name = #krate::__rt::core::ops::Deref::deref(&#anchor_name);
-            });
-            call_args.push(quote_spanned! {span=> #arg_name });
-            continue;
-        }
-
-        // A mutable `&mut T` argument is decoded through
-        // `RefMutFromBinaryDecode`: exported structs borrow from the store,
-        // `&mut [T]` decodes into a `MutSliceArg<T>` guard that writes back after
-        // the return value, and other impls can choose their own wire/anchor shape.
-        let is_borrowable_mut_ref = matches!(arg_ty, syn::Type::Reference(reference)
-            if reference.mutability.is_some());
-
-        if is_borrowable_mut_ref {
-            let syn::Type::Reference(reference) = arg_ty else {
-                unreachable!("is_borrowable_mut_ref implies a mutable reference");
-            };
-            let elem = unwrap_group(&reference.elem);
-            let anchor_name = format_ident!("__wry_{}_anchor", arg_name);
-            wire_types.push(
-                quote_spanned! {span=> <#elem as #krate::convert::RefMutFromBinaryDecode>::Wire },
-            );
-            decode_args.extend(quote_spanned! {span=>
-                let mut #anchor_name = <#elem as #krate::convert::RefMutFromBinaryDecode>::ref_mut_decode(decoder)?;
-            });
-            borrow_bindings.extend(quote_spanned! {span=>
-                let #arg_name = #krate::__rt::core::ops::DerefMut::deref_mut(&mut #anchor_name);
-            });
-            write_backs.push(quote_spanned! {span=>
-                <#elem as #krate::convert::RefMutFromBinaryDecode>::write_back(#anchor_name, &mut encoder);
-            });
-            call_args.push(quote_spanned! {span=> #arg_name });
-            continue;
-        }
-
-        let wire_ty = quote_spanned! {span=> #arg_ty };
-        wire_types.push(wire_ty.clone());
-
+        wire_types.push(quote_spanned! {span=> <#arg_ty as #arg_trait>::Wire });
         decode_args.extend(quote_spanned! {span=>
-            let #arg_name = <#wire_ty as #krate::__rt::BinaryDecode>::decode(decoder)?;
+            let mut #guard_name = <#arg_ty as #arg_trait>::decode(decoder)?;
         });
-
+        borrow_bindings.extend(quote_spanned! {span=>
+            let #arg_name = <#arg_ty as #arg_trait>::project(&mut #guard_name);
+        });
+        write_backs.push(quote_spanned! {span=>
+            <#arg_ty as #arg_trait>::write_back(#guard_name, &mut encoder);
+        });
         call_args.push(quote_spanned! {span=> #arg_name });
     }
 
@@ -404,10 +380,12 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         }
     };
 
-    // Borrowed-decode support so this struct can be a `&T` export or callback
-    // argument. The routed handle rides the wire as a plain `u32`, decoded and
-    // checked out without consuming the wrapper.
-    let ref_from_binary_decode_impl = quote_spanned! {span=>
+    // Borrowed-decode support so this struct can be a `&T` callback argument
+    // (closures decode their first reference argument through `RefFromBinaryDecode`).
+    // The routed handle rides the wire as a plain `u32`, decoded and checked out
+    // without consuming the wrapper. Borrowed *export* arguments go through
+    // `ArgAbi` below, which checks out the same anchors.
+    let borrow_arg_impls = quote_spanned! {span=>
         impl #krate::convert::RefFromBinaryDecode for #rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
             type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
@@ -415,21 +393,32 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
                 #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
             }
         }
-        impl #krate::convert::LongRefFromBinaryDecode for #rust_name {
+
+        // `ArgAbi<S>` mirrors the borrow impls above for the *full* `&Self`/`&mut
+        // Self` argument types, so an exported function decodes a borrowed struct
+        // argument through the uniform `<#arg_ty as ArgAbi<S>>` projection —
+        // including when the type reaches the macro behind an alias. A store
+        // checkout is valid across an await, so one impl serves both borrow scopes.
+        impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &#rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
-            type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            fn long_ref_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+            type Guard = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
+            type Projected<'__wry> = &'__wry #rust_name where Self: '__wry;
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
             }
+            fn project(guard: &mut Self::Guard) -> &#rust_name {
+                guard
+            }
         }
-        // Direct `&mut Self` export argument: a mutable borrow out of the store
-        // that composes with the receiver's borrow, so aliasing the receiver
-        // (`x.mutate(x)`) reports "recursive use of an object".
-        impl #krate::convert::RefMutFromBinaryDecode for #rust_name {
+        impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &mut #rust_name {
             type Wire = #krate::convert::RefMutArg<#rust_name>;
-            type Anchor = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
-            fn ref_mut_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+            type Guard = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
+            type Projected<'__wry> = &'__wry mut #rust_name where Self: '__wry;
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)
+            }
+            fn project(guard: &mut Self::Guard) -> &mut #rust_name {
+                guard
             }
         }
     };
@@ -538,7 +527,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         #batchable_result_impl
         #wasm_abi_impl
         #promising_impl
-        #ref_from_binary_decode_impl
+        #borrow_arg_impls
         #try_from_js_value_impl
     })
 }

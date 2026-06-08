@@ -74,8 +74,9 @@ export CARGO_TERM_COLOR=never
 trap 'rm -rf "$WORK"' EXIT
 
 # ---------------------------------------------------------------------------
-# Top-100 wasm-bindgen dependents by downloads.  Format: "crate [features]".
-# Default features unless listed; web-sys gets a broad set for macro coverage.
+# Top-100 wasm-bindgen dependents by downloads.  Format:
+# "crate[@version] [features]". Default features unless listed; web-sys gets a
+# broad set for macro coverage.
 # ---------------------------------------------------------------------------
 
 # Build natively (wasm-bindgen used unconditionally -> exercises the macro).
@@ -141,7 +142,9 @@ WASM=(
   "adler32"
   "jpeg-decoder"
   "raw-window-handle"
-  "rusqlite"
+  # rusqlite 0.40.x currently uses unstable `std::cfg_select!` on stable Rust,
+  # which fails before any wasm-bindgen shim code is exercised.
+  "rusqlite@=0.39.0"
   # sqlite-wasm-rs is a wasm32-only SQLite binding. Its host build compiles the
   # wasm C shim against native C headers, which fails before the bindgen shim is
   # exercised.
@@ -200,7 +203,12 @@ passes=0
 fails=()
 
 build_one() {
-  local mode="$1" crate="$2"; shift 2
+  local mode="$1" crate_spec="$2"; shift 2
+  local crate="$crate_spec" version="*" label="$crate_spec"
+  if [[ "$crate_spec" == *@* ]]; then
+    crate="${crate_spec%@*}"
+    version="${crate_spec#*@}"
+  fi
   # A `nodefault` token in the feature list sets default-features = false (for
   # crates whose default features pull native-only backends, e.g. tokio/mio).
   local default_features=true feats=()
@@ -216,7 +224,7 @@ build_one() {
     echo 'version = "0.0.0"'
     echo 'edition = "2021"'
     echo '[dependencies]'
-    local spec='version = "*"'
+    local spec="version = \"$version\""
     [ "$default_features" = false ] && spec="$spec, default-features = false"
     if [ "${#feats[@]}" -gt 0 ]; then
       printf '%s = { %s, features = [' "$crate" "$spec"
@@ -252,12 +260,12 @@ build_one() {
       cargo build "${PATCH[@]}" >"$dir/log" 2>&1
     fi
   ); then
-    printf '  ok   %-7s %s\n' "$mode" "$crate"
+    printf '  ok   %-7s %s\n' "$mode" "$label"
     passes=$((passes + 1))
   else
-    printf '  FAIL %-7s %s\n' "$mode" "$crate"
+    printf '  FAIL %-7s %s\n' "$mode" "$label"
     tail -n 80 "$dir/log" | sed 's/^/         /'
-    fails+=("$crate ($mode)")
+    fails+=("$label ($mode)")
     fail=1
   fi
 }

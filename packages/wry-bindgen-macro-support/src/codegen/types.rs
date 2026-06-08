@@ -249,13 +249,35 @@ pub(super) fn generate_type(
             }
         }
 
-        impl #impl_generics #krate::convert::LongRefFromBinaryDecode for #rust_name #ty_generics #where_clause {
+        // `ArgAbi<S>` for the borrowed `&Self` argument, so an exported function
+        // decoding a borrowed imported type goes through the uniform `<#arg_ty as
+        // ArgAbi<S>>` projection (also when it arrives behind an alias). This is
+        // the one borrow shape that differs by scope: a synchronous (`CallScoped`)
+        // borrow rides JS's borrow stack (gated on `Self: JsCast`), while an async
+        // (`Anchored`) borrow anchors an owned copy that outlives the `Promise`.
+        impl #ref_impl_generics #krate::convert::ArgAbi<#krate::convert::CallScoped> for &#rust_name #ty_generics #ref_where_clause {
+            type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
+            type Guard = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
+            type Projected<'__wry> = &'__wry #rust_name #ty_generics where Self: '__wry;
+            fn decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
+            }
+            fn project(guard: &mut Self::Guard) -> &#rust_name #ty_generics {
+                guard
+            }
+        }
+
+        impl #impl_generics #krate::convert::ArgAbi<#krate::convert::Anchored> for &#rust_name #ty_generics #where_clause {
             type Wire = #rust_name #ty_generics;
-            type Anchor = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
-            fn long_ref_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+            type Guard = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
+            type Projected<'__wry> = &'__wry #rust_name #ty_generics where Self: '__wry;
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::core::result::Result::Ok(#krate::convert::OwnedArgAnchor::from_value(
                     <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
                 ))
+            }
+            fn project(guard: &mut Self::Guard) -> &#rust_name #ty_generics {
+                guard
             }
         }
     };

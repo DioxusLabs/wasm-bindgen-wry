@@ -68,24 +68,6 @@ pub trait RefFromWasmAbi {
     }
 }
 
-/// Decode a shared reference that may live across an exported `async fn`.
-///
-/// Short-lived `&JsValue` arguments can ride JS's borrow stack, but an async
-/// export returns a `Promise` before its future has necessarily finished. Those
-/// futures need an anchor that remains valid after the caller's borrow frame is
-/// gone.
-pub trait LongRefFromBinaryDecode {
-    /// The wire type JS sees for this argument.
-    type Wire: crate::__rt::EncodeTypeDef;
-
-    /// The anchor that keeps the decoded `&Self` valid for the future.
-    type Anchor: core::ops::Deref<Target = Self>;
-
-    fn long_ref_decode(
-        decoder: &mut crate::__rt::DecodedData,
-    ) -> Result<Self::Anchor, crate::__rt::DecodeError>;
-}
-
 /// Non-dropping anchor returned by `RefFromWasmAbi::ref_from_abi`.
 pub struct AbiRef<T>(ManuallyDrop<T>);
 

@@ -8,6 +8,7 @@ mod harness;
 use harness::{BatchMode, TestCase, async_test, harness_main, sync_test, trial_name};
 
 mod add_number_js;
+mod arg_type_alias;
 #[allow(clippy::redundant_closure)]
 mod async_bindings;
 mod batch_stress;
@@ -118,6 +119,12 @@ fn build_tests() -> Vec<TestCase> {
         add_number_js::test_add_number_js,
         add_number_js::test_add_number_js_batch,
         roundtrip::test_roundtrip,
+        arg_type_alias::test_export_slice_arg_alias,
+        arg_type_alias::test_export_str_arg_alias,
+        arg_type_alias::test_export_mut_slice_arg_alias,
+        arg_type_alias::test_export_struct_ref_arg_alias,
+        arg_type_alias::test_import_slice_arg_alias,
+        arg_type_alias::test_return_type_alias,
         callbacks::test_call_callback,
         callbacks::test_dropped_closure_disposes_js_callable,
         callbacks::test_dropped_once_closure_disposes_js_callable,
@@ -234,7 +241,6 @@ fn build_tests() -> Vec<TestCase> {
         wasm_bindgen_compat::test_u128_try_from_bigint_preserves_range,
         wasm_bindgen_compat::test_i128_try_from_bigint_preserves_full_width,
         wasm_bindgen_compat::test_try_from_js_value_signed_numbers_preserve_negative_values,
-        wasm_bindgen_compat::test_colon_module_specifier_compiles_as_raw_import,
     );
 
     async_trials!(tests;

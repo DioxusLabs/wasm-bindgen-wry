@@ -5,11 +5,13 @@
 //! but the actual transport is Wry's binary protocol rather than raw Wasm ABI
 //! primitives.
 
+mod arg;
 mod closures;
 mod impls;
 mod slices;
 mod traits;
 
+pub use self::arg::*;
 pub use self::impls::*;
 pub use self::slices::*;
 pub use self::traits::*;
