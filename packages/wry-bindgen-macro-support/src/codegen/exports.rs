@@ -179,9 +179,9 @@ fn generate_decode_args_parts(
         // argument type is matched as the reference/slice it really is.
         let arg_ty = unwrap_group(arg.pat_type.ty.as_ref());
 
-        // A shared `&T` argument is decoded through `BorrowArg`: exported structs
-        // borrow from the store, `str`/slices choose their owned transport, and
-        // other impls can choose their own wire/anchor shape.
+        // A shared `&T` argument is decoded through `RefFromBinaryDecode`:
+        // exported structs borrow from the store, `str`/slices choose their owned
+        // transport, and JS handles ride the borrow stack.
         let is_borrowable_ref = matches!(arg_ty, syn::Type::Reference(reference)
             if reference.mutability.is_none());
 
@@ -191,9 +191,9 @@ fn generate_decode_args_parts(
             };
             let elem = unwrap_group(&reference.elem);
             let anchor_name = format_ident!("__wry_{}_anchor", arg_name);
-            wire_types.push(quote_spanned! {span=> <#elem as #krate::convert::BorrowArg>::Wire });
+            wire_types.push(quote_spanned! {span=> <#elem as #krate::convert::RefFromBinaryDecode>::Wire });
             decode_args.extend(quote_spanned! {span=>
-                let #anchor_name = <#elem as #krate::convert::BorrowArg>::borrow_decode(decoder)?;
+                let #anchor_name = <#elem as #krate::convert::RefFromBinaryDecode>::ref_decode(decoder)?;
             });
             borrow_bindings.extend(quote_spanned! {span=>
                 let #arg_name = #krate::__rt::core::ops::Deref::deref(&#anchor_name);
@@ -391,24 +391,14 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         }
     };
 
-    // Borrowed-decode support so this struct can be a `&T` callback argument
-    // (e.g. `dyn FnMut(&MyStruct)`): JS passes the wrapper on the borrow stack
-    // and the object is checked out of the store for the call's duration.
+    // Borrowed-decode support so this struct can be a `&T` export or callback
+    // argument. The routed handle rides the wire as a plain `u32`, decoded and
+    // checked out without consuming the wrapper.
     let ref_from_binary_decode_impl = quote_spanned! {span=>
-        // Closure first-argument borrow (`&dyn Fn(&Self)`): JS pushes the wrapper
-        // on the borrow stack inside the callback's borrow frame.
         impl #krate::convert::RefFromBinaryDecode for #rust_name {
-            type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            fn ref_decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
-                #krate::__rt::object_store::ObjectRefAnchor::checkout_borrowed()
-            }
-        }
-        // Direct `&Self` export argument: the routed handle rides the wire as a
-        // plain `u32`, decoded and checked out without a borrow-stack round-trip.
-        impl #krate::convert::BorrowArg for #rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
             type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            fn borrow_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
+            fn ref_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
                 #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
             }
         }

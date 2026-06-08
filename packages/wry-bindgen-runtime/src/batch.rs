@@ -4,12 +4,12 @@
 //! JS operations to be grouped together for efficient execution.
 
 use alloc::collections::BTreeMap;
+use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::any::{Any, TypeId};
 use core::cell::{Cell, Ref, RefCell, RefMut};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
-use core::ptr::NonNull;
 use std::boxed::Box;
 use std::thread_local;
 
@@ -93,7 +93,7 @@ impl ObjectSlot {
         !self.pending_drop.get() && self.type_id == TypeId::of::<T>()
     }
 
-    fn into_object(self: Box<Self>) -> Box<dyn Any> {
+    fn into_object(self) -> Box<dyn Any> {
         self.value.into_inner()
     }
 }
@@ -139,30 +139,28 @@ impl ObjectTakeError {
 /// Shared borrow of a stored Rust object.
 pub struct ObjectRef<T: 'static> {
     handle: ObjectHandle,
-    slot: NonNull<ObjectSlot>,
-    borrow: Option<Ref<'static, Box<dyn Any>>>,
+    borrow: Option<Ref<'static, T>>,
+    slot: Option<Rc<ObjectSlot>>,
     _ty: PhantomData<fn() -> T>,
 }
 
 impl<T: 'static> ObjectRef<T> {
-    fn new(handle: ObjectHandle, slot: NonNull<ObjectSlot>) -> Result<Self, ObjectBorrowError> {
-        // SAFETY: `slot` points at a boxed entry owned by `Runtime.objects`.
-        // Borrowed slots are not removed from that map; drops only mark them
-        // pending until the final guard releases its `Ref`.
-        let slot_ref = unsafe { slot.as_ref() };
-        let borrow = slot_ref
+    fn new(handle: ObjectHandle, slot: Rc<ObjectSlot>) -> Result<Self, ObjectBorrowError> {
+        let borrow = slot
             .value
             .try_borrow()
             .map_err(|_| ObjectBorrowError::RecursiveUse)?;
-        // SAFETY: see the safety note above. This guard drops `borrow` before
-        // allowing a pending slot to be removed from the runtime.
-        let borrow = unsafe {
-            core::mem::transmute::<Ref<'_, Box<dyn Any>>, Ref<'static, Box<dyn Any>>>(borrow)
-        };
+        let borrow = Ref::map(borrow, |value| {
+            value.downcast_ref::<T>().expect("object type mismatch")
+        });
+        // SAFETY: `slot` is owned by this guard and declared after `borrow`, so
+        // it is dropped after the `Ref`. Pending-drop slots also remain in the
+        // runtime map until the final guard releases its `Ref`.
+        let borrow = unsafe { core::mem::transmute::<Ref<'_, T>, Ref<'static, T>>(borrow) };
         Ok(Self {
             handle,
-            slot,
             borrow: Some(borrow),
+            slot: Some(slot),
             _ty: PhantomData,
         })
     }
@@ -172,43 +170,44 @@ impl<T: 'static> Deref for ObjectRef<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        (**self.borrow.as_ref().expect("object borrow missing"))
-            .downcast_ref::<T>()
-            .expect("object type mismatch")
+        self.borrow.as_ref().expect("object borrow missing")
     }
 }
 
 impl<T: 'static> Drop for ObjectRef<T> {
     fn drop(&mut self) {
         self.borrow = None;
-        finish_deferred_object_drop(self.handle, self.slot);
+        if let Some(slot) = self.slot.take()
+            && slot.pending_drop.get()
+        {
+            finish_deferred_object_drop(self.handle, slot);
+        }
     }
 }
 
 /// Mutable borrow of a stored Rust object.
 pub struct ObjectRefMut<T: 'static> {
     handle: ObjectHandle,
-    slot: NonNull<ObjectSlot>,
-    borrow: Option<RefMut<'static, Box<dyn Any>>>,
+    borrow: Option<RefMut<'static, T>>,
+    slot: Option<Rc<ObjectSlot>>,
     _ty: PhantomData<fn() -> T>,
 }
 
 impl<T: 'static> ObjectRefMut<T> {
-    fn new(handle: ObjectHandle, slot: NonNull<ObjectSlot>) -> Result<Self, ObjectBorrowError> {
-        // SAFETY: see `ObjectRef::new`.
-        let slot_ref = unsafe { slot.as_ref() };
-        let borrow = slot_ref
+    fn new(handle: ObjectHandle, slot: Rc<ObjectSlot>) -> Result<Self, ObjectBorrowError> {
+        let borrow = slot
             .value
             .try_borrow_mut()
             .map_err(|_| ObjectBorrowError::RecursiveUse)?;
+        let borrow = RefMut::map(borrow, |value| {
+            value.downcast_mut::<T>().expect("object type mismatch")
+        });
         // SAFETY: see `ObjectRef::new`.
-        let borrow = unsafe {
-            core::mem::transmute::<RefMut<'_, Box<dyn Any>>, RefMut<'static, Box<dyn Any>>>(borrow)
-        };
+        let borrow = unsafe { core::mem::transmute::<RefMut<'_, T>, RefMut<'static, T>>(borrow) };
         Ok(Self {
             handle,
-            slot,
             borrow: Some(borrow),
+            slot: Some(slot),
             _ty: PhantomData,
         })
     }
@@ -218,24 +217,24 @@ impl<T: 'static> Deref for ObjectRefMut<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        (**self.borrow.as_ref().expect("object borrow missing"))
-            .downcast_ref::<T>()
-            .expect("object type mismatch")
+        self.borrow.as_ref().expect("object borrow missing")
     }
 }
 
 impl<T: 'static> DerefMut for ObjectRefMut<T> {
     fn deref_mut(&mut self) -> &mut T {
-        (**self.borrow.as_mut().expect("object borrow missing"))
-            .downcast_mut::<T>()
-            .expect("object type mismatch")
+        self.borrow.as_mut().expect("object borrow missing")
     }
 }
 
 impl<T: 'static> Drop for ObjectRefMut<T> {
     fn drop(&mut self) {
         self.borrow = None;
-        finish_deferred_object_drop(self.handle, self.slot);
+        if let Some(slot) = self.slot.take()
+            && slot.pending_drop.get()
+        {
+            finish_deferred_object_drop(self.handle, slot);
+        }
     }
 }
 
@@ -260,7 +259,7 @@ pub struct Runtime {
     /// Function-type definitions JS has been told about.
     type_cache: TypeCache,
     /// Exported Rust structs and callbacks stored by handle.
-    objects: BTreeMap<u32, Box<ObjectSlot>>,
+    objects: BTreeMap<u32, Rc<ObjectSlot>>,
     /// Per-operation deferred cleanup frames. Each in-flight operation pushes
     /// one frame; released heap IDs and object handles accumulate into the top
     /// frame and are flushed when the operation completes.
@@ -530,7 +529,7 @@ impl Runtime {
     fn slot_for<T: 'static>(
         &self,
         handle: ObjectHandle,
-    ) -> Result<NonNull<ObjectSlot>, ObjectBorrowError> {
+    ) -> Result<Rc<ObjectSlot>, ObjectBorrowError> {
         let slot = self
             .objects
             .get(&handle.raw())
@@ -541,7 +540,7 @@ impl Runtime {
         if slot.type_id != TypeId::of::<T>() {
             return Err(ObjectBorrowError::TypeMismatch);
         }
-        Ok(NonNull::from(&**slot))
+        Ok(Rc::clone(slot))
     }
 
     pub fn object_ref<T: 'static>(
@@ -563,10 +562,11 @@ impl Runtime {
         handle: ObjectHandle,
     ) -> Result<Box<dyn Any>, ObjectTakeError> {
         let raw = handle.raw();
-        let slot = self
-            .objects
-            .get(&raw)
-            .ok_or(ObjectTakeError::InvalidHandle)?;
+        let slot = Rc::clone(
+            self.objects
+                .get(&raw)
+                .ok_or(ObjectTakeError::InvalidHandle)?,
+        );
         if slot.pending_drop.get() {
             return Err(ObjectTakeError::InvalidHandle);
         }
@@ -576,17 +576,14 @@ impl Runtime {
             .map_err(|_| ObjectTakeError::Borrowed)?;
         drop(value);
         let object = self
-            .objects
-            .remove(&raw)
-            .expect("object slot disappeared after lookup")
-            .into_object();
-        self.object_handles.free(raw);
+            .remove_ready_object_slot(raw, slot)
+            .expect("object slot disappeared after lookup");
         Ok(object)
     }
 
     pub(crate) fn drop_object_handle(&mut self, handle: ObjectHandle) -> Option<Box<dyn Any>> {
         let raw = handle.raw();
-        let slot = self.objects.get(&raw)?;
+        let slot = Rc::clone(self.objects.get(&raw)?);
         if slot.pending_drop.replace(true) {
             return None;
         }
@@ -594,40 +591,41 @@ impl Runtime {
             return None;
         };
         drop(value);
-        let object = self
+        self.remove_ready_object_slot(raw, slot)
+    }
+
+    fn remove_ready_object_slot(&mut self, raw: u32, slot: Rc<ObjectSlot>) -> Option<Box<dyn Any>> {
+        let removed = self
             .objects
             .remove(&raw)
-            .expect("object slot disappeared after lookup")
-            .into_object();
-        self.object_handles.free(raw);
-        Some(object)
+            .expect("object slot disappeared after lookup");
+        debug_assert!(Rc::ptr_eq(&removed, &slot));
+        drop(removed);
+        if self.object_handles.contains(raw) {
+            self.object_handles.free(raw);
+        }
+        Some(
+            Rc::try_unwrap(slot)
+                .unwrap_or_else(|_| panic!("object slot still referenced after borrow release"))
+                .into_object(),
+        )
     }
 
     fn finish_deferred_object_drop(
         &mut self,
         handle: ObjectHandle,
-        slot: NonNull<ObjectSlot>,
+        slot: Rc<ObjectSlot>,
     ) -> Option<Box<dyn Any>> {
         let raw = handle.raw();
         let current = self.objects.get(&raw)?;
-        if !core::ptr::eq((&**current) as *const ObjectSlot, slot.as_ptr())
-            || !current.pending_drop.get()
-        {
+        if !Rc::ptr_eq(current, &slot) || !current.pending_drop.get() {
             return None;
         }
-        let Ok(value) = current.value.try_borrow_mut() else {
+        let Ok(value) = slot.value.try_borrow_mut() else {
             return None;
         };
         drop(value);
-        let object = self
-            .objects
-            .remove(&raw)
-            .expect("object slot disappeared after lookup")
-            .into_object();
-        if self.object_handles.contains(raw) {
-            self.object_handles.free(raw);
-        }
-        Some(object)
+        self.remove_ready_object_slot(raw, slot)
     }
 }
 
@@ -651,7 +649,7 @@ impl Runtime {
 
     pub fn insert_object_box(&mut self, obj: Box<dyn Any>) -> ObjectHandle {
         let handle = self.object_handles.alloc();
-        self.objects.insert(handle, Box::new(ObjectSlot::new(obj)));
+        self.objects.insert(handle, Rc::new(ObjectSlot::new(obj)));
         ObjectHandle::from_raw(handle)
     }
 
@@ -726,12 +724,8 @@ fn try_with_runtime<R>(f: impl FnOnce(&mut Runtime) -> R) -> Option<R> {
         .flatten()
 }
 
-fn finish_deferred_object_drop(handle: ObjectHandle, slot: NonNull<ObjectSlot>) {
-    // SAFETY: the guard that calls this function was created from this slot and
-    // has just dropped its `Ref`. A pending-drop slot remains boxed in the
-    // runtime map until this function can remove it.
-    let slot_ref = unsafe { slot.as_ref() };
-    if !slot_ref.pending_drop.get() {
+fn finish_deferred_object_drop(handle: ObjectHandle, slot: Rc<ObjectSlot>) {
+    if !slot.pending_drop.get() {
         return;
     }
 
@@ -1086,6 +1080,51 @@ mod take_encoder_tests {
         });
 
         let reused = runtime.insert_object_box(Box::new(DropFlag(Rc::new(Cell::new(false)))));
+        assert_eq!(reused.raw(), handle_raw);
+    }
+
+    #[test]
+    fn object_drop_waits_for_all_shared_borrows() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        struct DropFlag(Rc<Cell<u32>>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.set(self.0.get() + 1);
+            }
+        }
+
+        let runtime = test_runtime();
+        let dropped = Rc::new(Cell::new(0));
+        let dropped_for_runtime = dropped.clone();
+
+        let (mut runtime, handle_raw) = in_runtime(runtime, move || {
+            let handle =
+                with_runtime(|rt| rt.insert_object_box(Box::new(DropFlag(dropped_for_runtime))));
+            let borrowed_a = with_runtime(|rt| rt.object_ref::<DropFlag>(handle).unwrap());
+            let borrowed_b = with_runtime(|rt| rt.object_ref::<DropFlag>(handle).unwrap());
+
+            let object = with_runtime(|rt| rt.drop_object_handle(handle));
+            assert!(object.is_none(), "borrowed object drop must be deferred");
+
+            drop(borrowed_a);
+            assert_eq!(
+                dropped.get(),
+                0,
+                "object must remain alive while another shared borrow exists"
+            );
+
+            drop(borrowed_b);
+            assert_eq!(
+                dropped.get(),
+                1,
+                "deferred drop must run after the last shared borrow releases"
+            );
+            handle.raw()
+        });
+
+        let reused = runtime.insert_object_box(Box::new(DropFlag(Rc::new(Cell::new(0)))));
         assert_eq!(reused.raw(), handle_raw);
     }
 }

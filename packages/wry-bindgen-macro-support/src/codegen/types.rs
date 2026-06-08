@@ -242,20 +242,10 @@ pub(super) fn generate_type(
     let (ref_impl_generics, _, ref_where_clause) = ref_generics.split_for_impl();
     let ref_from_binary_decode_impl = quote_spanned! {span=>
         impl #ref_impl_generics #krate::convert::RefFromBinaryDecode for #rust_name #ty_generics #ref_where_clause {
+            type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
             type Anchor = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
             fn ref_decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
                 #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
-            }
-        }
-        // Direct `&Self` export argument: an imported JS-handle value is decoded
-        // owned (a heap-ref read does not consume the JS object) and lent by ref.
-        impl #ref_impl_generics #krate::convert::BorrowArg for #rust_name #ty_generics #ref_where_clause {
-            type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
-            type Anchor = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
-            fn borrow_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
-                #krate::__rt::core::result::Result::Ok(#krate::convert::OwnedArgAnchor::from_value(
-                    <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
-                ))
             }
         }
     };

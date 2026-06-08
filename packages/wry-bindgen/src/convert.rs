@@ -650,6 +650,7 @@ impl<T: JsCast> JsCastAnchor<T> {
 // here would violate the orphan rule. Imported `extern` types get this impl from
 // codegen; `JsValue` is the hand-written base case.
 impl RefFromBinaryDecode for JsValue {
+    type Wire = RefArg<JsValue>;
     type Anchor = JsCastAnchor<JsValue>;
 
     fn ref_decode(_decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
@@ -658,39 +659,19 @@ impl RefFromBinaryDecode for JsValue {
 }
 
 /// Position marker for a `&T` argument's wire type. A by-value `T` advertises its
-/// own type def (an exported struct's `RustValue`, an imported type's `HeapRef`),
-/// but a *borrowed* `T` rides the borrow stack, so it advertises `BorrowedRef`
-/// and is decoded through `RefFromBinaryDecode` (borrow, not consume). Generated
-/// code uses this only to compute the arg's advertised type def; the value itself
-/// is anchored via `T::ref_decode`.
+/// own type def (an exported struct's `RustValue`, an imported type's `HeapRef`).
+/// A borrowed JS-handle value rides the borrow stack as `BorrowedRef`, while an
+/// exported struct borrow rides the wire as `RustBorrow(class_name)` so JS can
+/// route inheritance descendants to their ancestor view.
 pub struct RefArg<T: ?Sized>(core::marker::PhantomData<T>);
 
 impl<T: EncodeTypeDef + ?Sized> EncodeTypeDef for RefArg<T> {
     fn encode_type_def(type_def: &mut crate::__rt::TypeDef) {
-        // An exported struct rides the wire as a plain routed handle (`RustBorrow`,
-        // carrying its class name so JS routes an inheritance descendant passed as
-        // `&Ancestor` to its shared ancestor view). A JS-handle borrow (`&JsValue`,
-        // imported types) keeps its own type def and owned-decode path unchanged.
         match crate::__rt::TypeDef::rust_value_class_name::<T>() {
             Some(class_name) => type_def.rust_borrow(&class_name),
-            None => T::encode_type_def(type_def),
+            None => type_def.borrowed_ref(),
         }
     }
-}
-
-/// Decode a `&T` export argument. An exported struct is *borrowed* — checked out
-/// of the store for the call and re-inserted afterward, so the wrapper is not
-/// invalidated — while a JS-handle type (`JsValue`, imported types) is decoded
-/// owned and held by reference (a heap-ref read does not consume). The macro
-/// routes every shared-reference export argument through this trait.
-pub trait BorrowArg {
-    /// The wire type JS sees for this argument.
-    type Wire: EncodeTypeDef;
-
-    /// The anchor that keeps the decoded `&Self` valid for the call's duration.
-    type Anchor: Deref<Target = Self>;
-
-    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
 }
 
 /// Anchor holding an owned JS-handle value by reference. A heap-ref decode does
@@ -712,38 +693,6 @@ impl<T> Deref for OwnedArgAnchor<T> {
 
     fn deref(&self) -> &T {
         &self.value
-    }
-}
-
-impl BorrowArg for JsValue {
-    type Wire = RefArg<JsValue>;
-    type Anchor = OwnedArgAnchor<JsValue>;
-
-    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        Ok(OwnedArgAnchor {
-            value: JsValue::decode(decoder)?,
-        })
-    }
-}
-
-impl BorrowArg for str {
-    type Wire = alloc::string::String;
-    type Anchor = alloc::string::String;
-
-    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        alloc::string::String::decode(decoder)
-    }
-}
-
-impl<T> BorrowArg for [T]
-where
-    T: BinaryDecode + EncodeTypeDef,
-{
-    type Wire = alloc::vec::Vec<T>;
-    type Anchor = alloc::vec::Vec<T>;
-
-    fn borrow_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        alloc::vec::Vec::<T>::decode(decoder)
     }
 }
 

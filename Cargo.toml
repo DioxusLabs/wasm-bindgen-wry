@@ -10,8 +10,6 @@ members = [
     "packages/wasm-bindgen-macro",
     "packages/wasm-bindgen-test",
     "packages/wasm-bindgen-test-macro",
-    "packages/wasm-bindgen-test-crate-a",
-    "packages/wasm-bindgen-test-crate-b",
     "examples/gloo",
     "examples/dioxus-web",
     "examples/yew",

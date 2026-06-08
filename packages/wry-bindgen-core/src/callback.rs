@@ -2,7 +2,9 @@
 
 use core::marker::PhantomData;
 
-use wry_bindgen_runtime::wire::{BinaryEncode, EncodeTypeDef, EncodedData, ObjectHandle, TypeDef};
+use wry_bindgen_runtime::wire::{
+    BinaryEncode, EncodeTypeDef, EncodedData, ObjectHandle, RefFromBinaryDecode, TypeDef,
+};
 
 #[derive(Clone, Copy)]
 enum CallbackPolicy {
@@ -42,13 +44,13 @@ macro_rules! callback_type_def_body {
     ($encoder:expr; R = $R:ty; $($arg:ty),*) => {{
         $encoder.callback::<fn($($arg),*) -> $R>();
     }};
-    ($encoder:expr; R = $R:ty; borrow_first; $($rest:ty),*) => {{
+    ($encoder:expr; R = $R:ty; borrow_first = $first:ty; $($rest:ty),*) => {{
         let count: u8 = 1 $(+ {
             let _ = PhantomData::<$rest>;
             1
         })*;
         $encoder.callback_with_signature(count, |type_def| {
-            type_def.borrowed_ref();
+            <<$first as RefFromBinaryDecode>::Wire as EncodeTypeDef>::encode_type_def(type_def);
             $(<$rest as EncodeTypeDef>::encode_type_def(type_def);)*
             <$R as EncodeTypeDef>::encode_type_def(type_def);
         });
@@ -74,12 +76,12 @@ macro_rules! impl_borrowed_first_callback_key_type_def {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> EncodeTypeDef for CallbackKey<fn(&$first, $($rest),*) -> R>
         where
-            $first: EncodeTypeDef + 'static,
+            $first: RefFromBinaryDecode + 'static,
             $($rest: EncodeTypeDef + 'static,)*
             R: EncodeTypeDef + 'static,
         {
             fn encode_type_def(encoder: &mut TypeDef) {
-                callback_type_def_body!(encoder; R = R; borrow_first; $($rest),*);
+                callback_type_def_body!(encoder; R = R; borrow_first = $first; $($rest),*);
             }
         }
     };

@@ -23,11 +23,35 @@ pub trait JsRefEncode {
 /// first argument; the impls themselves (JS handles, exported structs) live in
 /// the higher-level crates that define those types.
 pub trait RefFromBinaryDecode {
+    /// The wire type JS sees for this borrowed reference.
+    type Wire: EncodeTypeDef;
+
     /// The anchor type that keeps the decoded reference valid.
     type Anchor: core::ops::Deref<Target = Self>;
 
     /// Decode a reference anchor from binary data.
     fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
+}
+
+impl RefFromBinaryDecode for str {
+    type Wire = String;
+    type Anchor = String;
+
+    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        String::decode(decoder)
+    }
+}
+
+impl<T> RefFromBinaryDecode for [T]
+where
+    T: BinaryDecode + EncodeTypeDef,
+{
+    type Wire = Vec<T>;
+    type Anchor = Vec<T>;
+
+    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
+        Vec::<T>::decode(decoder)
+    }
 }
 
 pub(crate) const TYPE_CACHED: u8 = 0xFF;
