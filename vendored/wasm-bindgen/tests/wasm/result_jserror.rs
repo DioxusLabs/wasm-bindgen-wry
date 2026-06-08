@@ -1,5 +1,5 @@
-use wasm_bindgen::JsError;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsError;
 use wasm_bindgen_test::*;
 
 use std::fmt;

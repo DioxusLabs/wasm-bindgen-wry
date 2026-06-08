@@ -2,29 +2,30 @@
 
 set -euo pipefail
 
-cargo_cmd=(cargo)
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root" || exit 2
+
+rustfmt_cmd=(rustfmt)
 if [ -n "${CARGO_TOOLCHAIN:-}" ]; then
-  cargo_cmd=(cargo "+${CARGO_TOOLCHAIN}")
+  rustfmt_cmd=(rustfmt "+${CARGO_TOOLCHAIN}")
 fi
 
-"${cargo_cmd[@]}" fmt \
-  -p wry-launch \
-  -p wry-bindgen-core \
-  -p wry-bindgen \
-  -p wry-bindgen-runtime \
-  -p wry-bindgen-macro \
-  -p wry-bindgen-macro-support \
-  -p wasm-bindgen \
-  -p wasm-bindgen-macro \
-  -p wasm-bindgen-test \
-  -p wasm-bindgen-test-macro \
-  -p wasm-bindgen-test-crate-a \
-  -p wasm-bindgen-test-crate-b \
-  -p gloo \
-  -p dioxus-web \
-  -p yew \
-  -p leptos-todomvc \
-  -p piet \
-  -p tiptap-example \
-  -p openstreetmap \
-  "$@"
+if [ "${1:-}" = "--" ]; then
+  shift
+fi
+
+files=()
+while IFS= read -r file; do
+  files+=("$file")
+done < <(
+  git ls-files -- \
+    'packages/**/*.rs' \
+    'examples/**/*.rs' \
+    ':(exclude)packages/wry-launch/tests/upstream_tests/main.rs'
+)
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+"${rustfmt_cmd[@]}" --edition 2024 --style-edition 2024 "$@" "${files[@]}"
