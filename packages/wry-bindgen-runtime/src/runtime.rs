@@ -409,6 +409,12 @@ fn handle_rust_callback(data: &mut DecodedData) {
             let export_name: alloc::string::String =
                 crate::encode::BinaryDecode::decode(data).expect("Failed to decode export name");
 
+            // Direct exports decode borrowed JS refs from the active JS borrow
+            // frame, just like callbacks. Keep the Rust-side borrow cursor
+            // framed for the whole export call so nested JS calls can still use
+            // those borrowed refs.
+            let _frame = BorrowFrameGuard::new();
+
             // A panic in the exported function is caught and rethrown as a JS
             // exception (like a bad-argument decode failure), so a panicking
             // export propagates to the JS caller instead of aborting.

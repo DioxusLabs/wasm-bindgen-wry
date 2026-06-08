@@ -478,7 +478,7 @@ impl EncodeTypeDef for &str {
 
 impl<T: JsRefEncode + ?Sized> EncodeTypeDef for &T {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.heap_ref();
+        type_def.borrowed_ref();
     }
 }
 

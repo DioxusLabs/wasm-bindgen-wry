@@ -222,10 +222,11 @@ mod async_vecs;
 #[path = "../../../../vendored/wasm-bindgen/tests/wasm/closures.rs"]
 mod closures;
 // `simple.rs`: the number/string/option/instanceof/typeof round-trips and the
-// `externref_heap_live_count` accounting all run. Raw pointers and `NonNull`
-// ride the boundary as their native-word address (encoded like `usize`), so
-// every export compiles. Four sub-cases are skipped in `simple.js` (not the
-// whole file), each a wasm/nodejs intrinsic with no native analogue:
+// `externref_heap_live_count` accounting all run. The raw pointer and `NonNull`
+// binding signatures are cfg-gated to wasm32 in the vendored upstream test file:
+// wry does not expose raw address wire types on the native target. Four sub-cases
+// are skipped in `simple.js` (not the whole file), each a wasm/nodejs intrinsic
+// with no native analogue:
 // `test_wrong_types` (gated on `require('process').env`), `test_raw_pointers`
 // and `test_non_null` (inspect `__wasm.memory.buffer`, wasm linear memory), and
 // `test_other_exports_still_available` (reaches the raw `__wasm` instance

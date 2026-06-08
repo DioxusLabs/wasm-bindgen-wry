@@ -13,6 +13,7 @@ bytemuck = "1.14"
 http = "1.4.0"
 inventory = "0.3.21"
 once_cell = { version = "1.21.3", features = ["critical-section"] }
+ouroboros = { version = "0.18.5", default-features = false }
 
 [build-dependencies]
 lazy-js-bundle = "0.7.2"

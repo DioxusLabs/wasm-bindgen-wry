@@ -2,6 +2,7 @@
 
 use alloc::rc::Rc;
 use core::cell::{Ref, RefMut};
+use ouroboros::self_referencing;
 
 use wry_bindgen_core::{ObjectBorrowError, ObjectRef, ObjectRefMut, ObjectTakeError, with_runtime};
 
@@ -10,6 +11,27 @@ use crate::Parent;
 pub use wry_bindgen_core::ObjectHandle;
 
 const RECURSIVE_USE: &str = "recursive use of an object";
+
+type ParentBorrow<'a, T> = Ref<'a, T>;
+type ParentBorrowMut<'a, T> = RefMut<'a, T>;
+
+#[self_referencing(no_doc)]
+struct ParentRefBorrowCell<T: 'static> {
+    cell: Rc<core::cell::RefCell<T>>,
+
+    #[borrows(cell)]
+    #[covariant]
+    borrow: ParentBorrow<'this, T>,
+}
+
+#[self_referencing(no_doc)]
+struct ParentMutBorrowCell<T: 'static> {
+    cell: Rc<core::cell::RefCell<T>>,
+
+    #[borrows(cell)]
+    #[not_covariant]
+    borrow: ParentBorrowMut<'this, T>,
+}
 
 /// Remove and drop a stored object by handle.
 pub fn drop_object(handle: ObjectHandle) {
@@ -112,8 +134,7 @@ impl<T: 'static> core::ops::DerefMut for CheckoutGuard<T> {
 }
 
 struct ParentRefBorrow<T: 'static> {
-    borrow: Ref<'static, T>,
-    cell: Rc<core::cell::RefCell<T>>,
+    inner: ParentRefBorrowCell<T>,
 }
 
 impl<T: 'static> ParentRefBorrow<T> {
@@ -122,13 +143,13 @@ impl<T: 'static> ParentRefBorrow<T> {
             .unwrap_or_else(|error| throw_borrow_error(error));
         let cell = parent.share_cell();
         drop(parent);
-        let borrow = cell
-            .try_borrow()
-            .unwrap_or_else(|_| crate::throw_str(RECURSIVE_USE));
-        // SAFETY: `cell` is owned by this guard and declared after `borrow`, so
-        // it is dropped after the `Ref`.
-        let borrow = unsafe { core::mem::transmute::<Ref<'_, T>, Ref<'static, T>>(borrow) };
-        Self { borrow, cell }
+        let inner = ParentRefBorrowCellTryBuilder {
+            cell,
+            borrow_builder: |cell| cell.try_borrow().map_err(|_| ()),
+        }
+        .try_build()
+        .unwrap_or_else(|_| crate::throw_str(RECURSIVE_USE));
+        Self { inner }
     }
 }
 
@@ -136,19 +157,12 @@ impl<T: 'static> core::ops::Deref for ParentRefBorrow<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        &self.borrow
-    }
-}
-
-impl<T: 'static> Drop for ParentRefBorrow<T> {
-    fn drop(&mut self) {
-        let _ = &self.cell;
+        self.inner.with_borrow(|borrow| &**borrow)
     }
 }
 
 struct ParentMutBorrow<T: 'static> {
-    borrow: RefMut<'static, T>,
-    cell: Rc<core::cell::RefCell<T>>,
+    inner: ParentMutBorrowCell<T>,
 }
 
 impl<T: 'static> ParentMutBorrow<T> {
@@ -157,12 +171,13 @@ impl<T: 'static> ParentMutBorrow<T> {
             .unwrap_or_else(|error| throw_borrow_error(error));
         let cell = parent.share_cell();
         drop(parent);
-        let borrow = cell
-            .try_borrow_mut()
-            .unwrap_or_else(|_| crate::throw_str(RECURSIVE_USE));
-        // SAFETY: see `ParentRefBorrow::open`.
-        let borrow = unsafe { core::mem::transmute::<RefMut<'_, T>, RefMut<'static, T>>(borrow) };
-        Self { borrow, cell }
+        let inner = ParentMutBorrowCellTryBuilder {
+            cell,
+            borrow_builder: |cell| cell.try_borrow_mut().map_err(|_| ()),
+        }
+        .try_build()
+        .unwrap_or_else(|_| crate::throw_str(RECURSIVE_USE));
+        Self { inner }
     }
 }
 
@@ -170,19 +185,13 @@ impl<T: 'static> core::ops::Deref for ParentMutBorrow<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        &self.borrow
+        self.inner.with_borrow(|borrow| &**borrow)
     }
 }
 
 impl<T: 'static> core::ops::DerefMut for ParentMutBorrow<T> {
     fn deref_mut(&mut self) -> &mut T {
-        &mut self.borrow
-    }
-}
-
-impl<T: 'static> Drop for ParentMutBorrow<T> {
-    fn drop(&mut self) {
-        let _ = &self.cell;
+        self.inner.with_borrow_mut(|borrow| &mut **borrow)
     }
 }
 

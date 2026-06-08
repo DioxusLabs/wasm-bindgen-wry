@@ -8,8 +8,8 @@ use alloc::rc::Rc;
 use alloc::vec::Vec;
 use core::any::{Any, TypeId};
 use core::cell::{Cell, Ref, RefCell, RefMut};
-use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
+use ouroboros::self_referencing;
 use std::boxed::Box;
 use std::thread_local;
 
@@ -73,6 +73,9 @@ pub(crate) struct OperationFreeFrame {
 
 const RECURSIVE_USE: &str = "recursive use of an object";
 
+type ObjectBorrow<'a, T> = Ref<'a, T>;
+type ObjectBorrowMut<'a, T> = RefMut<'a, T>;
+
 struct ObjectSlot {
     type_id: TypeId,
     pending_drop: Cell<bool>,
@@ -96,6 +99,24 @@ impl ObjectSlot {
     fn into_object(self) -> Box<dyn Any> {
         self.value.into_inner()
     }
+}
+
+#[self_referencing(no_doc)]
+struct ObjectRefCell<T: 'static> {
+    slot: Rc<ObjectSlot>,
+
+    #[borrows(slot)]
+    #[covariant]
+    borrow: ObjectBorrow<'this, T>,
+}
+
+#[self_referencing(no_doc)]
+struct ObjectRefMutCell<T: 'static> {
+    slot: Rc<ObjectSlot>,
+
+    #[borrows(slot)]
+    #[not_covariant]
+    borrow: ObjectBorrowMut<'this, T>,
 }
 
 /// Why an object borrow failed.
@@ -139,29 +160,28 @@ impl ObjectTakeError {
 /// Shared borrow of a stored Rust object.
 pub struct ObjectRef<T: 'static> {
     handle: ObjectHandle,
-    borrow: Option<Ref<'static, T>>,
-    slot: Option<Rc<ObjectSlot>>,
-    _ty: PhantomData<fn() -> T>,
+    inner: Option<ObjectRefCell<T>>,
 }
 
 impl<T: 'static> ObjectRef<T> {
     fn new(handle: ObjectHandle, slot: Rc<ObjectSlot>) -> Result<Self, ObjectBorrowError> {
-        let borrow = slot
-            .value
-            .try_borrow()
-            .map_err(|_| ObjectBorrowError::RecursiveUse)?;
-        let borrow = Ref::map(borrow, |value| {
-            value.downcast_ref::<T>().expect("object type mismatch")
-        });
-        // SAFETY: `slot` is owned by this guard and declared after `borrow`, so
-        // it is dropped after the `Ref`. Pending-drop slots also remain in the
-        // runtime map until the final guard releases its `Ref`.
-        let borrow = unsafe { core::mem::transmute::<Ref<'_, T>, Ref<'static, T>>(borrow) };
         Ok(Self {
             handle,
-            borrow: Some(borrow),
-            slot: Some(slot),
-            _ty: PhantomData,
+            inner: Some(
+                ObjectRefCellTryBuilder {
+                    slot,
+                    borrow_builder: |slot| {
+                        let borrow = slot
+                            .value
+                            .try_borrow()
+                            .map_err(|_| ObjectBorrowError::RecursiveUse)?;
+                        Ok(Ref::map(borrow, |value| {
+                            value.downcast_ref::<T>().expect("object type mismatch")
+                        }))
+                    },
+                }
+                .try_build()?,
+            ),
         })
     }
 }
@@ -170,17 +190,20 @@ impl<T: 'static> Deref for ObjectRef<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        self.borrow.as_ref().expect("object borrow missing")
+        self.inner
+            .as_ref()
+            .expect("object borrow missing")
+            .with_borrow(|borrow| &**borrow)
     }
 }
 
 impl<T: 'static> Drop for ObjectRef<T> {
     fn drop(&mut self) {
-        self.borrow = None;
-        if let Some(slot) = self.slot.take()
-            && slot.pending_drop.get()
-        {
-            finish_deferred_object_drop(self.handle, slot);
+        if let Some(inner) = self.inner.take() {
+            let slot = inner.into_heads().slot;
+            if slot.pending_drop.get() {
+                finish_deferred_object_drop(self.handle, slot);
+            }
         }
     }
 }
@@ -188,27 +211,28 @@ impl<T: 'static> Drop for ObjectRef<T> {
 /// Mutable borrow of a stored Rust object.
 pub struct ObjectRefMut<T: 'static> {
     handle: ObjectHandle,
-    borrow: Option<RefMut<'static, T>>,
-    slot: Option<Rc<ObjectSlot>>,
-    _ty: PhantomData<fn() -> T>,
+    inner: Option<ObjectRefMutCell<T>>,
 }
 
 impl<T: 'static> ObjectRefMut<T> {
     fn new(handle: ObjectHandle, slot: Rc<ObjectSlot>) -> Result<Self, ObjectBorrowError> {
-        let borrow = slot
-            .value
-            .try_borrow_mut()
-            .map_err(|_| ObjectBorrowError::RecursiveUse)?;
-        let borrow = RefMut::map(borrow, |value| {
-            value.downcast_mut::<T>().expect("object type mismatch")
-        });
-        // SAFETY: see `ObjectRef::new`.
-        let borrow = unsafe { core::mem::transmute::<RefMut<'_, T>, RefMut<'static, T>>(borrow) };
         Ok(Self {
             handle,
-            borrow: Some(borrow),
-            slot: Some(slot),
-            _ty: PhantomData,
+            inner: Some(
+                ObjectRefMutCellTryBuilder {
+                    slot,
+                    borrow_builder: |slot| {
+                        let borrow = slot
+                            .value
+                            .try_borrow_mut()
+                            .map_err(|_| ObjectBorrowError::RecursiveUse)?;
+                        Ok(RefMut::map(borrow, |value| {
+                            value.downcast_mut::<T>().expect("object type mismatch")
+                        }))
+                    },
+                }
+                .try_build()?,
+            ),
         })
     }
 }
@@ -217,27 +241,32 @@ impl<T: 'static> Deref for ObjectRefMut<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        self.borrow.as_ref().expect("object borrow missing")
+        self.inner
+            .as_ref()
+            .expect("object borrow missing")
+            .with_borrow(|borrow| &**borrow)
     }
 }
 
 impl<T: 'static> DerefMut for ObjectRefMut<T> {
     fn deref_mut(&mut self) -> &mut T {
-        self.borrow.as_mut().expect("object borrow missing")
+        self.inner
+            .as_mut()
+            .expect("object borrow missing")
+            .with_borrow_mut(|borrow| &mut **borrow)
     }
 }
 
 impl<T: 'static> Drop for ObjectRefMut<T> {
     fn drop(&mut self) {
-        self.borrow = None;
-        if let Some(slot) = self.slot.take()
-            && slot.pending_drop.get()
-        {
-            finish_deferred_object_drop(self.handle, slot);
+        if let Some(inner) = self.inner.take() {
+            let slot = inner.into_heads().slot;
+            if slot.pending_drop.get() {
+                finish_deferred_object_drop(self.handle, slot);
+            }
         }
     }
 }
-
 /// State for batching operations and object storage.
 /// Every evaluation is a batch - it may just have one operation.
 ///
