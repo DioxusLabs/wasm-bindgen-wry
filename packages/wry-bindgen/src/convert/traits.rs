@@ -1,6 +1,8 @@
-use crate::__rt::{
+use crate::encode::{
     Anchored, BinaryDecode, BinaryEncode, BorrowScope, CallScoped, EncodeTypeDef, JsRef,
+    ThrowingResult,
 };
+use crate::ipc::EncodedData;
 use crate::{JsCast, JsValue};
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
@@ -139,7 +141,7 @@ pub trait ReturnAbi<S: BorrowScope> {
 /// and dispatch is by type (so it sees through type aliases).
 pub trait ReturnSync: ReturnAbi<CallScoped> {
     /// Encode `self` as the function's return payload.
-    fn return_abi(self, encoder: &mut crate::__rt::EncodedData);
+    fn return_abi(self, encoder: &mut EncodedData);
 }
 
 impl<T: IntoWasmAbi> ReturnAbi<CallScoped> for T {
@@ -147,7 +149,7 @@ impl<T: IntoWasmAbi> ReturnAbi<CallScoped> for T {
 }
 impl<T: IntoWasmAbi> ReturnSync for T {
     #[inline]
-    fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
+    fn return_abi(self, encoder: &mut EncodedData) {
         self.encode(encoder);
     }
 }
@@ -157,7 +159,7 @@ where
     T: BinaryEncode + EncodeTypeDef,
     E: Into<JsValue>,
 {
-    type Wire = crate::__rt::ThrowingResult<T, JsValue>;
+    type Wire = ThrowingResult<T, JsValue>;
 }
 impl<T, E> ReturnSync for Result<T, E>
 where
@@ -165,8 +167,8 @@ where
     E: Into<JsValue>,
 {
     #[inline]
-    fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
-        crate::__rt::ThrowingResult(self.map_err(Into::into)).encode(encoder);
+    fn return_abi(self, encoder: &mut EncodedData) {
+        ThrowingResult(self.map_err(Into::into)).encode(encoder);
     }
 }
 
@@ -178,7 +180,7 @@ impl ReturnAbi<CallScoped> for crate::__rt::object_store::ObjectHandle {
 }
 impl ReturnSync for crate::__rt::object_store::ObjectHandle {
     #[inline]
-    fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
+    fn return_abi(self, encoder: &mut EncodedData) {
         self.encode(encoder);
     }
 }
