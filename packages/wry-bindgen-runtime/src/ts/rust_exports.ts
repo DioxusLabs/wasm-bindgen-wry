@@ -15,6 +15,11 @@ function typeFromBytes(bytes: number[]): TypeClass {
 }
 
 const U32_TYPE_DEF = [4];
+const UNDEFINED_TYPE_DEF = [0];
+
+function isUndefinedTypeDef(typeDef: number[]): boolean {
+  return typeDef.length === 1 && typeDef[0] === 0;
+}
 
 /**
  * FinalizationRegistry to notify Rust when exported object wrappers are GC'd.
@@ -26,7 +31,7 @@ const exportRegistry = new FinalizationRegistry<{ drops: [string, number][] }>((
   // object when the wrapper is collected.
   for (const [className, handle] of info.drops) {
     if (handle !== 0) {
-      callExport(`${className}::__drop`, [U32_TYPE_DEF], null, [handle]);
+      callExport(`${className}::__drop`, [U32_TYPE_DEF], UNDEFINED_TYPE_DEF, [handle]);
     }
   }
 });
@@ -55,7 +60,7 @@ function copyBackMutArrays(
 function callExport(
   exportName: string,
   argTypeDefs: number[][],
-  returnTypeDef: number[] | null,
+  returnTypeDef: number[],
   args: any[],
 ): any {
   if (argTypeDefs.length !== args.length) {
@@ -90,18 +95,11 @@ function callExport(
       }
     }
 
-    if (returnTypeDef === null) {
-      if (!decoder) {
-        // A `&mut [T]` argument still needs its write-back payload, so a missing
-        // response is only valid when there are no mutable-array arguments.
-        if (argTypes.some((t) => t instanceof MutArrayType)) {
-          throw new Error(`Missing response data for export ${exportName}`);
-        }
-        return undefined;
-      }
-      copyBackMutArrays(decoder, argTypes, args);
-      if (!decoder.isEmpty()) {
-        throw new Error(`Unprocessed data remaining after export ${exportName}`);
+    if (!decoder && isUndefinedTypeDef(returnTypeDef)) {
+      // A `&mut [T]` argument still needs its write-back payload, so a missing
+      // response is only valid when there are no mutable-array arguments.
+      if (argTypes.some((t) => t instanceof MutArrayType)) {
+        throw new Error(`Missing response data for export ${exportName}`);
       }
       return undefined;
     }
@@ -161,7 +159,7 @@ function createWrapper(handle: number, className: string): object {
           const handle = target.__handle;
           target.__handle = 0;
           if (handle !== 0) {
-            callExport(`${className}::__drop`, [U32_TYPE_DEF], null, [handle]);
+            callExport(`${className}::__drop`, [U32_TYPE_DEF], UNDEFINED_TYPE_DEF, [handle]);
           }
         };
       }

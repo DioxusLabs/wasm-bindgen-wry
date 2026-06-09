@@ -1,3 +1,5 @@
+use std::boxed::Box;
+
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -266,9 +268,8 @@ pub struct JsClassMemberSpec {
     class_name: &'static str,
     member_name: &'static str,
     export_name: &'static str,
-    arg_count: usize,
     arg_types: fn() -> Vec<TypeDef>,
-    return_type: fn() -> Option<TypeDef>,
+    return_type: fn() -> TypeDef,
     kind: JsClassMemberKind,
     /// Whether the member takes `self` by value, consuming the receiver. The
     /// generated wrapper zeroes `this.__handle` after the call so a later use
@@ -281,9 +282,8 @@ impl JsClassMemberSpec {
         class_name: &'static str,
         member_name: &'static str,
         export_name: &'static str,
-        arg_count: usize,
         arg_types: fn() -> Vec<TypeDef>,
-        return_type: fn() -> Option<TypeDef>,
+        return_type: fn() -> TypeDef,
         kind: JsClassMemberKind,
         consumes_self: bool,
     ) -> Self {
@@ -291,7 +291,6 @@ impl JsClassMemberSpec {
             class_name,
             member_name,
             export_name,
-            arg_count,
             arg_types,
             return_type,
             kind,
@@ -304,9 +303,8 @@ pub(super) type JsClassMemberParts = (
     &'static str,
     &'static str,
     &'static str,
-    usize,
     Vec<TypeDef>,
-    Option<TypeDef>,
+    TypeDef,
     JsClassMemberKind,
     bool,
 );
@@ -317,7 +315,6 @@ impl JsClassMemberSpec {
             self.class_name,
             self.member_name,
             self.export_name,
-            self.arg_count,
             (self.arg_types)(),
             (self.return_type)(),
             self.kind,
@@ -328,14 +325,18 @@ impl JsClassMemberSpec {
 
 inventory::collect!(JsClassMemberSpec);
 
-#[derive(Clone, Copy)]
-pub struct JsFreeExportSpec {
+#[derive(Clone)]
+pub struct JsFunctionArg {
+    pub name: &'static str,
+    pub ty: TypeDef,
+}
+
+#[derive(Clone)]
+pub struct JsFunctionSignature {
     name: &'static str,
     namespace: &'static [&'static str],
-    arg_count: usize,
-    arg_names: &'static [&'static str],
-    arg_types: fn() -> Vec<TypeDef>,
-    return_type: fn() -> Option<TypeDef>,
+    args: Vec<JsFunctionArg>,
+    return_type: TypeDef,
     this: bool,
     public: bool,
     start: bool,
@@ -345,15 +346,13 @@ pub struct JsFreeExportSpec {
     variadic: bool,
 }
 
-impl JsFreeExportSpec {
+impl JsFunctionSignature {
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
         name: &'static str,
         namespace: &'static [&'static str],
-        arg_count: usize,
-        arg_names: &'static [&'static str],
-        arg_types: fn() -> Vec<TypeDef>,
-        return_type: fn() -> Option<TypeDef>,
+        args: Vec<JsFunctionArg>,
+        return_type: TypeDef,
         this: bool,
         public: bool,
         start: bool,
@@ -362,9 +361,7 @@ impl JsFreeExportSpec {
         Self {
             name,
             namespace,
-            arg_count,
-            arg_names,
-            arg_types,
+            args,
             return_type,
             this,
             public,
@@ -372,61 +369,81 @@ impl JsFreeExportSpec {
             variadic,
         }
     }
-}
 
-pub(super) type JsFreeExportParts = (
-    &'static str,
-    &'static [&'static str],
-    usize,
-    &'static [&'static str],
-    Vec<TypeDef>,
-    Option<TypeDef>,
-    bool,
-    bool,
-    bool,
-    bool,
-);
+    pub(crate) fn name(&self) -> &'static str {
+        self.name
+    }
 
-impl JsFreeExportSpec {
-    pub(crate) fn parts(&self) -> JsFreeExportParts {
-        (
-            self.name,
-            self.namespace,
-            self.arg_count,
-            self.arg_names,
-            (self.arg_types)(),
-            (self.return_type)(),
-            self.this,
-            self.public,
-            self.start,
-            self.variadic,
-        )
+    pub(crate) fn namespace(&self) -> &'static [&'static str] {
+        self.namespace
+    }
+
+    pub(crate) fn args(&self) -> &[JsFunctionArg] {
+        &self.args
+    }
+
+    pub(crate) fn return_type(&self) -> &TypeDef {
+        &self.return_type
+    }
+
+    pub(crate) fn this(&self) -> bool {
+        self.this
+    }
+
+    pub(crate) fn public(&self) -> bool {
+        self.public
+    }
+
+    pub(crate) fn start(&self) -> bool {
+        self.start
+    }
+
+    pub(crate) fn variadic(&self) -> bool {
+        self.variadic
     }
 }
 
-inventory::collect!(JsFreeExportSpec);
-
-#[derive(Clone, Copy)]
 pub struct JsExportSpec {
-    name: &'static str,
-    handler: fn(&mut super::DecodedData) -> Result<super::EncodedData, String>,
+    signature: JsFunctionSignature,
+    handler: Box<dyn Fn(&mut super::DecodedData) -> Result<super::EncodedData, String>>,
 }
 
 impl JsExportSpec {
-    pub const fn new(
-        name: &'static str,
-        handler: fn(&mut super::DecodedData) -> Result<super::EncodedData, String>,
+    pub fn new(
+        signature: JsFunctionSignature,
+        handler: impl Fn(&mut super::DecodedData) -> Result<super::EncodedData, String> + 'static,
     ) -> Self {
-        Self { name, handler }
+        Self {
+            signature,
+            handler: Box::new(handler),
+        }
     }
 
-    pub(crate) fn call_if_name(
+    pub(crate) fn call(
         &self,
-        name: &str,
         data: &mut super::DecodedData<'_>,
-    ) -> Option<Result<super::EncodedData, String>> {
-        (self.name == name).then(|| (self.handler)(data))
+    ) -> Result<super::EncodedData, String> {
+        (self.handler)(data)
+    }
+
+    pub fn signature(&self) -> &JsFunctionSignature {
+        &self.signature
     }
 }
 
-inventory::collect!(JsExportSpec);
+#[derive(Clone, Copy)]
+pub struct JsExportSpecRegistration {
+    register: fn() -> JsExportSpec,
+}
+
+impl JsExportSpecRegistration {
+    pub const fn new(register: fn() -> JsExportSpec) -> Self {
+        Self { register }
+    }
+
+    pub(crate) fn spec(&self) -> JsExportSpec {
+        (self.register)()
+    }
+}
+
+inventory::collect!(JsExportSpecRegistration);

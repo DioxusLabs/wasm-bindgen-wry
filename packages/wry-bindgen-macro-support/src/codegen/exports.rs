@@ -8,8 +8,7 @@ use wasm_bindgen_macro_support::ast::{
 
 use super::common::{
     ClassMemberSpec, ClassSpec, generate_js_class_member_spec, generate_js_class_spec,
-    generate_js_export_spec, generate_js_free_export_spec, generate_member_type_helpers,
-    namespace_tokens,
+    generate_js_export_registration, namespace_tokens,
 };
 
 fn path_last_segment(path: &syn::Path) -> Option<String> {
@@ -63,106 +62,371 @@ fn unsafe_call(call: TokenStream, span: proc_macro2::Span) -> TokenStream {
     }
 }
 
-/// The wire return type a sync export advertises to JS for `ret_ty`, projected
-/// through `ReturnWasmAbi`. For a `Result<T, E>` (however it is spelled — the
-/// projection sees through type aliases) this resolves to `ThrowingResult<T,
-/// JsValue>` so JS throws the `Err`; for any other type it resolves to the type
-/// itself.
-fn sync_return_wire_type(
-    ret_ty: &syn::Type,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    quote_spanned! {span=>
-        <#ret_ty as #krate::convert::ReturnWasmAbi>::Wire
-    }
-}
-
-/// The body tail that evaluates `call_expr`, encodes it through `ReturnWasmAbi`,
-/// and yields `Ok(encoder)`. The `ReturnWasmAbi` impl for `Result` throws its
-/// `Err` in JS; every other return value is encoded directly. Any `write_backs`
-/// (one per `&mut [T]` argument) append their mutated buffers after the return
-/// value, in argument order, for JS to copy back into the caller's arrays.
-fn sync_encode_return_body(
-    call_expr: TokenStream,
-    ret_ty: &syn::Type,
-    write_backs: &[TokenStream],
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    quote_spanned! {span=>
-        let mut encoder = #krate::__rt::EncodedData::default();
-        let __wry_ret = #call_expr;
-        <#ret_ty as #krate::convert::ReturnWasmAbi>::return_abi(__wry_ret, &mut encoder);
-        #(#write_backs)*
-        Ok(encoder)
-    }
-}
-
-/// The `Promise<…>` wire type an async export advertises, projected through
-/// `IntoJsResult`. For a `Result<T, E>` return (seen through aliases) the
-/// resolution is `T`'s; for any other type it is that type's.
-fn async_promise_ty(
+/// The wire return type an export advertises to JS for `ret`, projected through
+/// `ReturnAbi<S>` — the return-side analog of `<#ty as ArgAbi<S>>::Wire`. A sync
+/// (`CallScoped`) export advertises `<ret as ReturnAbi<CallScoped>>::Wire`
+/// (`ThrowingResult<T, JsValue>` for a `Result`, else the type itself); an async
+/// (`Anchored`) export advertises `Promise<<ret as ReturnAbi<Anchored>>::Wire>`
+/// (the resolution, wrapped in the configured `js_sys::Promise`). A missing `ret`
+/// is `()`. Dispatch is by type, so it sees through aliases.
+fn return_wire_type(
     ret: Option<&syn::Type>,
+    is_async: bool,
     krate: &TokenStream,
     js_sys: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
     let ret_ty = ret.cloned().unwrap_or_else(|| syn::parse_quote!(()));
-    quote_spanned! {span=>
-        #js_sys::Promise<<#ret_ty as #krate::convert::IntoJsResult>::Resolution>
+    if is_async {
+        quote_spanned! {span=>
+            #js_sys::Promise<<#ret_ty as #krate::convert::ReturnAbi<#krate::convert::Anchored>>::Wire>
+        }
+    } else {
+        quote_spanned! {span=>
+            <#ret_ty as #krate::convert::ReturnAbi<#krate::convert::CallScoped>>::Wire
+        }
     }
 }
 
-/// The async body that awaits `call_expr` and lowers its output to
-/// `Result<JsValue, JsValue>` through `IntoJsResult` (a `Result` `Err` becomes a
-/// rejected promise). Dispatch is by type, so it sees through type aliases; the
-/// no-return case is the `()` output handled by the same trait.
-fn async_result_body(
-    call_expr: TokenStream,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    quote_spanned! {span=>
-        #krate::convert::IntoJsResult::into_js_result(#call_expr.await)
-    }
-}
-
-fn encode_async_promise_body(
-    promise_ty: TokenStream,
-    future_body: TokenStream,
+fn async_promise_resolver(
+    ret: Option<&syn::Type>,
     krate: &TokenStream,
     js_sys: &TokenStream,
     futures: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
+    let promise_ty = return_wire_type(ret, true, krate, js_sys, span);
     quote_spanned! {span=>
-        let __wry_future = async move {
-            #future_body
-        };
-        let __wry_promise = <#js_sys::Promise as #krate::JsCast>::unchecked_into::<#promise_ty>(
-            #futures::future_to_promise(__wry_future)
-        );
-        let mut encoder = #krate::__rt::EncodedData::default();
-        <&#promise_ty as #krate::__rt::BinaryEncode>::encode(&__wry_promise, &mut encoder);
-        #krate::__rt::core::mem::forget(__wry_promise);
-        Ok(encoder)
+        |__wry_future| -> #promise_ty {
+            <#js_sys::Promise as #krate::JsCast>::unchecked_into::<#promise_ty>(
+                #futures::future_to_promise(__wry_future)
+            )
+        }
     }
 }
 
+fn with_receiver_handle_arg(
+    decoded: &DecodedArgs,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> DecodedArgs {
+    let mut arg_tys = Vec::with_capacity(decoded.arg_tys.len() + 1);
+    let mut arg_idents = Vec::with_capacity(decoded.arg_idents.len() + 1);
+
+    arg_tys.push(syn::parse_quote_spanned! {span=>
+        #krate::__rt::object_store::ObjectHandle
+    });
+    arg_tys.extend(decoded.arg_tys.iter().cloned());
+    arg_idents.push(format_ident!("handle"));
+    arg_idents.extend(decoded.arg_idents.iter().cloned());
+
+    DecodedArgs {
+        arg_tys,
+        arg_idents,
+        arg_names: decoded.arg_names.clone(),
+        scope: decoded.scope.clone(),
+    }
+}
+
+fn async_receiver_callable_with_handle(
+    self_ty: MethodSelf,
+    class: &Ident,
+    rust_name: &Ident,
+    decoded: &DecodedArgs,
+    call_args: &[Ident],
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let store = quote_spanned! {span=> #krate::__rt::object_store };
+    let params = annotated_params(decoded, krate, span);
+    let handle = &decoded.arg_idents[0];
+    match self_ty {
+        MethodSelf::RefShared => quote_spanned! {span=>
+            async move |#params| {
+                let __wry_obj = #store::checkout_object_ref::<#class>(#handle);
+                __wry_obj.#rust_name(#(#call_args),*).await
+            }
+        },
+        MethodSelf::RefMutable => quote_spanned! {span=>
+            async move |#params| {
+                let mut __wry_obj = #store::checkout_object_mut::<#class>(#handle);
+                __wry_obj.#rust_name(#(#call_args),*).await
+            }
+        },
+        MethodSelf::ByValue => quote_spanned! {span=>
+            async move |#params| {
+                let __wry_obj = #store::remove_object::<#class>(#handle);
+                __wry_obj.#rust_name(#(#call_args),*).await
+            }
+        },
+    }
+}
+
+fn receiver_callable_with_handle(
+    self_ty: MethodSelf,
+    class: &Ident,
+    rust_name: &Ident,
+    decoded: &DecodedArgs,
+    call_args: &[Ident],
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let store = quote_spanned! {span=> #krate::__rt::object_store };
+    let params = annotated_params(decoded, krate, span);
+    let handle = &decoded.arg_idents[0];
+    match self_ty {
+        MethodSelf::RefShared => quote_spanned! {span=>
+            move |#params| {
+                #store::with_object::<#class, _>(#handle, |obj| obj.#rust_name(#(#call_args),*))
+            }
+        },
+        MethodSelf::RefMutable => quote_spanned! {span=>
+            move |#params| {
+                #store::with_object_mut::<#class, _>(#handle, |obj| obj.#rust_name(#(#call_args),*))
+            }
+        },
+        MethodSelf::ByValue => quote_spanned! {span=>
+            move |#params| {
+                let obj = #store::remove_object::<#class>(#handle);
+                obj.#rust_name(#(#call_args),*)
+            }
+        },
+    }
+}
+
+/// A receiver/wrapper closure's parameter list with each argument explicitly
+/// typed as `<Ty as ArgAbi<S>>::Projected<'_>`. The elided lifetime is
+/// late-bound, which forces the closure to be higher-ranked (`for<'a>`) — without
+/// the annotation a closure taking a *borrowed* projected argument infers one
+/// fixed lifetime and fails the `CallExport` bound ("implementation of `Fn`
+/// is not general enough").
+fn annotated_params(
+    decoded: &DecodedArgs,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let scope = &decoded.scope;
+    let params = decoded
+        .arg_idents
+        .iter()
+        .zip(&decoded.arg_tys)
+        .map(|(ident, ty)| {
+            quote_spanned! {span=> #ident: <#ty as #krate::convert::ArgAbi<#scope>>::Projected<'_> }
+        });
+    quote_spanned! {span=> #(#params),* }
+}
+
+/// The callable handed to [`CallExport`]/[`CallExportAsync`] for a free function
+/// or static method named by `path`. A safe `fn`/`async fn` satisfies the
+/// `Fn`/`AsyncFn` bound directly, so it is passed by path. An `unsafe fn`
+/// does not implement those traits, so it is wrapped in a safe closure whose body
+/// supplies the `unsafe` block (`allow(unused_unsafe)` keeps the safe case quiet).
+fn free_callable(
+    path: TokenStream,
+    decoded: &DecodedArgs,
+    is_unsafe: bool,
+    is_async: bool,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    if !is_unsafe {
+        return path;
+    }
+    let params = annotated_params(decoded, krate, span);
+    let arg_idents = &decoded.arg_idents;
+    let call = unsafe_call(quote_spanned! {span=> #path(#(#arg_idents),*) }, span);
+    if is_async {
+        quote_spanned! {span=> async move |#params| #call.await }
+    } else {
+        quote_spanned! {span=> move |#params| #call }
+    }
+}
+
+#[derive(Clone)]
 struct DecodedArgs {
-    decode_args: TokenStream,
-    borrow_bindings: TokenStream,
-    call_args: Vec<TokenStream>,
-    wire_types: Vec<TokenStream>,
+    /// The full spelled argument types, in declaration order. They form the
+    /// `(A0, A1, …)` tuple naming the `CallExport`/`CallExportAsync` arity.
+    arg_tys: Vec<syn::Type>,
+    /// The argument bindings, in declaration order — used as the receiver
+    /// closure's parameters and as the call's arguments.
+    arg_idents: Vec<Ident>,
     /// The Rust parameter names, in declaration order, so the generated JS
     /// wrapper exposes them through `Function.prototype.toString` exactly as
     /// wasm-bindgen does.
     arg_names: Vec<String>,
-    /// For each `&mut [T]` argument, a statement that appends its (mutated)
-    /// owned buffer to the response encoder so JS copies it back into the
-    /// caller's array. Emitted after the return value, in declaration order.
-    write_backs: Vec<TokenStream>,
+    /// The `ArgAbi` borrow scope: `CallScoped` for a sync export, `Anchored`
+    /// for an `async` one (whose borrows must outlive the returned `Promise`).
+    scope: TokenStream,
+}
+
+fn call_export_arg_types(
+    decoded: &DecodedArgs,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let arg_tys = &decoded.arg_tys;
+    let scope = &decoded.scope;
+    quote_spanned! {span=>
+        <(#(#arg_tys,)*) as #krate::convert::CallExportArgs<#scope>>::arg_types
+    }
+}
+
+fn call_export_no_return_type(krate: &TokenStream, span: proc_macro2::Span) -> TokenStream {
+    quote_spanned! {span=> || #krate::__rt::TypeDef::of::<()>() }
+}
+
+fn call_export_return_type(
+    return_type: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    quote_spanned! {span=> || #krate::__rt::TypeDef::of::<#return_type>() }
+}
+
+fn call_export_type_fns(
+    decoded: &DecodedArgs,
+    return_type: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> (TokenStream, TokenStream) {
+    let arg_types = call_export_arg_types(decoded, krate, span);
+    let return_type = call_export_return_type(return_type, krate, span);
+    (arg_types, return_type)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_export_free_spec(
+    decoded: &DecodedArgs,
+    callable: TokenStream,
+    is_async: bool,
+    resolve_async: Option<TokenStream>,
+    export_name: TokenStream,
+    namespace: TokenStream,
+    arg_names: TokenStream,
+    this: TokenStream,
+    public: TokenStream,
+    start: TokenStream,
+    variadic: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let arg_tys = &decoded.arg_tys;
+    let scope = &decoded.scope;
+    if is_async {
+        let resolve_async = resolve_async.expect("async exports always provide a Promise resolver");
+        quote_spanned! {span=>
+            #krate::convert::CallExportAsync::<(#(#arg_tys,)*), #scope>::export_spec(
+                #callable,
+                #resolve_async,
+                #export_name,
+                #namespace,
+                #arg_names,
+                #this,
+                #public,
+                #start,
+                #variadic,
+            )
+        }
+    } else {
+        quote_spanned! {span=>
+            #krate::convert::CallExport::<(#(#arg_tys,)*), #scope>::export_spec(
+                #callable,
+                #export_name,
+                #namespace,
+                #arg_names,
+                #this,
+                #public,
+                #start,
+                #variadic,
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_export_async_method_spec(
+    decoded: &DecodedArgs,
+    callable: TokenStream,
+    resolve_async: TokenStream,
+    export_name: TokenStream,
+    arg_names: TokenStream,
+    variadic: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let arg_tys = &decoded.arg_tys;
+    let scope = &decoded.scope;
+    quote_spanned! {span=>
+        #krate::convert::CallExportAsync::<(#(#arg_tys,)*), #scope>::export_spec(
+            #callable,
+            #resolve_async,
+            #export_name,
+            &[],
+            #arg_names,
+            false,
+            false,
+            false,
+            #variadic,
+        )
+    }
+}
+
+fn call_export_sync_private_spec(
+    decoded: &DecodedArgs,
+    callable: TokenStream,
+    export_name: TokenStream,
+    arg_names: TokenStream,
+    variadic: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    call_export_free_spec(
+        decoded,
+        callable,
+        false,
+        None,
+        export_name,
+        quote_spanned! {span=> &[] },
+        arg_names,
+        quote_spanned! {span=> false },
+        quote_spanned! {span=> false },
+        quote_spanned! {span=> false },
+        variadic,
+        krate,
+        span,
+    )
+}
+
+fn call_export_sync_private_registration(
+    static_name: &str,
+    decoded: &DecodedArgs,
+    callable: TokenStream,
+    export_name: TokenStream,
+    arg_names: TokenStream,
+    variadic: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let export_spec = call_export_sync_private_spec(
+        decoded,
+        callable,
+        export_name,
+        arg_names,
+        variadic,
+        krate,
+        span,
+    );
+    generate_js_export_registration(static_name, export_spec, krate, span)
+}
+
+fn call_scoped_arg_types(
+    arg_types: &[TokenStream],
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    quote_spanned! {span=>
+        <(#(#arg_types,)*) as #krate::convert::CallExportArgs<#krate::convert::CallScoped>>::arg_types
+    }
 }
 
 fn generate_decode_args_parts(
@@ -171,12 +435,17 @@ fn generate_decode_args_parts(
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> syn::Result<DecodedArgs> {
-    let mut decode_args = TokenStream::new();
-    let mut borrow_bindings = TokenStream::new();
-    let mut call_args = Vec::with_capacity(arguments.len());
-    let mut wire_types = Vec::with_capacity(arguments.len());
+    // The borrow scope selects the `async` variant (`Anchored`), whose borrowed
+    // arguments anchor an owned copy that outlives the returned `Promise`; a sync
+    // export is `CallScoped`. It is the same for every argument.
+    let scope = if is_async {
+        quote_spanned! {span=> #krate::convert::Anchored }
+    } else {
+        quote_spanned! {span=> #krate::convert::CallScoped }
+    };
+    let mut arg_tys = Vec::with_capacity(arguments.len());
+    let mut arg_idents = Vec::with_capacity(arguments.len());
     let mut arg_names = Vec::with_capacity(arguments.len());
-    let mut write_backs = Vec::new();
 
     for (i, arg) in arguments.iter().enumerate() {
         // Most exports bind their arguments to a plain identifier, but a
@@ -190,52 +459,27 @@ fn generate_decode_args_parts(
             }
             _ => (format_ident!("__wry_arg{i}"), format!("arg{i}")),
         };
-        let arg_name = &arg_ident;
         arg_names.push(arg_js_name);
         // Peel any `macro_rules!` `$x:ty` group wrapper so a macro-substituted
         // argument type is matched as the reference/slice it really is.
         let arg_ty = unwrap_group(arg.pat_type.ty.as_ref());
 
-        // Every argument is decoded through one uniform projection rather than a
-        // syntactic match on `&T`/`&mut T`/owned. Keying on the *full spelled*
-        // type lets trait resolution — which sees through type aliases — choose
-        // the behavior, so `fn f(x: U8Slice)` with `type U8Slice<'a> = &'a [u8]`
-        // decodes exactly like `fn f(x: &[u8])`. The borrow scope selects the
-        // async variant (`Anchored`), whose borrowed arguments anchor an owned
-        // copy that outlives the returned `Promise`; a sync export is `CallScoped`.
-        //
-        // A reference's explicit lifetime is dropped (`&'a [u8]` -> `&[u8]`)
-        // because the generated wrapper has none of the function's lifetime
-        // parameters in scope; the borrow lifetime is inferred from the guard.
+        // Key on the *full spelled* type (trait resolution sees through aliases,
+        // so `fn f(x: U8Slice)` with `type U8Slice<'a> = &'a [u8]` behaves like
+        // `&[u8]`). A reference's explicit lifetime is dropped (`&'a [u8]` ->
+        // `&[u8]`) because the generated wrapper has none of the function's
+        // lifetime parameters in scope; the borrow lifetime is inferred.
         let arg_ty = strip_ref_lifetime(arg_ty);
-        let scope = if is_async {
-            quote_spanned! {span=> #krate::convert::Anchored }
-        } else {
-            quote_spanned! {span=> #krate::convert::CallScoped }
-        };
-        let arg_trait = quote_spanned! {span=> #krate::convert::ArgAbi<#scope> };
-        let guard_name = format_ident!("__wry_{}_guard", arg_name);
 
-        wire_types.push(quote_spanned! {span=> <#arg_ty as #arg_trait>::Wire });
-        decode_args.extend(quote_spanned! {span=>
-            let mut #guard_name = <#arg_ty as #arg_trait>::decode(decoder)?;
-        });
-        borrow_bindings.extend(quote_spanned! {span=>
-            let #arg_name = <#arg_ty as #arg_trait>::project(&mut #guard_name);
-        });
-        write_backs.push(quote_spanned! {span=>
-            <#arg_ty as #arg_trait>::write_back(#guard_name, &mut encoder);
-        });
-        call_args.push(quote_spanned! {span=> #arg_name });
+        arg_idents.push(arg_ident);
+        arg_tys.push(arg_ty);
     }
 
     Ok(DecodedArgs {
-        decode_args,
-        borrow_bindings,
-        call_args,
-        wire_types,
+        arg_tys,
+        arg_idents,
         arg_names,
-        write_backs,
+        scope,
     })
 }
 
@@ -289,16 +533,27 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
 
     // Generate drop function
     let drop_fn_name = format!("{class_name}::__drop");
-    let drop_impl = generate_js_export_spec(
+    let drop_handle = format_ident!("handle");
+    let drop_args = DecodedArgs {
+        arg_tys: vec![syn::parse_quote_spanned! {span=>
+            #krate::__rt::object_store::ObjectHandle
+        }],
+        arg_idents: vec![drop_handle.clone()],
+        arg_names: Vec::new(),
+        scope: quote_spanned! {span=> #krate::convert::CallScoped },
+    };
+    let drop_params = annotated_params(&drop_args, krate, span);
+    let drop_impl = call_export_sync_private_registration(
         "__DROP_SPEC",
-        quote_spanned! {span=> #drop_fn_name },
+        &drop_args,
         quote_spanned! {span=>
-            let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(
-                decoder
-            )?;
-            #krate::__rt::object_store::drop_object(handle);
-            Ok(#krate::__rt::EncodedData::default())
+            move |#drop_params| {
+                #krate::__rt::object_store::drop_object(#drop_handle);
+            }
         },
+        quote_spanned! {span=> #drop_fn_name },
+        quote_spanned! {span=> &[] },
+        quote_spanned! {span=> false },
         krate,
         span,
     );
@@ -380,45 +635,61 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         }
     };
 
-    // Borrowed-decode support so this struct can be a `&T` callback argument
-    // (closures decode their first reference argument through `RefFromBinaryDecode`).
-    // The routed handle rides the wire as a plain `u32`, decoded and checked out
-    // without consuming the wrapper. Borrowed *export* arguments go through
-    // `ArgAbi` below, which checks out the same anchors.
+    // Borrowed-argument support so this struct can be a `&T` export or callback
+    // argument. The routed handle rides the wire as a plain `u32`, decoded and
+    // checked out without consuming the wrapper.
     let borrow_arg_impls = quote_spanned! {span=>
-        impl #krate::convert::RefFromBinaryDecode for #rust_name {
-            type Wire = #krate::convert::RefArg<#rust_name>;
-            type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            fn ref_decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
-                #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
-            }
-        }
-
-        // `ArgAbi<S>` mirrors the borrow impls above for the *full* `&Self`/`&mut
-        // Self` argument types, so an exported function decodes a borrowed struct
-        // argument through the uniform `<#arg_ty as ArgAbi<S>>` projection —
-        // including when the type reaches the macro behind an alias. A store
-        // checkout is valid across an await, so one impl serves both borrow scopes.
+        // `ArgAbi<S>` for the *full* `&Self`/`&mut Self` argument types, so an
+        // exported function decodes a borrowed struct argument through the uniform
+        // `<#arg_ty as ArgAbi<S>>` projection — including when the type reaches the
+        // macro behind an alias. Callback decoding uses the same shared-borrow impl
+        // for borrowed first arguments. A store checkout is valid across an await,
+        // so one impl serves both borrow scopes:
+        // the synchronous `project` lends the checkout into `with`, while
+        // `project_async` moves the checkout into the `async` export's future and
+        // lends it across the `.await`.
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &#rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
             type Guard = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            type Projected<'__wry> = &'__wry #rust_name where Self: '__wry;
+            type ProjectedGuard = Self::Guard;
+            type Projected<'__wry> = &'__wry #rust_name;
             fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
             }
-            fn project(guard: &mut Self::Guard) -> &#rust_name {
-                guard
+            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
+            where
+                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                let __wry_result = with(&*guard);
+                (__wry_result, guard)
+            }
+            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
+            where
+                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                async move { with(&*guard).await }
             }
         }
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &mut #rust_name {
             type Wire = #krate::convert::RefMutArg<#rust_name>;
             type Guard = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
-            type Projected<'__wry> = &'__wry mut #rust_name where Self: '__wry;
+            type ProjectedGuard = Self::Guard;
+            type Projected<'__wry> = &'__wry mut #rust_name;
             fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)
             }
-            fn project(guard: &mut Self::Guard) -> &mut #rust_name {
-                guard
+            fn project<__WryR, __WryF>(mut guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
+            where
+                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                let __wry_result = with(&mut *guard);
+                (__wry_result, guard)
+            }
+            fn project_async<__WryR, __WryF>(mut guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
+            where
+                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                async move { with(&mut *guard).await }
             }
         }
     };
@@ -493,20 +764,31 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
     // ancestor's shared data.
     let upcast_impl = if s.extends.is_some() {
         let upcast_name = format!("__upcast_{class_name}");
-        generate_js_export_spec(
+        let upcast_handle = format_ident!("handle");
+        let upcast_args = DecodedArgs {
+            arg_tys: vec![syn::parse_quote_spanned! {span=>
+                #krate::__rt::object_store::ObjectHandle
+            }],
+            arg_idents: vec![upcast_handle.clone()],
+            arg_names: Vec::new(),
+            scope: quote_spanned! {span=> #krate::convert::CallScoped },
+        };
+        let upcast_params = annotated_params(&upcast_args, krate, span);
+        call_export_sync_private_registration(
             "__UPCAST_SPEC",
-            quote_spanned! {span=> #upcast_name },
+            &upcast_args,
             quote_spanned! {span=>
-                let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                let parent = #krate::__rt::object_store::with_object::<#rust_name, _>(handle, |obj| {
-                    #krate::Parent::share_cell(&obj.parent)
-                });
-                let ancestor = #krate::Parent::from_cell(parent);
-                let ancestor_handle = #krate::__rt::object_store::insert_object(ancestor);
-                let mut encoder = #krate::__rt::EncodedData::default();
-                <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryEncode>::encode(ancestor_handle, &mut encoder);
-                Ok(encoder)
+                move |#upcast_params| {
+                    let parent = #krate::__rt::object_store::with_object::<#rust_name, _>(#upcast_handle, |obj| {
+                        #krate::Parent::share_cell(&obj.parent)
+                    });
+                    let ancestor = #krate::Parent::from_cell(parent);
+                    #krate::__rt::object_store::insert_object(ancestor)
+                }
             },
+            quote_spanned! {span=> #upcast_name },
+            quote_spanned! {span=> &[] },
+            quote_spanned! {span=> false },
             krate,
             span,
         )
@@ -548,72 +830,12 @@ pub(super) fn generate_export_function(
         krate,
         span,
     )?;
-    let decode_args = &decoded_args.decode_args;
-    let borrow_bindings = &decoded_args.borrow_bindings;
-    let call_args = &decoded_args.call_args;
-    let wire_types = &decoded_args.wire_types;
-    let write_backs = &decoded_args.write_backs;
-    let sync_decode_args = quote_spanned! {span=> #decode_args #borrow_bindings };
 
     let ret = function.function.ret.as_ref().map(|ret| &ret.r#type);
-    let unit_ty: syn::Type = syn::parse_quote!(());
-    // The exported function may be `unsafe` (e.g. one that takes raw pointers).
-    // Calling it from the generated wrapper requires an `unsafe` block; the
-    // `allow(unused_unsafe)` keeps the common safe case warning-free.
-    let call_expr = unsafe_call(quote_spanned! {span=> #rust_name(#(#call_args),*) }, span);
-    let (export_body, return_type) = if function.function.r#async {
-        let promise_ty = async_promise_ty(ret, krate, js_sys, span);
-        let async_result = async_result_body(call_expr, krate, span);
-        let future_body = quote_spanned! {span=>
-            #borrow_bindings
-            #async_result
-        };
-        let encode_body = encode_async_promise_body(
-            promise_ty.clone(),
-            future_body,
-            krate,
-            js_sys,
-            futures,
-            span,
-        );
-        (
-            quote_spanned! {span=>
-                #decode_args
-                #encode_body
-            },
-            Some(promise_ty),
-        )
-    } else if let Some(ret_ty) = ret {
-        // A `Result<T, E>` return throws its `Err` in JS via `ThrowingResult`;
-        // see `sync_encode_return_body`.
-        let encode_body = sync_encode_return_body(call_expr, ret_ty, write_backs, krate, span);
-        (
-            quote_spanned! {span=>
-                #sync_decode_args
-                #encode_body
-            },
-            Some(sync_return_wire_type(ret_ty, krate, span)),
-        )
-    } else {
-        let encode_body = sync_encode_return_body(call_expr, &unit_ty, write_backs, krate, span);
-        (
-            quote_spanned! {span=>
-                #sync_decode_args
-                #encode_body
-            },
-            None,
-        )
-    };
-
-    let export_spec = generate_js_export_spec(
-        "__FREE_EXPORT_SPEC",
-        quote_spanned! {span=> #js_name },
-        export_body,
-        krate,
-        span,
-    );
-
-    let type_helpers = generate_member_type_helpers(wire_types, return_type, krate, span);
+    let is_async = function.function.r#async;
+    // The exported function is dispatched through `CallExport`, which decodes,
+    // projects, calls, and encodes by arity. A safe `fn` is passed by path; an
+    // `unsafe fn` is wrapped in a closure that supplies the `unsafe` block.
     let this = matches!(
         function.method_kind,
         MethodKind::Operation(ast::Operation {
@@ -621,11 +843,6 @@ pub(super) fn generate_export_function(
             ..
         })
     );
-    let arg_count = if this {
-        function.function.arguments.len().saturating_sub(1)
-    } else {
-        function.function.arguments.len()
-    };
     // The JS-visible parameter names drop the receiver for `this`-style exports.
     let js_arg_names: Vec<&str> = decoded_args
         .arg_names
@@ -638,13 +855,27 @@ pub(super) fn generate_export_function(
     let public = !matches!(function.start, StartKind::Private);
     let start = function.start.is_start();
     let variadic = function.function.variadic;
-    let free_export_spec = generate_js_free_export_spec(
-        "__FREE_EXPORT_JS_SPEC",
+    let export_callable = free_callable(
+        quote_spanned! {span=> #rust_name },
+        &decoded_args,
+        function.function.r#unsafe,
+        is_async,
+        krate,
+        span,
+    );
+    let resolve_async = if is_async {
+        Some(async_promise_resolver(ret, krate, js_sys, futures, span))
+    } else {
+        None
+    };
+    let free_export = call_export_free_spec(
+        &decoded_args,
+        export_callable,
+        is_async,
+        resolve_async,
         quote_spanned! {span=> #js_name },
         namespace,
-        quote_spanned! {span=> #arg_count },
         arg_names,
-        type_helpers,
         quote_spanned! {span=> #this },
         quote_spanned! {span=> #public },
         quote_spanned! {span=> #start },
@@ -652,10 +883,11 @@ pub(super) fn generate_export_function(
         krate,
         span,
     );
+    let export_spec =
+        generate_js_export_registration("__FREE_EXPORT_SPEC", free_export, krate, span);
 
     Ok(quote_spanned! {span=>
         #export_spec
-        #free_export_spec
     })
 }
 
@@ -665,24 +897,20 @@ pub(super) fn generate_main_function(
 ) -> syn::Result<TokenStream> {
     let span = main.span();
     let export_name = "__wry_bindgen_main";
-    let export_spec = generate_js_export_spec(
-        "__MAIN_EXPORT_SPEC",
-        quote_spanned! {span=> #export_name },
-        quote_spanned! {span=>
-            #main();
-            Ok(#krate::__rt::EncodedData::default())
-        },
-        krate,
-        span,
-    );
-    let type_helpers = generate_member_type_helpers(&[], None, krate, span);
-    let free_export_spec = generate_js_free_export_spec(
-        "__MAIN_FREE_EXPORT_SPEC",
+    let decoded_args = DecodedArgs {
+        arg_tys: Vec::new(),
+        arg_idents: Vec::new(),
+        arg_names: Vec::new(),
+        scope: quote_spanned! {span=> #krate::convert::CallScoped },
+    };
+    let free_export = call_export_free_spec(
+        &decoded_args,
+        quote_spanned! {span=> || { #main(); } },
+        false,
+        None,
         quote_spanned! {span=> #export_name },
         namespace_tokens(None, span),
-        quote_spanned! {span=> 0usize },
         quote_spanned! {span=> &[] },
-        type_helpers,
         quote_spanned! {span=> false },
         quote_spanned! {span=> false },
         quote_spanned! {span=> true },
@@ -690,10 +918,11 @@ pub(super) fn generate_main_function(
         krate,
         span,
     );
+    let export_spec =
+        generate_js_export_registration("__MAIN_EXPORT_SPEC", free_export, krate, span);
 
     Ok(quote_spanned! {span=>
         #export_spec
-        #free_export_spec
     })
 }
 
@@ -720,51 +949,76 @@ fn generate_field_accessor(
     let getter_name = format!("{class_id}::{js_field_name}_get");
     let setter_name = format!("{class_id}::{js_field_name}_set");
 
+    let getter_handle = format_ident!("handle");
+    let getter_args = DecodedArgs {
+        arg_tys: vec![syn::parse_quote_spanned! {span=>
+            #krate::__rt::object_store::ObjectHandle
+        }],
+        arg_idents: vec![getter_handle.clone()],
+        arg_names: Vec::new(),
+        scope: quote_spanned! {span=> #krate::convert::CallScoped },
+    };
+    let getter_params = annotated_params(&getter_args, krate, span);
+
     // Generate getter
-    let getter_body = if field.getter_with_clone.is_some() {
+    let getter_value = if field.getter_with_clone.is_some() {
         quote_spanned! {span=>
-            #krate::__rt::object_store::with_object::<#struct_name, _>(handle, |obj| {
-                let val = #krate::__rt::core::clone::Clone::clone(&obj.#field_name);
-                let mut encoder = #krate::__rt::EncodedData::default();
-                <#field_ty as #krate::__rt::BinaryEncode>::encode(val, &mut encoder);
-                Ok(encoder)
+            #krate::__rt::object_store::with_object::<#struct_name, _>(#getter_handle, |obj| {
+                #krate::__rt::core::clone::Clone::clone(&obj.#field_name)
             })
         }
     } else {
         quote_spanned! {span=>
-            #krate::__rt::object_store::with_object::<#struct_name, _>(handle, |obj| {
-                let val = obj.#field_name;
-                let mut encoder = #krate::__rt::EncodedData::default();
-                <#field_ty as #krate::__rt::BinaryEncode>::encode(val, &mut encoder);
-                Ok(encoder)
+            #krate::__rt::object_store::with_object::<#struct_name, _>(#getter_handle, |obj| {
+                obj.#field_name
             })
         }
     };
 
-    let getter_impl = generate_js_export_spec(
+    let getter_impl = call_export_sync_private_registration(
         "__GETTER_SPEC",
-        quote_spanned! {span=> #getter_name },
+        &getter_args,
         quote_spanned! {span=>
-            let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-            #getter_body
+            move |#getter_params| {
+                #getter_value
+            }
         },
+        quote_spanned! {span=> #getter_name },
+        quote_spanned! {span=> &[] },
+        quote_spanned! {span=> false },
         krate,
         span,
     );
 
     // Generate setter (unless readonly)
     let setter_impl = if !field.readonly {
-        generate_js_export_spec(
+        let setter_handle = format_ident!("handle");
+        let setter_val = format_ident!("val");
+        let setter_args = DecodedArgs {
+            arg_tys: vec![
+                syn::parse_quote_spanned! {span=>
+                    #krate::__rt::object_store::ObjectHandle
+                },
+                field.ty.clone(),
+            ],
+            arg_idents: vec![setter_handle.clone(), setter_val.clone()],
+            arg_names: Vec::new(),
+            scope: quote_spanned! {span=> #krate::convert::CallScoped },
+        };
+        let setter_params = annotated_params(&setter_args, krate, span);
+        call_export_sync_private_registration(
             "__SETTER_SPEC",
-            quote_spanned! {span=> #setter_name },
+            &setter_args,
             quote_spanned! {span=>
-                let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                let val = <#field_ty as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                #krate::__rt::object_store::with_object_mut::<#struct_name, _>(handle, |obj| {
-                    obj.#field_name = val;
-                });
-                Ok(#krate::__rt::EncodedData::default())
+                move |#setter_params| {
+                    #krate::__rt::object_store::with_object_mut::<#struct_name, _>(#setter_handle, |obj| {
+                        obj.#field_name = #setter_val;
+                    });
+                }
             },
+            quote_spanned! {span=> #setter_name },
+            quote_spanned! {span=> &[] },
+            quote_spanned! {span=> false },
             krate,
             span,
         )
@@ -774,16 +1028,17 @@ fn generate_field_accessor(
 
     // Generate JsClassMemberSpec for the property getter
     let js_class_name = class_id;
-    let getter_type_helpers =
-        generate_member_type_helpers(&[], Some(quote_spanned! {span=> #field_ty }), krate, span);
+    let getter_arg_types = call_scoped_arg_types(&[], krate, span);
+    let getter_return_type =
+        call_export_return_type(quote_spanned! {span=> #field_ty }, krate, span);
     let getter_member_spec = generate_js_class_member_spec(
         ClassMemberSpec {
             static_name: "__GETTER_MEMBER_SPEC",
             class_name: quote_spanned! {span=> #js_class_name },
             member_name: quote_spanned! {span=> #js_field_name },
             export_name: quote_spanned! {span=> #getter_name },
-            arg_count: quote_spanned! {span=> 0 },
-            type_helpers: getter_type_helpers,
+            arg_types: getter_arg_types,
+            return_type: getter_return_type,
             member_kind: quote_spanned! {span=> #krate::__rt::JsClassMemberKind::Getter },
             consumes_self: quote_spanned! {span=> false },
         },
@@ -794,16 +1049,16 @@ fn generate_field_accessor(
     // Generate JsClassMemberSpec for the property setter (unless readonly)
     let setter_member_spec = if !field.readonly {
         let setter_arg_types = vec![quote_spanned! {span=> #field_ty }];
-        let setter_type_helpers =
-            generate_member_type_helpers(&setter_arg_types, None, krate, span);
+        let setter_arg_types = call_scoped_arg_types(&setter_arg_types, krate, span);
+        let setter_return_type = call_export_no_return_type(krate, span);
         generate_js_class_member_spec(
             ClassMemberSpec {
                 static_name: "__SETTER_MEMBER_SPEC",
                 class_name: quote_spanned! {span=> #js_class_name },
                 member_name: quote_spanned! {span=> #js_field_name },
                 export_name: quote_spanned! {span=> #setter_name },
-                arg_count: quote_spanned! {span=> 1 },
-                type_helpers: setter_type_helpers,
+                arg_types: setter_arg_types,
+                return_type: setter_return_type,
                 member_kind: quote_spanned! {span=> #krate::__rt::JsClassMemberKind::Setter },
                 consumes_self: quote_spanned! {span=> false },
             },
@@ -820,30 +1075,6 @@ fn generate_field_accessor(
         #getter_member_spec
         #setter_member_spec
     })
-}
-
-/// Bind `__wry_obj` to the receiver of an instance method, honoring how the
-/// method takes `self`: a shared/mutable checkout that stays in the store, or a
-/// by-value removal that hands ownership to the method. The call site then uses
-/// `__wry_obj.method(..)`, with `DerefMut`/ownership making `&self`, `&mut self`,
-/// and `self` receivers all type-check.
-fn object_checkout_binding(
-    self_ty: MethodSelf,
-    class: &Ident,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    match self_ty {
-        MethodSelf::RefShared => quote_spanned! {span=>
-            let __wry_obj = #krate::__rt::object_store::checkout_object_ref::<#class>(handle);
-        },
-        MethodSelf::RefMutable => quote_spanned! {span=>
-            let mut __wry_obj = #krate::__rt::object_store::checkout_object_mut::<#class>(handle);
-        },
-        MethodSelf::ByValue => quote_spanned! {span=>
-            let __wry_obj = #krate::__rt::object_store::remove_object::<#class>(handle);
-        },
-    }
 }
 
 /// Generate code for an exported method
@@ -874,352 +1105,29 @@ pub(super) fn generate_export_method(
         krate,
         span,
     )?;
-    let decode_args = &decoded_args.decode_args;
-    let borrow_bindings = &decoded_args.borrow_bindings;
-    let call_args = &decoded_args.call_args;
-    let wire_types = &decoded_args.wire_types;
-    let write_backs = &decoded_args.write_backs;
-    let sync_decode_args = quote_spanned! {span=> #decode_args #borrow_bindings };
     let ret = method.function.ret.as_ref().map(|ret| &ret.r#type);
-    let unit_ty: syn::Type = syn::parse_quote!(());
     let is_async = method.function.r#async;
-
-    // Generate the method call and return encoding based on kind
-    let method_body = match &method.method_kind {
-        MethodKind::Constructor => {
-            // Constructor: create new instance and store in object store
-            if is_async {
-                let promise_ty = quote_spanned! {span=> #js_sys::Promise<#krate::JsValue> };
-                let class_name = class_id.clone();
-                let future_body = quote_spanned! {span=>
-                    #borrow_bindings
-                    let result = #class::#rust_name(#(#call_args),*).await;
-                    let handle = #krate::__rt::object_store::insert_object(result);
-                    #krate::__rt::core::result::Result::Ok(
-                        #krate::__rt::object_store::create_js_wrapper(handle, #class_name)
-                    )
-                };
-                let encode_body = encode_async_promise_body(
-                    promise_ty,
-                    future_body,
-                    krate,
-                    js_sys,
-                    futures,
-                    span,
-                );
-                quote_spanned! {span=>
-                    #decode_args
-                    #encode_body
-                }
-            } else {
-                quote_spanned! {span=>
-                        #sync_decode_args
-                        let result = #class::#rust_name(#(#call_args),*);
-                        let handle = #krate::__rt::object_store::insert_object(result);
-                        let mut encoder = #krate::__rt::EncodedData::default();
-                        <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryEncode>::encode(handle, &mut encoder);
-                        #(#write_backs)*
-                    Ok(encoder)
-                }
-            }
-        }
-        MethodKind::Operation(operation)
-            if matches!(
-                operation.kind,
-                OperationKind::Regular | OperationKind::RegularThis
-            ) && !operation.is_static =>
-        {
-            // Instance method: get object from store, call method
-            let self_ty = method
-                .method_self
-                .ok_or_else(|| syn::Error::new(span, "missing upstream method self"))?;
-            let call = match self_ty {
-                MethodSelf::RefShared => {
-                    quote_spanned! {span=>
-                        #krate::__rt::object_store::with_object::<#class, _>(handle, |obj| {
-                            obj.#rust_name(#(#call_args),*)
-                        })
-                    }
-                }
-                MethodSelf::RefMutable => {
-                    quote_spanned! {span=>
-                        #krate::__rt::object_store::with_object_mut::<#class, _>(handle, |obj| {
-                            obj.#rust_name(#(#call_args),*)
-                        })
-                    }
-                }
-                MethodSelf::ByValue => {
-                    // Consuming method: remove from store
-                    quote_spanned! {span=>
-                        {
-                            let obj = #krate::__rt::object_store::remove_object::<#class>(handle);
-                            obj.#rust_name(#(#call_args),*)
-                        }
-                    }
-                }
-            };
-
-            if is_async {
-                let promise_ty = async_promise_ty(ret, krate, js_sys, span);
-                let object_checkout = match self_ty {
-                    MethodSelf::RefShared => {
-                        quote_spanned! {span=>
-                            let __wry_obj = #krate::__rt::object_store::checkout_object_ref::<#class>(handle);
-                        }
-                    }
-                    MethodSelf::RefMutable => {
-                        quote_spanned! {span=>
-                            let mut __wry_obj = #krate::__rt::object_store::checkout_object_mut::<#class>(handle);
-                        }
-                    }
-                    MethodSelf::ByValue => {
-                        quote_spanned! {span=>
-                            let __wry_obj = #krate::__rt::object_store::remove_object::<#class>(handle);
-                        }
-                    }
-                };
-                let async_result = async_result_body(
-                    quote_spanned! {span=> __wry_obj.#rust_name(#(#call_args),*) },
-                    krate,
-                    span,
-                );
-                let future_body = quote_spanned! {span=>
-                    #borrow_bindings
-                    #async_result
-                };
-                let encode_body = encode_async_promise_body(
-                    promise_ty,
-                    future_body,
-                    krate,
-                    js_sys,
-                    futures,
-                    span,
-                );
-                quote_spanned! {span=>
-                    let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                    #decode_args
-                    #object_checkout
-                    #encode_body
-                }
-            } else if let Some(ret_ty) = ret {
-                let encode_body = sync_encode_return_body(
-                    quote_spanned! {span=> #call },
-                    ret_ty,
-                    write_backs,
-                    krate,
-                    span,
-                );
-                quote_spanned! {span=>
-                    let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                    #sync_decode_args
-                    #encode_body
-                }
-            } else {
-                let encode_body = sync_encode_return_body(
-                    quote_spanned! {span=> #call },
-                    &unit_ty,
-                    write_backs,
-                    krate,
-                    span,
-                );
-                quote_spanned! {span=>
-                    let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                    #sync_decode_args
-                    #encode_body
-                }
-            }
-        }
-        MethodKind::Operation(operation) if operation.is_static => {
-            // Static method: just call directly
-            if is_async {
-                let promise_ty = async_promise_ty(ret, krate, js_sys, span);
-                let async_result = async_result_body(
-                    quote_spanned! {span=> #class::#rust_name(#(#call_args),*) },
-                    krate,
-                    span,
-                );
-                let future_body = quote_spanned! {span=>
-                    #borrow_bindings
-                    #async_result
-                };
-                let encode_body = encode_async_promise_body(
-                    promise_ty,
-                    future_body,
-                    krate,
-                    js_sys,
-                    futures,
-                    span,
-                );
-                quote_spanned! {span=>
-                    #decode_args
-                    #encode_body
-                }
-            } else if let Some(ret_ty) = ret {
-                let encode_body = sync_encode_return_body(
-                    quote_spanned! {span=> #class::#rust_name(#(#call_args),*) },
-                    ret_ty,
-                    write_backs,
-                    krate,
-                    span,
-                );
-                quote_spanned! {span=>
-                    #sync_decode_args
-                    #encode_body
-                }
-            } else {
-                let encode_body = sync_encode_return_body(
-                    unsafe_call(
-                        quote_spanned! {span=> #class::#rust_name(#(#call_args),*) },
-                        span,
-                    ),
-                    &unit_ty,
-                    write_backs,
-                    krate,
-                    span,
-                );
-                quote_spanned! {span=>
-                    #sync_decode_args
-                    #encode_body
-                }
-            }
-        }
-        MethodKind::Operation(operation) if matches!(operation.kind, OperationKind::Getter(_)) => {
-            // Property getter: call the getter method
-            if let Some(ret_ty) = ret {
-                let self_ty = method.method_self.unwrap_or(MethodSelf::RefShared);
-                let object_checkout = object_checkout_binding(self_ty, class, krate, span);
-                if is_async {
-                    let promise_ty = async_promise_ty(ret, krate, js_sys, span);
-                    let async_result = async_result_body(
-                        quote_spanned! {span=> __wry_obj.#rust_name() },
-                        krate,
-                        span,
-                    );
-                    let encode_body = encode_async_promise_body(
-                        promise_ty,
-                        async_result,
-                        krate,
-                        js_sys,
-                        futures,
-                        span,
-                    );
-                    quote_spanned! {span=>
-                        let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                        #object_checkout
-                        #encode_body
-                    }
-                } else {
-                    // A getter takes no value arguments, so it has no `&mut [T]`
-                    // write-backs.
-                    let encode_body = sync_encode_return_body(
-                        quote_spanned! {span=> __wry_obj.#rust_name() },
-                        ret_ty,
-                        &[],
-                        krate,
-                        span,
-                    );
-                    quote_spanned! {span=>
-                        let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                        #object_checkout
-                        #encode_body
-                    }
-                }
-            } else {
-                return Err(syn::Error::new(span, "getter must have a return type"));
-            }
-        }
-        MethodKind::Operation(operation) if matches!(operation.kind, OperationKind::Setter(_)) => {
-            // Property setter: call the setter method
-            if method.function.arguments.is_empty() {
-                return Err(syn::Error::new(span, "setter must have an argument"));
-            }
-
-            let self_ty = method.method_self.unwrap_or(MethodSelf::RefMutable);
-            let object_checkout = object_checkout_binding(self_ty, class, krate, span);
-            if is_async {
-                let promise_ty = quote_spanned! {span=>
-                    #js_sys::Promise<#krate::sys::Undefined>
-                };
-                let future_body = quote_spanned! {span=>
-                    #borrow_bindings
-                    __wry_obj.#rust_name(#(#call_args),*).await;
-                    #krate::__rt::core::result::Result::Ok(#krate::JsValue::UNDEFINED)
-                };
-                let encode_body = encode_async_promise_body(
-                    promise_ty,
-                    future_body,
-                    krate,
-                    js_sys,
-                    futures,
-                    span,
-                );
-                quote_spanned! {span=>
-                    let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                    #decode_args
-                    #object_checkout
-                    #encode_body
-                }
-            } else {
-                let encode_body = sync_encode_return_body(
-                    quote_spanned! {span=> __wry_obj.#rust_name(#(#call_args),*) },
-                    &unit_ty,
-                    write_backs,
-                    krate,
-                    span,
-                );
-                quote_spanned! {span=>
-                    let handle = <#krate::__rt::object_store::ObjectHandle as #krate::__rt::BinaryDecode>::decode(decoder)?;
-                    #sync_decode_args
-                    #object_checkout
-                    #encode_body
-                }
-            }
-        }
-        MethodKind::Operation(operation)
-            if matches!(
-                operation.kind,
-                OperationKind::IndexingGetter
-                    | OperationKind::IndexingSetter
-                    | OperationKind::IndexingDeleter
-            ) =>
-        {
-            return Err(syn::Error::new(
-                span,
-                "wry-bindgen does not yet support indexing operations on exported methods",
-            ));
-        }
-        MethodKind::Operation(_) => {
-            return Err(syn::Error::new(
-                span,
-                "unsupported upstream exported method operation",
-            ));
-        }
-    };
 
     // Generate the actual impl method
     // Generate JsClassMemberSpec for the method
-    let arg_count = method.function.arguments.len();
     let member_return_type = match &method.method_kind {
         MethodKind::Constructor if is_async => {
-            Some(quote_spanned! {span=> #js_sys::Promise<#krate::JsValue> })
+            quote_spanned! {span=> #js_sys::Promise<#krate::JsValue> }
         }
         MethodKind::Constructor => {
-            Some(quote_spanned! {span=> #krate::__rt::object_store::ObjectHandle })
+            quote_spanned! {span=> #krate::__rt::object_store::ObjectHandle }
         }
-        _ if is_async => {
-            let ret_ty = ret.cloned().unwrap_or_else(|| syn::parse_quote!(()));
-            Some(quote_spanned! {span=>
-                #js_sys::Promise<<#ret_ty as #krate::convert::IntoJsResult>::Resolution>
-            })
-        }
+        _ if is_async => return_wire_type(ret, true, krate, js_sys, span),
         MethodKind::Operation(ast::Operation {
             kind: OperationKind::Setter(_),
             ..
-        }) => None,
-        _ => ret.map(|ty| sync_return_wire_type(ty, krate, span)),
+        }) => quote_spanned! {span=> () },
+        _ => ret
+            .map(|ty| return_wire_type(Some(ty), false, krate, js_sys, span))
+            .unwrap_or_else(|| quote_spanned! {span=> () }),
     };
-    let member_type_helpers =
-        generate_member_type_helpers(wire_types, member_return_type, krate, span);
+    let (member_arg_types, member_return_type) =
+        call_export_type_fns(&decoded_args, member_return_type, krate, span);
     let (member_name, member_kind) = match &method.method_kind {
         MethodKind::Constructor => (
             js_name.clone(),
@@ -1282,29 +1190,161 @@ pub(super) fn generate_export_method(
             ..
         })
     ) && matches!(method.method_self, Some(MethodSelf::ByValue));
+    let variadic = method.function.variadic;
     let js_class_member_spec = generate_js_class_member_spec(
         ClassMemberSpec {
             static_name: "__CLASS_MEMBER_SPEC",
             class_name: quote_spanned! {span=> #class_id },
             member_name: quote_spanned! {span=> #member_name },
             export_name: quote_spanned! {span=> #export_name },
-            arg_count: quote_spanned! {span=> #arg_count },
-            type_helpers: member_type_helpers,
+            arg_types: member_arg_types,
+            return_type: member_return_type,
             member_kind,
             consumes_self: quote_spanned! {span=> #consumes_self },
         },
         krate,
         span,
     );
-    let export_spec = generate_js_export_spec(
-        "__EXPORT_SPEC",
-        quote_spanned! {span=> #export_name },
-        quote_spanned! {span=>
-            #method_body
-        },
-        krate,
-        span,
-    );
+    let js_arg_names: Vec<&str> = decoded_args.arg_names.iter().map(String::as_str).collect();
+    let arg_names = quote_spanned! {span=> &[#(#js_arg_names),*] };
+    let arg_idents = &decoded_args.arg_idents;
+    let (export_decoded_args, export_callable) = match &method.method_kind {
+        MethodKind::Constructor => {
+            let params = annotated_params(&decoded_args, krate, span);
+            let callable = if is_async {
+                let class_name = class_id.clone();
+                quote_spanned! {span=>
+                    async move |#params| {
+                        let result = #class::#rust_name(#(#arg_idents),*).await;
+                        let handle = #krate::__rt::object_store::insert_object(result);
+                        #krate::__rt::object_store::create_js_wrapper(handle, #class_name)
+                    }
+                }
+            } else {
+                quote_spanned! {span=>
+                    move |#params| {
+                        #krate::__rt::object_store::insert_object(#class::#rust_name(#(#arg_idents),*))
+                    }
+                }
+            };
+            (decoded_args.clone(), callable)
+        }
+        MethodKind::Operation(operation) if operation.is_static => {
+            let callable = free_callable(
+                quote_spanned! {span=> #class::#rust_name },
+                &decoded_args,
+                method.function.r#unsafe,
+                is_async,
+                krate,
+                span,
+            );
+            (decoded_args.clone(), callable)
+        }
+        MethodKind::Operation(operation)
+            if matches!(
+                operation.kind,
+                OperationKind::Regular | OperationKind::RegularThis
+            ) || matches!(
+                operation.kind,
+                OperationKind::Getter(_) | OperationKind::Setter(_)
+            ) =>
+        {
+            if matches!(operation.kind, OperationKind::Getter(_)) && ret.is_none() {
+                return Err(syn::Error::new(span, "getter must have a return type"));
+            }
+            if matches!(operation.kind, OperationKind::Setter(_))
+                && method.function.arguments.is_empty()
+            {
+                return Err(syn::Error::new(span, "setter must have an argument"));
+            }
+            let self_ty = match &operation.kind {
+                OperationKind::Getter(_) => method.method_self.unwrap_or(MethodSelf::RefShared),
+                OperationKind::Setter(_) => method.method_self.unwrap_or(MethodSelf::RefMutable),
+                _ => method
+                    .method_self
+                    .ok_or_else(|| syn::Error::new(span, "missing upstream method self"))?,
+            };
+            let decoded_with_handle = with_receiver_handle_arg(&decoded_args, krate, span);
+            let callable = if is_async {
+                async_receiver_callable_with_handle(
+                    self_ty,
+                    class,
+                    rust_name,
+                    &decoded_with_handle,
+                    &decoded_args.arg_idents,
+                    krate,
+                    span,
+                )
+            } else {
+                receiver_callable_with_handle(
+                    self_ty,
+                    class,
+                    rust_name,
+                    &decoded_with_handle,
+                    &decoded_args.arg_idents,
+                    krate,
+                    span,
+                )
+            };
+            (decoded_with_handle, callable)
+        }
+        MethodKind::Operation(operation)
+            if matches!(
+                operation.kind,
+                OperationKind::IndexingGetter
+                    | OperationKind::IndexingSetter
+                    | OperationKind::IndexingDeleter
+            ) =>
+        {
+            return Err(syn::Error::new(
+                span,
+                "wry-bindgen does not yet support indexing operations on exported methods",
+            ));
+        }
+        MethodKind::Operation(_) => {
+            return Err(syn::Error::new(
+                span,
+                "unsupported upstream exported method operation",
+            ));
+        }
+    };
+    let export_spec = if is_async {
+        let resolve_async = match &method.method_kind {
+            MethodKind::Constructor => {
+                let promise_ty = quote_spanned! {span=> #js_sys::Promise<#krate::JsValue> };
+                quote_spanned! {span=>
+                    |__wry_future| -> #promise_ty {
+                        <#js_sys::Promise as #krate::JsCast>::unchecked_into::<#promise_ty>(
+                            #futures::future_to_promise(__wry_future)
+                        )
+                    }
+                }
+            }
+            MethodKind::Operation(_) => async_promise_resolver(ret, krate, js_sys, futures, span),
+        };
+        let export_spec = call_export_async_method_spec(
+            &export_decoded_args,
+            export_callable,
+            resolve_async,
+            quote_spanned! {span=> #export_name },
+            arg_names,
+            quote_spanned! {span=> #variadic },
+            krate,
+            span,
+        );
+        generate_js_export_registration("__EXPORT_SPEC", export_spec, krate, span)
+    } else {
+        let export_spec = call_export_sync_private_spec(
+            &export_decoded_args,
+            export_callable,
+            quote_spanned! {span=> #export_name },
+            arg_names,
+            quote_spanned! {span=> #variadic },
+            krate,
+            span,
+        );
+        generate_js_export_registration("__EXPORT_SPEC", export_spec, krate, span)
+    };
 
     Ok(quote_spanned! {span=>
         #export_spec

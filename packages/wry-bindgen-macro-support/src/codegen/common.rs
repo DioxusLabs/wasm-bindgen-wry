@@ -77,36 +77,9 @@ pub(super) fn generate_js_reexport_spec(
     }
 }
 
-pub(super) fn generate_member_type_helpers(
-    arg_types: &[TokenStream],
-    return_type: Option<TokenStream>,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    let return_body = match return_type {
-        Some(ty) => quote_spanned! {span=>
-            #krate::__rt::core::option::Option::Some(#krate::__rt::TypeDef::of::<#ty>())
-        },
-        None => quote_spanned! {span=> #krate::__rt::core::option::Option::None },
-    };
-
-    quote_spanned! {span=>
-        fn __wry_arg_types() -> #krate::__rt::alloc::vec::Vec<#krate::__rt::TypeDef> {
-            #krate::__rt::alloc::vec![
-                #(#krate::__rt::TypeDef::of::<#arg_types>()),*
-            ]
-        }
-
-        fn __wry_return_type() -> #krate::__rt::core::option::Option<#krate::__rt::TypeDef> {
-            #return_body
-        }
-    }
-}
-
-pub(super) fn generate_js_export_spec(
+pub(super) fn generate_js_export_registration(
     static_name: &str,
-    export_name: TokenStream,
-    body: TokenStream,
+    export_spec: TokenStream,
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
@@ -114,13 +87,8 @@ pub(super) fn generate_js_export_spec(
     quote_spanned! {span=>
         const _: () = {
             #[allow(non_upper_case_globals)]
-        static #static_ident: #krate::__rt::JsExportSpec = #krate::__rt::JsExportSpec::new(
-            #export_name,
-            |decoder| {
-                let _ = &decoder;
-                #body
-            }
-        );
+            static #static_ident: #krate::__rt::JsExportSpecRegistration =
+                #krate::__rt::JsExportSpecRegistration::new(|| { #export_spec });
 
             #krate::__rt::inventory::submit! {
                 #static_ident
@@ -204,8 +172,8 @@ pub(super) struct ClassMemberSpec<'a> {
     pub(super) class_name: TokenStream,
     pub(super) member_name: TokenStream,
     pub(super) export_name: TokenStream,
-    pub(super) arg_count: TokenStream,
-    pub(super) type_helpers: TokenStream,
+    pub(super) arg_types: TokenStream,
+    pub(super) return_type: TokenStream,
     pub(super) member_kind: TokenStream,
     /// `true` when the member takes `self` by value (consuming the receiver).
     pub(super) consumes_self: TokenStream,
@@ -221,8 +189,8 @@ pub(super) fn generate_js_class_member_spec(
         class_name,
         member_name,
         export_name,
-        arg_count,
-        type_helpers,
+        arg_types,
+        return_type,
         member_kind,
         consumes_self,
         ..
@@ -230,59 +198,15 @@ pub(super) fn generate_js_class_member_spec(
 
     quote_spanned! {span=>
         const _: () = {
-            #type_helpers
-
             #[allow(non_upper_case_globals)]
             static #static_ident: #krate::__rt::JsClassMemberSpec = #krate::__rt::JsClassMemberSpec::new(
                 #class_name,
                 #member_name,
                 #export_name,
-                #arg_count,
-                __wry_arg_types,
-                __wry_return_type,
+                #arg_types,
+                #return_type,
                 #member_kind,
                 #consumes_self,
-            );
-
-            #krate::__rt::inventory::submit! {
-                #static_ident
-            }
-        };
-    }
-}
-
-pub(super) fn generate_js_free_export_spec(
-    static_name: &str,
-    export_name: TokenStream,
-    namespace: TokenStream,
-    arg_count: TokenStream,
-    arg_names: TokenStream,
-    type_helpers: TokenStream,
-    this: TokenStream,
-    public: TokenStream,
-    start: TokenStream,
-    variadic: TokenStream,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    let static_ident = format_ident!("{}", static_name);
-
-    quote_spanned! {span=>
-        const _: () = {
-            #type_helpers
-
-            #[allow(non_upper_case_globals)]
-            static #static_ident: #krate::__rt::JsFreeExportSpec = #krate::__rt::JsFreeExportSpec::new(
-                #export_name,
-                #namespace,
-                #arg_count,
-                #arg_names,
-                __wry_arg_types,
-                __wry_return_type,
-                #this,
-                #public,
-                #start,
-                #variadic,
             );
 
             #krate::__rt::inventory::submit! {

@@ -16,8 +16,8 @@ pub extern crate std;
 
 #[doc(hidden)]
 pub use crate::encode::{
-    BatchableResult, BinaryDecode, BinaryEncode, EncodeTypeDef, JsRef, JsRefEncode, MutSliceArg,
-    RefFromBinaryDecode, ThrowingResult, TypeDef,
+    Anchored, ArgAbi, BatchableResult, BinaryDecode, BinaryEncode, BorrowScope, CallScoped,
+    EncodeTypeDef, JsRef, JsRefEncode, MutSliceArg, ThrowingResult, TypeDef,
 };
 #[doc(hidden)]
 pub use crate::ipc::{DecodeError, DecodedData, EncodedData};
@@ -33,8 +33,9 @@ pub use wry_bindgen_core::RustCallback;
 pub use wry_bindgen_core::{CallbackKey, Runtime};
 #[doc(hidden)]
 pub use wry_bindgen_core::{
-    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsFreeExportSpec, JsFunction,
-    JsFunctionSpec, JsModuleSpec, JsReexportSpec, LazyCell,
+    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsExportSpecRegistration,
+    JsFunction, JsFunctionArg, JsFunctionSignature, JsFunctionSpec, JsModuleSpec, JsReexportSpec,
+    LazyCell,
 };
 #[doc(hidden)]
 pub use wry_bindgen_core::{link_to_raw_specifier, register_linked_module};

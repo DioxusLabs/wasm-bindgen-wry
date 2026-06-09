@@ -201,7 +201,7 @@ pub fn throw_val(s: JsValue) -> ! {
 #[cold]
 #[inline(never)]
 pub fn throw_str(s: &str) -> ! {
-    panic!("cannot throw JS exception when running outside of wasm: {s}");
+    panic!("{s}");
 }
 
 /// Renamed to [`throw_str`].

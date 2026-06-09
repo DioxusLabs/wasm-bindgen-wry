@@ -6,7 +6,8 @@ import { RustFunction, RustFunctionPolicy } from "./rust_function";
  * Must match the Rust TypeTag enum exactly.
  */
 enum TypeTag {
-  Null = 0,
+  // The Rust unit type `()`. Carries no bytes and decodes to `undefined`.
+  Undefined = 0,
   Bool = 1,
   U8 = 2,
   U16 = 3,
@@ -323,13 +324,13 @@ class CallbackType implements TypeClass {
 /**
  * Type class for null values with encoding/decoding methods
  */
-class NullType implements TypeClass {
-  encode(encoder: DataEncoder, value: null): void {
-    // Null doesn't need to encode anything
+class UndefinedType implements TypeClass {
+  encode(encoder: DataEncoder, value: undefined): void {
+    // The unit type carries no bytes.
   }
 
-  decode(decoder: DataDecoder): null {
-    return null;
+  decode(decoder: DataDecoder): undefined {
+    return undefined;
   }
 }
 
@@ -660,7 +661,7 @@ const F64Type = new NumericType("f64");
 
 // Pre-instantiated singleton types
 const boolTypeInstance = new BoolType();
-const nullTypeInstance = new NullType();
+const undefinedTypeInstance = new UndefinedType();
 const heapRefTypeInstance = new HeapRefType();
 const borrowedRefTypeInstance = new BorrowedRefType();
 const stringTypeInstance = new StringType();
@@ -674,8 +675,8 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
   const tag = bytes[offset.value++];
 
   switch (tag) {
-    case TypeTag.Null:
-      return nullTypeInstance;
+    case TypeTag.Undefined:
+      return undefinedTypeInstance;
     case TypeTag.Bool:
       return boolTypeInstance;
     case TypeTag.U8:

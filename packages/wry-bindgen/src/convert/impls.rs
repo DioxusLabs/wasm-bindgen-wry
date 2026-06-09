@@ -1,10 +1,10 @@
-use crate::__rt::{DecodeError, DecodedData, JsRef};
+use crate::__rt::JsRef;
 use crate::{JsCast, JsValue};
 use core::marker::PhantomData;
 
 use super::{
-    FromWasmAbi, IntoWasmAbi, JsGeneric, OptionFromWasmAbi, OptionIntoWasmAbi, RefArg,
-    RefFromBinaryDecode, RefFromWasmAbi, UpcastFrom, WasmAbi,
+    FromWasmAbi, IntoWasmAbi, JsGeneric, OptionFromWasmAbi, OptionIntoWasmAbi, RefFromWasmAbi,
+    UpcastFrom, WasmAbi,
 };
 
 // `IntoWasmAbi`/`FromWasmAbi` are implemented per-type, mirroring upstream
@@ -110,18 +110,5 @@ impl<T: JsCast> JsCastAnchor<T> {
             value: JsValue::from_ref(JsRef::next_borrowed_ref()),
             _marker: PhantomData,
         }
-    }
-}
-
-// `RefFromBinaryDecode` is implemented per JS-handle type (not via a blanket over
-// `JsCast`): the trait lives in the runtime, so a blanket `impl<T: JsCast>` here
-// would violate the orphan rule. Imported `extern` types get this impl from
-// codegen; `JsValue` is the hand-written base case.
-impl RefFromBinaryDecode for JsValue {
-    type Wire = RefArg<JsValue>;
-    type Anchor = JsCastAnchor<JsValue>;
-
-    fn ref_decode(_decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        Ok(JsCastAnchor::next_borrowed())
     }
 }

@@ -6,12 +6,14 @@
 //! primitives.
 
 mod arg;
+mod call;
 mod closures;
 mod impls;
 mod slices;
 mod traits;
 
 pub use self::arg::*;
+pub use self::call::*;
 pub use self::impls::*;
 pub use self::slices::*;
 pub use self::traits::*;

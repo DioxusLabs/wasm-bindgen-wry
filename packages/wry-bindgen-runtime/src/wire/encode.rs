@@ -1,6 +1,8 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::future::Future;
+use core::ops::AsyncFnOnce;
 
 use super::{DecodeError, DecodedData, EncodedData, JsRef};
 
@@ -16,41 +18,188 @@ pub trait JsRefEncode {
     fn js_ref(&self) -> JsRef;
 }
 
-/// Decode a value that a callback borrows for the duration of the call (the
-/// wry-bindgen equivalent of wasm-bindgen's `RefFromWasmAbi`). The `Anchor`
-/// owns whatever keeps the `&Self` valid across the closure invocation. The
-/// trait lives here so the runtime's closure-encode impls can borrow-decode a
-/// first argument; the impls themselves (JS handles, exported structs) live in
-/// the higher-level crates that define those types.
-pub trait RefFromBinaryDecode {
-    /// The wire type JS sees for this borrowed reference.
-    type Wire: EncodeTypeDef;
-
-    /// The anchor type that keeps the decoded reference valid.
-    type Anchor: core::ops::Deref<Target = Self>;
-
-    /// Decode a reference anchor from binary data.
-    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError>;
+mod sealed {
+    pub trait Sealed {}
 }
 
-impl RefFromBinaryDecode for str {
-    type Wire = String;
-    type Anchor = String;
+/// How long a decoded borrow must remain valid.
+#[doc(hidden)]
+pub trait BorrowScope: sealed::Sealed {}
 
-    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        String::decode(decoder)
+/// The borrow only needs to outlive the synchronous call, so a JS handle may
+/// ride JS's borrow stack.
+#[doc(hidden)]
+pub struct CallScoped;
+
+/// The borrow must outlive the `Promise` an `async` export returns, so a JS
+/// handle anchors an owned copy instead of riding the borrow stack.
+#[doc(hidden)]
+pub struct Anchored;
+
+impl sealed::Sealed for CallScoped {}
+impl sealed::Sealed for Anchored {}
+impl BorrowScope for CallScoped {}
+impl BorrowScope for Anchored {}
+
+/// Decode one exported-function or callback argument from the wire, for borrow
+/// scope `S`.
+///
+/// [`decode`](ArgAbi::decode) produces a [`Guard`](ArgAbi::Guard) that owns
+/// whatever backs the argument for the duration of the call. [`project`] invokes
+/// a continuation with the [`Projected`](ArgAbi::Projected) value the Rust
+/// function actually receives (`&T`, `&mut T`, or an owned `T`) while the guard
+/// is still alive.
+#[doc(hidden)]
+pub trait ArgAbi<S: BorrowScope> {
+    /// The type whose `TypeDef` is advertised to JS for this argument.
+    type Wire: EncodeTypeDef;
+
+    /// Owns whatever keeps the projected argument valid across the call.
+    type Guard;
+
+    /// The guard type after projection, retained for any later write-back.
+    type ProjectedGuard;
+
+    /// What the Rust function receives, borrowed from the guard for `'a`.
+    type Projected<'a>;
+
+    /// Decode the guard from the incoming wire bytes.
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError>;
+
+    /// Project the call argument for the duration of `with`, then return the
+    /// continuation result and guard for any later write-back.
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R;
+
+    /// Append any post-call write-back data to the export response.
+    fn write_back(_guard: Self::ProjectedGuard, _encoder: &mut EncodedData) {}
+
+    /// The `async` counterpart of [`project`](ArgAbi::project): drive the async
+    /// continuation `with` with the projected argument while owning the guard for
+    /// the returned future's lifetime.
+    fn project_async<R, F>(guard: Self::Guard, with: F) -> impl Future<Output = R>
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R;
+}
+
+impl<S, T> ArgAbi<S> for T
+where
+    S: BorrowScope,
+    T: BinaryDecode + EncodeTypeDef,
+{
+    type Wire = T;
+    type Guard = T;
+    type ProjectedGuard = ();
+    type Projected<'a> = T;
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <T as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(guard);
+        (result, ())
+    }
+
+    async fn project_async<R, F>(guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(guard).await
     }
 }
 
-impl<T> RefFromBinaryDecode for [T]
+impl<S: BorrowScope> ArgAbi<S> for &str {
+    type Wire = String;
+    type Guard = String;
+    type ProjectedGuard = ();
+    type Projected<'a> = &'a str;
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <String as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(&guard);
+        (result, ())
+    }
+
+    async fn project_async<R, F>(guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(&guard).await
+    }
+}
+
+impl<S, T> ArgAbi<S> for &[T]
 where
-    T: BinaryDecode + EncodeTypeDef,
+    S: BorrowScope,
+    T: BinaryDecode + EncodeTypeDef + 'static,
 {
     type Wire = Vec<T>;
-    type Anchor = Vec<T>;
+    type Guard = Vec<T>;
+    type ProjectedGuard = ();
+    type Projected<'a> = &'a [T];
 
-    fn ref_decode(decoder: &mut DecodedData) -> Result<Self::Anchor, DecodeError> {
-        Vec::<T>::decode(decoder)
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <Vec<T> as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(&guard);
+        (result, ())
+    }
+
+    async fn project_async<R, F>(guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(&guard).await
+    }
+}
+
+impl<S, T> ArgAbi<S> for &mut [T]
+where
+    S: BorrowScope,
+    T: BinaryDecode + BinaryEncode + EncodeTypeDef + 'static,
+{
+    type Wire = MutSliceArg<T>;
+    type Guard = MutSliceArg<T>;
+    type ProjectedGuard = Self::Guard;
+    type Projected<'a> = &'a mut [T];
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <MutSliceArg<T> as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(mut guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(guard.as_mut_slice());
+        (result, guard)
+    }
+
+    fn write_back(guard: Self::ProjectedGuard, encoder: &mut EncodedData) {
+        MutSliceArg::write_back(guard, encoder);
+    }
+
+    async fn project_async<R, F>(mut guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(guard.as_mut_slice()).await
     }
 }
 
@@ -60,7 +209,9 @@ pub(crate) const TYPE_FULL: u8 = 0xFE;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TypeTag {
-    Null = 0,
+    // The Rust unit type `()`. It carries no bytes; JS decodes it to `undefined`,
+    // so an export returning `()` resolves to `undefined`, matching wasm-bindgen.
+    Undefined = 0,
     Bool = 1,
     U8 = 2,
     U16 = 3,
@@ -302,7 +453,7 @@ pub trait EncodeTypeDef {
 
 impl EncodeTypeDef for () {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.push_tag(TypeTag::Null);
+        type_def.push_tag(TypeTag::Undefined);
     }
 }
 

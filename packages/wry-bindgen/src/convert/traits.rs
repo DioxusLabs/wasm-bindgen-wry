@@ -1,4 +1,6 @@
-use crate::__rt::{BinaryDecode, BinaryEncode, EncodeTypeDef, JsRef};
+use crate::__rt::{
+    Anchored, BinaryDecode, BinaryEncode, BorrowScope, CallScoped, EncodeTypeDef, JsRef,
+};
 use crate::{JsCast, JsValue};
 use core::mem::ManuallyDrop;
 use core::ops::Deref;
@@ -119,38 +121,65 @@ where
     }
 }
 
-/// Converts the return value of an exported function into wire bytes. Mirrors
-/// wasm-bindgen's `ReturnWasmAbi`: a blanket implementation forwards every
-/// `IntoWasmAbi` value directly, while `Result` is carved out so its `Err` is
-/// thrown in JS. Because `Result` is not `IntoWasmAbi`, the two implementations
-/// do not overlap, and dispatch is by type (so it sees through type aliases).
-pub trait ReturnWasmAbi {
+/// The wire type advertised to JS for a return value, in borrow scope `S` — the
+/// return-side analog of [`ArgAbi<S>::Wire`](crate::convert::ArgAbi::Wire). For
+/// [`CallScoped`] it is the value's own wire type; for [`Anchored`] it is the
+/// `Promise` *resolution* (the export macro wraps it in the configured
+/// `js_sys::Promise<…>`, since `Promise` lives in the external `js-sys` crate).
+/// The encode/lower behavior lives on the [`ReturnSync`]/[`ReturnAsync`]
+/// sub-traits, so a value implements only the scope(s) it is returnable in.
+pub trait ReturnAbi<S: BorrowScope> {
     /// The type whose `TypeDef` is advertised to JS for this return value.
     type Wire: EncodeTypeDef;
+}
 
+/// Encode a synchronous export's return value as wire bytes. A blanket forwards
+/// every `IntoWasmAbi` value directly; `Result` is carved out so its `Err` is
+/// thrown in JS. Because `Result` is not `IntoWasmAbi` the two do not overlap,
+/// and dispatch is by type (so it sees through type aliases).
+pub trait ReturnSync: ReturnAbi<CallScoped> {
     /// Encode `self` as the function's return payload.
     fn return_abi(self, encoder: &mut crate::__rt::EncodedData);
 }
 
-impl<T: IntoWasmAbi> ReturnWasmAbi for T {
+impl<T: IntoWasmAbi> ReturnAbi<CallScoped> for T {
     type Wire = T;
-
+}
+impl<T: IntoWasmAbi> ReturnSync for T {
     #[inline]
     fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
         self.encode(encoder);
     }
 }
 
-impl<T, E> ReturnWasmAbi for Result<T, E>
+impl<T, E> ReturnAbi<CallScoped> for Result<T, E>
 where
     T: BinaryEncode + EncodeTypeDef,
     E: Into<JsValue>,
 {
     type Wire = crate::__rt::ThrowingResult<T, JsValue>;
-
+}
+impl<T, E> ReturnSync for Result<T, E>
+where
+    T: BinaryEncode + EncodeTypeDef,
+    E: Into<JsValue>,
+{
     #[inline]
     fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
         crate::__rt::ThrowingResult(self.map_err(Into::into)).encode(encoder);
+    }
+}
+
+// An exported constructor hands JS the stored object's handle by value (JS then
+// `__wrap`s it). `ObjectHandle` is not `IntoWasmAbi` and is only ever returned by
+// a *sync* constructor, so it implements the sync scope only.
+impl ReturnAbi<CallScoped> for crate::__rt::object_store::ObjectHandle {
+    type Wire = Self;
+}
+impl ReturnSync for crate::__rt::object_store::ObjectHandle {
+    #[inline]
+    fn return_abi(self, encoder: &mut crate::__rt::EncodedData) {
+        self.encode(encoder);
     }
 }
 
@@ -164,30 +193,46 @@ pub trait TryFromJsValue: Sized {
 }
 
 /// Lowers the output of an exported `async fn` to the `Result<JsValue, JsValue>`
-/// that backs a JS promise (an `Err` becomes a rejected promise). Mirrors
-/// wasm-bindgen's `IntoJsResult`, with an added `Resolution` associated type so
-/// the macro can advertise the `Promise<...>` wire type. `Result` is carved out
-/// by type - seen through aliases - and does not overlap the blanket because
-/// `Result` is not `Into<JsValue>`.
-pub trait IntoJsResult {
-    /// The resolution type of the `Promise` this return value produces.
-    type Resolution;
-
+/// that backs a JS promise (an `Err` becomes a rejected promise). A blanket
+/// covers every `Into<JsValue> + Promising` value; `Result` is carved out by type
+/// (it does not overlap because `Result` is not `Into<JsValue>`). The promise
+/// resolution type is [`ReturnAbi<Anchored>::Wire`], delegated to [`Promising`].
+pub trait ReturnAsync: ReturnAbi<Anchored> {
     fn into_js_result(self) -> Result<JsValue, JsValue>;
 }
 
-impl<T: Into<JsValue> + crate::sys::Promising> IntoJsResult for T {
-    type Resolution = <T as crate::sys::Promising>::Resolution;
-
+impl<T> ReturnAbi<Anchored> for T
+where
+    T: Into<JsValue> + crate::sys::Promising,
+    <T as crate::sys::Promising>::Resolution: EncodeTypeDef,
+{
+    type Wire = <T as crate::sys::Promising>::Resolution;
+}
+impl<T> ReturnAsync for T
+where
+    T: Into<JsValue> + crate::sys::Promising,
+    <T as crate::sys::Promising>::Resolution: EncodeTypeDef,
+{
     #[inline]
     fn into_js_result(self) -> Result<JsValue, JsValue> {
         Ok(self.into())
     }
 }
 
-impl<T: Into<JsValue> + crate::sys::Promising, E: Into<JsValue>> IntoJsResult for Result<T, E> {
-    type Resolution = <T as crate::sys::Promising>::Resolution;
-
+impl<T, E> ReturnAbi<Anchored> for Result<T, E>
+where
+    T: Into<JsValue> + crate::sys::Promising,
+    <T as crate::sys::Promising>::Resolution: EncodeTypeDef,
+    E: Into<JsValue>,
+{
+    type Wire = <T as crate::sys::Promising>::Resolution;
+}
+impl<T, E> ReturnAsync for Result<T, E>
+where
+    T: Into<JsValue> + crate::sys::Promising,
+    <T as crate::sys::Promising>::Resolution: EncodeTypeDef,
+    E: Into<JsValue>,
+{
     #[inline]
     fn into_js_result(self) -> Result<JsValue, JsValue> {
         match self {
@@ -346,8 +391,3 @@ impl<T: IntoJsGeneric + Clone> IntoJsGeneric for &T {
         self.clone().to_js()
     }
 }
-
-// `RefFromBinaryDecode` is defined in the runtime (so its closure-encode impls
-// can borrow-decode a first argument) and re-exported here; the impls for JS
-// handles and exported structs live in this crate/codegen.
-pub use crate::__rt::RefFromBinaryDecode;

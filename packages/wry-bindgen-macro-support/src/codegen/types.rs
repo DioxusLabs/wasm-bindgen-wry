@@ -229,8 +229,9 @@ pub(super) fn generate_type(
         }
     };
 
-    // Borrowed-decode support, so this type can be a `&T` callback argument
-    // (e.g. `dyn FnMut(&Event)`). The borrowed value rides JS's borrow stack.
+    // Borrowed-argument support, so this type can be a `&T` export or callback
+    // argument (e.g. `dyn FnMut(&Event)`). The synchronous borrowed value rides
+    // JS's borrow stack.
     // The anchor borrows through `JsCast`, so the impl is gated on `Self: JsCast`
     // — matching the conditional `JsCast` impl a generic extern type carries.
     let ref_self_ty: syn::Type = syn::parse_quote!(#rust_name #ty_generics);
@@ -239,45 +240,79 @@ pub(super) fn generate_type(
         .make_where_clause()
         .predicates
         .push(syn::parse_quote!(#ref_self_ty: #krate::JsCast));
-    let (ref_impl_generics, _, ref_where_clause) = ref_generics.split_for_impl();
-    let ref_from_binary_decode_impl = quote_spanned! {span=>
-        impl #ref_impl_generics #krate::convert::RefFromBinaryDecode for #rust_name #ty_generics #ref_where_clause {
-            type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
-            type Anchor = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
-            fn ref_decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Anchor, #krate::__rt::DecodeError> {
-                #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
-            }
-        }
-
+    // `ArgAbi`'s `Projected<'a>` GAT carries no `Self: 'a` bound — it lends a
+    // `for<'a>` borrow through a continuation — so `&'a #rust_name` is only
+    // well-formed when the type outlives every `'a`. A generic extern type (e.g.
+    // `JsOption<T>`) needs `T: 'static` for that; non-generic types satisfy it
+    // trivially. Mirror the hand-written `&[T]` impl's `'static` bound.
+    let mut argabi_ref_generics = ref_generics.clone();
+    argabi_ref_generics
+        .make_where_clause()
+        .predicates
+        .push(syn::parse_quote!(#ref_self_ty: 'static));
+    let (argabi_ref_impl_generics, _, argabi_ref_where_clause) =
+        argabi_ref_generics.split_for_impl();
+    let mut argabi_owned_generics = generics.clone();
+    argabi_owned_generics
+        .make_where_clause()
+        .predicates
+        .push(syn::parse_quote!(#ref_self_ty: 'static));
+    let (argabi_owned_impl_generics, _, argabi_owned_where_clause) =
+        argabi_owned_generics.split_for_impl();
+    let argabi_impls = quote_spanned! {span=>
         // `ArgAbi<S>` for the borrowed `&Self` argument, so an exported function
         // decoding a borrowed imported type goes through the uniform `<#arg_ty as
-        // ArgAbi<S>>` projection (also when it arrives behind an alias). This is
-        // the one borrow shape that differs by scope: a synchronous (`CallScoped`)
-        // borrow rides JS's borrow stack (gated on `Self: JsCast`), while an async
-        // (`Anchored`) borrow anchors an owned copy that outlives the `Promise`.
-        impl #ref_impl_generics #krate::convert::ArgAbi<#krate::convert::CallScoped> for &#rust_name #ty_generics #ref_where_clause {
+        // ArgAbi<S>>` projection (also when it arrives behind an alias). Callback
+        // decoding uses the same `CallScoped` impl for borrowed first arguments.
+        // This is the one borrow shape that differs by scope: a synchronous
+        // (`CallScoped`) borrow rides JS's borrow stack (gated on `Self: JsCast`),
+        // while an async (`Anchored`) borrow anchors an owned copy that outlives
+        // the `Promise`.
+        impl #argabi_ref_impl_generics #krate::convert::ArgAbi<#krate::convert::CallScoped> for &#rust_name #ty_generics #argabi_ref_where_clause {
             type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
             type Guard = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
-            type Projected<'__wry> = &'__wry #rust_name #ty_generics where Self: '__wry;
+            type ProjectedGuard = ();
+            type Projected<'__wry> = &'__wry #rust_name #ty_generics;
             fn decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
             }
-            fn project(guard: &mut Self::Guard) -> &#rust_name #ty_generics {
-                guard
+            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
+            where
+                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                let __wry_result = with(&*guard);
+                (__wry_result, ())
+            }
+            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
+            where
+                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                async move { with(&*guard).await }
             }
         }
 
-        impl #impl_generics #krate::convert::ArgAbi<#krate::convert::Anchored> for &#rust_name #ty_generics #where_clause {
+        impl #argabi_owned_impl_generics #krate::convert::ArgAbi<#krate::convert::Anchored> for &#rust_name #ty_generics #argabi_owned_where_clause {
             type Wire = #rust_name #ty_generics;
             type Guard = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
-            type Projected<'__wry> = &'__wry #rust_name #ty_generics where Self: '__wry;
+            type ProjectedGuard = Self::Guard;
+            type Projected<'__wry> = &'__wry #rust_name #ty_generics;
             fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
                 #krate::__rt::core::result::Result::Ok(#krate::convert::OwnedArgAnchor::from_value(
                     <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
                 ))
             }
-            fn project(guard: &mut Self::Guard) -> &#rust_name #ty_generics {
-                guard
+            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
+            where
+                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                let __wry_result = with(&*guard);
+                (__wry_result, guard)
+            }
+            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
+            where
+                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
+            {
+                async move { with(&*guard).await }
             }
         }
     };
@@ -526,7 +561,7 @@ pub(super) fn generate_type(
         #binary_encode_impl
         #js_ref_encode_impl
         #binary_decode_impl
-        #ref_from_binary_decode_impl
+        #argabi_impls
         #batchable_impl
         #jscast_impl
         #generic_trait_impls

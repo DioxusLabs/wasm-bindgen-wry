@@ -5,14 +5,49 @@
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use core::cell::RefCell;
-
-use super::{
-    BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodeTypeDef, EncodedData,
-    RefFromBinaryDecode, TypeDef, object_store::ObjectHandle,
-};
 use core::marker::PhantomData;
 
+use super::{
+    ArgAbi, BinaryDecode, BinaryEncode, CallScoped, DecodeError, DecodedData, EncodeTypeDef,
+    EncodedData, TypeDef, object_store::ObjectHandle,
+};
+
 type CallbackFn = dyn Fn(&mut DecodedData, &mut EncodedData) -> Result<(), DecodeError>;
+
+#[derive(Clone, Copy)]
+enum CallbackPolicy {
+    RustOwned = 0,
+    JsOwned = 1,
+    JsOwnedOnce = 2,
+}
+
+#[doc(hidden)]
+pub struct CallbackKey<F: ?Sized>(ObjectHandle, CallbackPolicy, PhantomData<F>);
+
+impl<F: ?Sized> CallbackKey<F> {
+    pub fn new(handle: ObjectHandle) -> Self {
+        Self::js_owned(handle)
+    }
+
+    pub fn rust_owned(handle: ObjectHandle) -> Self {
+        CallbackKey(handle, CallbackPolicy::RustOwned, PhantomData)
+    }
+
+    fn js_owned(handle: ObjectHandle) -> Self {
+        CallbackKey(handle, CallbackPolicy::JsOwned, PhantomData)
+    }
+
+    pub fn js_owned_once(handle: ObjectHandle) -> Self {
+        CallbackKey(handle, CallbackPolicy::JsOwnedOnce, PhantomData)
+    }
+}
+
+impl<F: ?Sized> BinaryEncode for CallbackKey<F> {
+    fn encode(self, encoder: &mut EncodedData) {
+        self.0.encode(encoder);
+        (self.1 as u32).encode(encoder);
+    }
+}
 
 #[derive(Clone)]
 pub struct RustCallback {
@@ -59,11 +94,9 @@ pub trait IntoRustCallback {
     fn into_rust_callback(self) -> RustCallback;
 }
 
-const RUST_OWNED_CALLBACK_POLICY: u32 = 0;
-
 fn encode_rust_owned_callback(handle: ObjectHandle, encoder: &mut EncodedData) {
     handle.encode(encoder);
-    RUST_OWNED_CALLBACK_POLICY.encode(encoder);
+    (CallbackPolicy::RustOwned as u32).encode(encoder);
 }
 
 macro_rules! callback_type_def_body {
@@ -76,11 +109,42 @@ macro_rules! callback_type_def_body {
             1
         })*;
         $encoder.callback_with_signature(count, |type_def| {
-            <<$first as RefFromBinaryDecode>::Wire as EncodeTypeDef>::encode_type_def(type_def);
+            <<&'static $first as ArgAbi<CallScoped>>::Wire as EncodeTypeDef>::encode_type_def(type_def);
             $(<$rest as EncodeTypeDef>::encode_type_def(type_def);)*
             <$R as EncodeTypeDef>::encode_type_def(type_def);
         });
     }};
+}
+
+macro_rules! impl_callback_key_type_def {
+    ($($arg:ident),*) => {
+        impl<R, $($arg,)*> EncodeTypeDef for CallbackKey<fn($($arg),*) -> R>
+        where
+            $($arg: EncodeTypeDef + 'static,)*
+            R: EncodeTypeDef + 'static,
+        {
+            fn encode_type_def(encoder: &mut TypeDef) {
+                callback_type_def_body!(encoder; R = R; $($arg),*);
+            }
+        }
+    };
+}
+
+macro_rules! impl_borrowed_first_callback_key_type_def {
+    ($first:ident $(, $rest:ident)*) => {
+        #[allow(coherence_leak_check)]
+        impl<R, $first, $($rest,)*> EncodeTypeDef for CallbackKey<fn(&$first, $($rest),*) -> R>
+        where
+            &'static $first: ArgAbi<CallScoped>,
+            $first: 'static,
+            $($rest: EncodeTypeDef + 'static,)*
+            R: EncodeTypeDef + 'static,
+        {
+            fn encode_type_def(encoder: &mut TypeDef) {
+                callback_type_def_body!(encoder; R = R; borrow_first = $first; $($rest),*);
+            }
+        }
+    };
 }
 
 macro_rules! insert_callback {
@@ -201,7 +265,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
         impl<'borrow, 'object, R, $first, $($rest,)*> IntoRustCallback
             for &'borrow mut (dyn FnMut(&$first, $($rest),*) -> R + 'object)
         where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -216,9 +282,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
                     unsafe { scoped_callback_ref_mut(self) };
                 RustCallback::new_fn_mut(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__anchor, $($rest),*);
+                        let result = f(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -230,7 +296,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
         impl<'borrow, 'object, R, $first, $($rest,)*> IntoRustCallback
             for &'borrow (dyn Fn(&$first, $($rest),*) -> R + 'object)
         where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -244,9 +312,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
                     unsafe { scoped_callback_ref(self) };
                 RustCallback::new_fn(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__anchor, $($rest),*);
+                        let result = f(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -258,7 +326,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
         impl<'borrow, 'object, R, $first, $($rest,)*> IntoRustCallback
             for &'borrow mut (dyn Fn(&$first, $($rest),*) -> R + 'object)
         where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -272,9 +342,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
                     unsafe { scoped_callback_ref(&*self) };
                 RustCallback::new_fn(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __anchor = <$first as RefFromBinaryDecode>::ref_decode(_decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__anchor, $($rest),*);
+                        let result = f(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -361,8 +431,9 @@ macro_rules! impl_callback_ref {
 }
 
 // Encode a borrowed `&dyn Fn`/`&mut dyn FnMut` whose FIRST argument is a
-// reference (`&First`). The first arg is decoded through `RefFromBinaryDecode`
-// (it rides JS's borrow stack and is anchored for the call), the rest by value.
+// reference (`&First`). The first arg is decoded through `ArgAbi<CallScoped>`
+// (it rides JS's borrow stack or object-store checkout and is anchored for
+// the call), the rest by value.
 macro_rules! encode_callback_borrow_first {
     (
         impl ($($self_ty:tt)*);
@@ -371,7 +442,9 @@ macro_rules! encode_callback_borrow_first {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> BinaryEncode for $($self_ty)*
         where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -393,7 +466,8 @@ macro_rules! impl_callback_borrow_first {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> EncodeTypeDef for &mut dyn FnMut(&$first, $($rest),*) -> R
         where
-            $first: RefFromBinaryDecode + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            $first: 'static,
             $($rest: EncodeTypeDef + 'static,)*
             R: EncodeTypeDef + 'static,
         {
@@ -410,7 +484,8 @@ macro_rules! impl_callback_borrow_first {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> EncodeTypeDef for &dyn Fn(&$first, $($rest),*) -> R
         where
-            $first: RefFromBinaryDecode + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            $first: 'static,
             $($rest: EncodeTypeDef + 'static,)*
             R: EncodeTypeDef + 'static,
         {
@@ -427,7 +502,8 @@ macro_rules! impl_callback_borrow_first {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> EncodeTypeDef for &mut dyn Fn(&$first, $($rest),*) -> R
         where
-            $first: RefFromBinaryDecode + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            $first: 'static,
             $($rest: EncodeTypeDef + 'static,)*
             R: EncodeTypeDef + 'static,
         {
@@ -442,6 +518,25 @@ macro_rules! impl_callback_borrow_first {
         );
     };
 }
+
+impl_callback_key_type_def!();
+impl_callback_key_type_def!(A1);
+impl_callback_key_type_def!(A1, A2);
+impl_callback_key_type_def!(A1, A2, A3);
+impl_callback_key_type_def!(A1, A2, A3, A4);
+impl_callback_key_type_def!(A1, A2, A3, A4, A5);
+impl_callback_key_type_def!(A1, A2, A3, A4, A5, A6);
+impl_callback_key_type_def!(A1, A2, A3, A4, A5, A6, A7);
+impl_callback_key_type_def!(A1, A2, A3, A4, A5, A6, A7, A8);
+
+impl_borrowed_first_callback_key_type_def!(A1);
+impl_borrowed_first_callback_key_type_def!(A1, A2);
+impl_borrowed_first_callback_key_type_def!(A1, A2, A3);
+impl_borrowed_first_callback_key_type_def!(A1, A2, A3, A4);
+impl_borrowed_first_callback_key_type_def!(A1, A2, A3, A4, A5);
+impl_borrowed_first_callback_key_type_def!(A1, A2, A3, A4, A5, A6);
+impl_borrowed_first_callback_key_type_def!(A1, A2, A3, A4, A5, A6, A7);
+impl_borrowed_first_callback_key_type_def!(A1, A2, A3, A4, A5, A6, A7, A8);
 
 impl_callback_borrow_first!(A1);
 impl_callback_borrow_first!(A1, A2);

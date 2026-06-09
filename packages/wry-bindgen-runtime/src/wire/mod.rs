@@ -20,17 +20,17 @@ mod js_ref;
 mod object_store;
 mod registry;
 
-pub use callback::{IntoRustCallback, RustCallback};
+pub use callback::{CallbackKey, IntoRustCallback, RustCallback};
 pub use encode::{
-    BinaryDecode, BinaryEncode, EncodeTypeDef, FunctionTypeInfo, JsRefEncode, MutSliceArg,
-    RefFromBinaryDecode, ThrowingResult, TypeDef,
+    Anchored, ArgAbi, BinaryDecode, BinaryEncode, BorrowScope, CallScoped, EncodeTypeDef,
+    FunctionTypeInfo, JsRefEncode, MutSliceArg, ThrowingResult, TypeDef,
 };
 pub use ipc::{DecodeError, DecodedData, EncodedData};
 pub use js_ref::JsRef;
 pub use object_store::ObjectHandle;
 pub use registry::{
-    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsFreeExportSpec,
-    JsFunctionSpec, JsModuleSpec, JsReexportSpec,
+    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsExportSpecRegistration,
+    JsFunctionArg, JsFunctionSignature, JsFunctionSpec, JsModuleSpec, JsReexportSpec,
 };
 
 /// The runtime side of `link_to!`: register a JS snippet (or resolve a raw

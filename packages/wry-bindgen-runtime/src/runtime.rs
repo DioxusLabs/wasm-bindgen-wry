@@ -419,9 +419,13 @@ fn handle_rust_callback(data: &mut DecodedData) {
             // exception (like a bad-argument decode failure), so a panicking
             // export propagates to the JS caller instead of aborting.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                inventory::iter::<crate::wire::JsExportSpec>()
-                    .find_map(|export| export.call_if_name(&export_name, data))
-                    .unwrap_or_else(|| panic!("Unknown export: {export_name}"))
+                for registration in inventory::iter::<crate::wire::JsExportSpecRegistration> {
+                    let export = registration.spec();
+                    if export.signature().name() == export_name {
+                        return export.call(data);
+                    }
+                }
+                panic!("Unknown export: {export_name}")
             }));
 
             // Send response. A decode/call failure becomes a JS exception the

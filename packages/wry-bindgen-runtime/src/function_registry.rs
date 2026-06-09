@@ -51,8 +51,8 @@ pub(crate) struct FunctionRegistry {
 pub(crate) static FUNCTION_REGISTRY: Lazy<FunctionRegistry> =
     Lazy::new(FunctionRegistry::collect_from_inventory);
 
-fn generate_args(count: usize) -> String {
-    (0..count)
+fn generate_args(arg_types: &[TypeDef]) -> String {
+    (0..arg_types.len())
         .map(|i| format!("a{i}"))
         .collect::<Vec<_>>()
         .join(", ")
@@ -60,6 +60,10 @@ fn generate_args(count: usize) -> String {
 
 fn object_handle_type_def() -> TypeDef {
     TypeDef::of::<ObjectHandle>()
+}
+
+fn unit_type_def() -> TypeDef {
+    TypeDef::of::<()>()
 }
 
 pub(crate) fn type_def_js_array_literal(def: &TypeDef) -> String {
@@ -106,11 +110,6 @@ fn js_type_defs_literal(types: &[TypeDef]) -> String {
     }
     out.push(']');
     out
-}
-
-fn js_optional_type_def_literal(ty: Option<TypeDef>) -> String {
-    ty.map(|ty| type_def_js_array_literal(&ty))
-        .unwrap_or_else(|| "null".to_string())
 }
 
 fn js_string_array_literal(values: &[&str]) -> String {
@@ -211,29 +210,19 @@ struct ClassMemberParts {
     class_name: &'static str,
     member_name: &'static str,
     export_name: &'static str,
-    arg_count: usize,
     arg_types: Vec<TypeDef>,
-    return_type: Option<TypeDef>,
+    return_type: TypeDef,
     kind: JsClassMemberKind,
     consumes_self: bool,
 }
 
 fn class_member_parts(member: &JsClassMemberSpec) -> ClassMemberParts {
-    let (
-        class_name,
-        member_name,
-        export_name,
-        arg_count,
-        arg_types,
-        return_type,
-        kind,
-        consumes_self,
-    ) = member.parts();
+    let (class_name, member_name, export_name, arg_types, return_type, kind, consumes_self) =
+        member.parts();
     ClassMemberParts {
         class_name,
         member_name,
         export_name,
-        arg_count,
         arg_types,
         return_type,
         kind,
@@ -244,14 +233,14 @@ fn class_member_parts(member: &JsClassMemberSpec) -> ClassMemberParts {
 fn call_export_expression(
     export_name: &str,
     arg_types: &[TypeDef],
-    return_type: Option<TypeDef>,
+    return_type: &TypeDef,
     args_call: &str,
 ) -> String {
     format!(
         r#"window.__wryCallExport("{}", {}, {}, [{}])"#,
         export_name,
         js_type_defs_literal(arg_types),
-        js_optional_type_def_literal(return_type),
+        type_def_js_array_literal(return_type),
         args_call,
     )
 }
@@ -532,7 +521,7 @@ impl FunctionRegistry {
                     let call = call_export_expression(
                         &upcast,
                         &[object_handle_type_def()],
-                        Some(object_handle_type_def()),
+                        &object_handle_type_def(),
                         &prev_handle,
                     );
                     writeln!(&mut out, "{target}.__wbg_ptr_{ancestor} = {call};").unwrap();
@@ -550,7 +539,7 @@ impl FunctionRegistry {
                 let own_drop = call_export_expression(
                     &drop_export_name,
                     &drop_arg_types,
-                    None,
+                    &unit_type_def(),
                     &format!("{handle_prefix}_{class_name}"),
                 );
                 writeln!(
@@ -562,7 +551,7 @@ impl FunctionRegistry {
                     let drop_call = call_export_expression(
                         &format!("{ancestor}::__drop"),
                         &drop_arg_types,
-                        None,
+                        &unit_type_def(),
                         &format!("{handle_prefix}_{ancestor}"),
                     );
                     writeln!(
@@ -597,13 +586,12 @@ impl FunctionRegistry {
                 .iter()
                 .find(|member| matches!(member.kind, JsClassMemberKind::Constructor))
                 .map(|member| {
-                    let args = generate_args(member.arg_count);
-                    let args_call = if member.arg_count > 0 { &args } else { "" };
+                    let args = generate_args(&member.arg_types);
                     let call = call_export_expression(
                         member.export_name,
                         &member.arg_types,
-                        member.return_type.clone(),
-                        args_call,
+                        &member.return_type,
+                        &args,
                     );
                     let slots = populate_slots("this");
                     let token = finalizer_token("this");
@@ -679,22 +667,22 @@ impl FunctionRegistry {
             for member in members {
                 match member.kind {
                     JsClassMemberKind::Method => {
-                        let args = generate_args(member.arg_count);
+                        let args = generate_args(&member.arg_types);
                         // `__h` is this defining class's per-class handle slot
                         // (its own handle for a direct instance, an ancestor view
                         // when inherited by a descendant). A consuming method also
                         // gates against subclass prototype dispatch.
-                        let args_with_handle = if member.arg_count > 0 {
-                            format!("__h, {args}")
-                        } else {
+                        let args_with_handle = if args.is_empty() {
                             "__h".to_string()
+                        } else {
+                            format!("__h, {args}")
                         };
                         let mut arg_types = vec![object_handle_type_def()];
                         arg_types.extend(member.arg_types.iter().cloned());
                         let call = call_export_expression(
                             member.export_name,
                             &arg_types,
-                            member.return_type.clone(),
+                            &member.return_type,
                             &args_with_handle,
                         );
                         let (read, consume) =
@@ -733,7 +721,7 @@ impl FunctionRegistry {
                 call_export_expression(
                     member.export_name,
                     &arg_types,
-                    member.return_type.clone(),
+                    &member.return_type,
                     args_call,
                 )
             };
@@ -776,7 +764,7 @@ impl FunctionRegistry {
                 call_export_expression(
                     member.export_name,
                     &member.arg_types,
-                    member.return_type.clone(),
+                    &member.return_type,
                     args_call,
                 )
             };
@@ -829,13 +817,12 @@ impl FunctionRegistry {
                 if !matches!(member.kind, JsClassMemberKind::StaticMethod) {
                     continue;
                 }
-                let args = generate_args(member.arg_count);
-                let args_call = if member.arg_count > 0 { &args } else { "" };
+                let args = generate_args(&member.arg_types);
                 let call = call_export_expression(
                     member.export_name,
                     &member.arg_types,
-                    member.return_type.clone(),
-                    args_call,
+                    &member.return_type,
+                    &args,
                 );
                 let method_name = member.member_name;
                 writeln!(
@@ -873,38 +860,48 @@ impl FunctionRegistry {
         }
 
         let mut start_calls = Vec::new();
-        for export in inventory::iter::<crate::wire::JsFreeExportSpec>() {
-            let (
-                name,
-                namespace,
-                arg_count,
-                arg_names,
-                arg_types,
-                return_type,
-                this,
-                public,
-                start,
-                variadic,
-            ) = export.parts();
-            let arg_idents: Vec<String> = if arg_names.is_empty() {
-                (0..arg_count).map(|i| format!("a{i}")).collect()
-            } else {
-                arg_names.iter().map(|name| name.to_string()).collect()
-            };
+        for registration in inventory::iter::<crate::wire::JsExportSpecRegistration>() {
+            let export = registration.spec();
+            let signature = export.signature();
+            let name = signature.name();
+            let namespace = signature.namespace();
+            let args_spec = signature.args();
+            let arg_types: Vec<_> = args_spec.iter().map(|arg| arg.ty.clone()).collect();
+            let return_type = signature.return_type().clone();
+            let this = signature.this();
+            let public = signature.public();
+            let start = signature.start();
+            let variadic = signature.variadic();
+            let wire_arg_idents: Vec<String> = args_spec
+                .iter()
+                .enumerate()
+                .map(|(i, arg)| {
+                    if arg.name.is_empty() {
+                        format!("a{i}")
+                    } else {
+                        arg.name.to_string()
+                    }
+                })
+                .collect();
+            let param_idents: Vec<String> = wire_arg_idents
+                .iter()
+                .skip(usize::from(this))
+                .cloned()
+                .collect();
             // A `#[wasm_bindgen(variadic)]` export collects every trailing
             // argument into its final parameter: the wrapper declares that
             // parameter as a JS rest parameter (`...aN`) so a spread call such as
             // `f(...arr)` arrives in Rust as one array, while the call passes the
             // already-gathered array straight through.
-            let params = if variadic && !arg_idents.is_empty() {
-                let mut idents = arg_idents.clone();
+            let params = if variadic && !param_idents.is_empty() {
+                let mut idents = param_idents.clone();
                 let last = idents.pop().unwrap();
                 idents.push(format!("...{last}"));
                 idents.join(", ")
             } else {
-                arg_idents.join(", ")
+                param_idents.join(", ")
             };
-            let args = arg_idents.join(", ");
+            let args = param_idents.join(", ");
             let args_call = if this {
                 if args.is_empty() {
                     "this".to_string()
@@ -914,7 +911,7 @@ impl FunctionRegistry {
             } else {
                 args.clone()
             };
-            let call = call_export_expression(name, &arg_types, return_type.clone(), &args_call);
+            let call = call_export_expression(name, &arg_types, &return_type, &args_call);
             if public {
                 // Name the wrapper after the export, so it appears in thrown
                 // errors' stack traces (matching wasm-bindgen's named shims).
