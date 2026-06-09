@@ -37,8 +37,9 @@ pub use wry_bindgen_core::{link_to_raw_specifier, register_linked_module};
 #[doc(hidden)]
 pub mod object_store {
     pub use crate::object_store::{
-        ObjectHandle, ObjectRefAnchor, ObjectRefMutAnchor, create_js_wrapper, drop_object,
-        insert_object, object_is, remove_object, with_object, with_object_mut,
+        ObjectHandle, ObjectRefAnchor, ObjectRefMutAnchor, checkout_object_mut,
+        checkout_object_ref, create_js_wrapper, drop_object, insert_object, object_is,
+        remove_object,
     };
 }
 

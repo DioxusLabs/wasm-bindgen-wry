@@ -38,16 +38,6 @@ pub fn drop_object(handle: ObjectHandle) {
     handle.drop_rust_object()
 }
 
-pub fn with_object<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&T) -> R) -> R {
-    let guard = checkout_object_ref::<T>(handle);
-    f(&guard)
-}
-
-pub fn with_object_mut<T: 'static, R>(handle: ObjectHandle, f: impl FnOnce(&mut T) -> R) -> R {
-    let mut guard = checkout_object_mut::<T>(handle);
-    f(&mut guard)
-}
-
 pub fn checkout_object_ref<T: 'static>(
     handle: ObjectHandle,
 ) -> impl core::ops::Deref<Target = T> + 'static {

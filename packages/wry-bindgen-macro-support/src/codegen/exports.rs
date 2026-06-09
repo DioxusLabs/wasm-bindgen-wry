@@ -177,12 +177,14 @@ fn receiver_callable_with_handle(
     match self_ty {
         MethodSelf::RefShared => quote_spanned! {span=>
             move |#params| {
-                #store::with_object::<#class, _>(#handle, |obj| obj.#rust_name(#(#call_args),*))
+                let __wry_obj = #store::checkout_object_ref::<#class>(#handle);
+                __wry_obj.#rust_name(#(#call_args),*)
             }
         },
         MethodSelf::RefMutable => quote_spanned! {span=>
             move |#params| {
-                #store::with_object_mut::<#class, _>(#handle, |obj| obj.#rust_name(#(#call_args),*))
+                let mut __wry_obj = #store::checkout_object_mut::<#class>(#handle);
+                __wry_obj.#rust_name(#(#call_args),*)
             }
         },
         MethodSelf::ByValue => quote_spanned! {span=>
@@ -779,9 +781,8 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
             &upcast_args,
             quote_spanned! {span=>
                 move |#upcast_params| {
-                    let parent = #krate::__rt::object_store::with_object::<#rust_name, _>(#upcast_handle, |obj| {
-                        #krate::Parent::share_cell(&obj.parent)
-                    });
+                    let __wry_obj = #krate::__rt::object_store::checkout_object_ref::<#rust_name>(#upcast_handle);
+                    let parent = #krate::Parent::share_cell(&__wry_obj.parent);
                     let ancestor = #krate::Parent::from_cell(parent);
                     #krate::__rt::object_store::insert_object(ancestor)
                 }
@@ -963,15 +964,13 @@ fn generate_field_accessor(
     // Generate getter
     let getter_value = if field.getter_with_clone.is_some() {
         quote_spanned! {span=>
-            #krate::__rt::object_store::with_object::<#struct_name, _>(#getter_handle, |obj| {
-                #krate::__rt::core::clone::Clone::clone(&obj.#field_name)
-            })
+            let __wry_obj = #krate::__rt::object_store::checkout_object_ref::<#struct_name>(#getter_handle);
+            #krate::__rt::core::clone::Clone::clone(&__wry_obj.#field_name)
         }
     } else {
         quote_spanned! {span=>
-            #krate::__rt::object_store::with_object::<#struct_name, _>(#getter_handle, |obj| {
-                obj.#field_name
-            })
+            let __wry_obj = #krate::__rt::object_store::checkout_object_ref::<#struct_name>(#getter_handle);
+            __wry_obj.#field_name
         }
     };
 
@@ -1011,9 +1010,8 @@ fn generate_field_accessor(
             &setter_args,
             quote_spanned! {span=>
                 move |#setter_params| {
-                    #krate::__rt::object_store::with_object_mut::<#struct_name, _>(#setter_handle, |obj| {
-                        obj.#field_name = #setter_val;
-                    });
+                    let mut __wry_obj = #krate::__rt::object_store::checkout_object_mut::<#struct_name>(#setter_handle);
+                    __wry_obj.#field_name = #setter_val;
                 }
             },
             quote_spanned! {span=> #setter_name },
