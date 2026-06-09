@@ -964,12 +964,33 @@ fn rewrite_dependency_packages(
     let text = fs::read_to_string(path)?;
     let mut lines = Lines::from(&text);
     let mut changed = false;
+    let mut current_section = None;
 
     for index in 0..lines.len() {
+        if let Some(section) = section_name(lines.body(index)) {
+            current_section = Some(section.to_string());
+            continue;
+        }
+        let in_dev_dependencies = current_section.as_deref().is_some_and(|section| {
+            section == "dev-dependencies" || section.ends_with(".dev-dependencies")
+        });
+
         let line = lines.body(index).to_string();
         let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
             continue;
         };
+
+        if in_dev_dependencies {
+            let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
+            if inline_table_value(table_body, "path").is_some()
+                && renamed_package_name(dependency_name).is_some()
+            {
+                let updated_table = remove_inline_table_value(table_body, "path");
+                lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+                changed = true;
+            }
+            continue;
+        }
 
         // The wasm32 `wasm-bindgen` delegate is sourced from git so the workspace
         // `[patch.crates-io]` does not capture it. A git source cannot be published,
@@ -1330,6 +1351,63 @@ fn replace_inline_table_value(table: &str, key: &str, value: &str) -> String {
     table.to_string()
 }
 
+fn remove_inline_table_value(table: &str, key: &str) -> String {
+    split_top_level_inline_table_fields(table)
+        .into_iter()
+        .filter(|field| !inline_table_field_has_key(field, key))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn split_top_level_inline_table_fields(table: &str) -> Vec<&str> {
+    let mut fields = Vec::new();
+    let mut start = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut bracket_depth = 0usize;
+
+    for (index, ch) in table.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '[' | '{' => bracket_depth += 1,
+            ']' | '}' => bracket_depth = bracket_depth.saturating_sub(1),
+            ',' if bracket_depth == 0 => {
+                fields.push(&table[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+
+    fields.push(&table[start..]);
+    fields
+}
+
+fn inline_table_field_has_key(field: &str, key: &str) -> bool {
+    let trimmed = field.trim_start();
+    let Some(rest) = trimmed.strip_prefix(key) else {
+        return false;
+    };
+    let Some(next) = rest.chars().next() else {
+        return false;
+    };
+    if next.is_ascii_alphanumeric() || next == '_' || next == '-' {
+        return false;
+    }
+    rest.trim_start().starts_with('=')
+}
+
 struct Lines {
     lines: Vec<Line>,
 }
@@ -1474,6 +1552,45 @@ mod tests {
 
         assert!(table.contains(r#"package = "wasm-bindgen-x""#));
         assert!(!table.contains(r#"package = "wasm-bindgen""#));
+    }
+
+    #[test]
+    fn remove_inline_table_value_preserves_array_values() {
+        let table = r#" path = "../../vendored/wasm-bindgen/crates/web-sys", version = "=0.3.99", features = ["Window", "Document", "Element", "HtmlElement"] "#;
+        let table = remove_inline_table_value(table, "path");
+
+        assert!(!table.contains("path ="));
+        assert!(table.contains(r#"version = "=0.3.99""#));
+        assert!(table.contains(r#"features = ["Window", "Document", "Element", "HtmlElement"]"#));
+    }
+
+    #[test]
+    fn rewrite_dependency_packages_keeps_dev_dependencies_on_registry_names() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-dev-dep-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"wry-bindgen-runtime\"
+version = \"0.2.122-alpha.5\"
+
+[dev-dependencies]
+web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=0.3.99\", features = [\"Window\", \"Document\"] }
+";
+        fs::write(&path, input).unwrap();
+
+        let mut versions = BTreeMap::new();
+        versions.insert("web-sys-x".to_string(), "0.3.99-alpha.5".to_string());
+        rewrite_dependency_packages(&path, &versions, true).unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains(
+            "web-sys = { version = \"=0.3.99\", features = [\"Window\", \"Document\"] }"
+        ));
+        assert!(!output.contains("web-sys-x"));
+        assert!(!output.contains("path ="));
     }
 
     #[test]

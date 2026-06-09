@@ -16,6 +16,11 @@ use std::path::{Path, PathBuf};
 use std::process;
 
 const LOCAL_MANIFESTS: &[(&str, &str)] = &[
+    (
+        "packages/wry-bindgen-runtime/Cargo.toml",
+        "wry-bindgen-runtime",
+    ),
+    ("packages/wry-bindgen-core/Cargo.toml", "wry-bindgen-core"),
     ("packages/wry-bindgen/Cargo.toml", "wry-bindgen"),
     ("packages/wry-bindgen-macro/Cargo.toml", "wry-bindgen-macro"),
     (
@@ -33,9 +38,11 @@ const LOCAL_CRATES: &[&str] = &[
     "wasm-bindgen",
     "wasm-bindgen-macro",
     "wasm-bindgen-macro-support",
+    "wry-bindgen-core",
     "wry-bindgen",
     "wry-bindgen-macro",
     "wry-bindgen-macro-support",
+    "wry-bindgen-runtime",
 ];
 const UPSTREAM_PACKAGE_NAMES: &[&str] = &["wasm-bindgen", "not-wasm-bindgen"];
 const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
@@ -1004,12 +1011,20 @@ name = "wry-bindgen"
 version = "0.2.106-alpha.1"
 
 [[package]]
+name = "wry-bindgen-core"
+version = "0.1.0"
+
+[[package]]
 name = "wry-bindgen-macro"
 version = "0.2.106-alpha.1"
 
 [[package]]
 name = "wry-bindgen-macro-support"
 version = "0.2.106-alpha.1"
+
+[[package]]
+name = "wry-bindgen-runtime"
+version = "0.1.0"
 "#;
         let output = update_lock_text(Path::new("Cargo.lock"), input, "0.2.122-alpha.1").unwrap();
 
