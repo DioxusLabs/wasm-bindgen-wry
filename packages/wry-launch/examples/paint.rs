@@ -4,15 +4,12 @@ use core::f64;
 use std::cell::Cell;
 use std::rc::Rc;
 use wasm_bindgen::prelude::*;
-use wry_launch::run;
 
-fn main() -> wry::Result<()> {
-    run(|| async {
-        app();
-        std::future::pending().await
-    })
+fn main() {
+    wry_launch::launch();
 }
 
+#[wasm_bindgen(start)]
 fn app() {
     let window = web_sys::window().expect("should have a window in this context");
     let document = window.document().expect("window should have a document");

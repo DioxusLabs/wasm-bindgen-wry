@@ -1,16 +1,18 @@
-From cc60a5104c8ce80128f8ab735834db9df10a8628 Mon Sep 17 00:00:00 2001
+From eec7a61fc92d9b074bcf5080c6cbf35696f763dc Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Fri, 29 May 2026 18:15:09 -0500
 Subject: [PATCH 3/4] Reuse LazyCell in js-sys (#5172)
 
 ---
- crates/js-sys/Cargo.toml           |  1 -
- crates/js-sys/src/futures/queue.rs | 14 +++-----------
- crates/js-sys/src/lib.rs           | 14 +++-----------
- 3 files changed, 6 insertions(+), 23 deletions(-)
+ crates/js-sys/Cargo.toml                       |  1 -
+ crates/js-sys/src/futures/queue.rs             | 14 +++-----------
+ crates/js-sys/src/lib.rs                       | 14 +++-----------
+ crates/test/src/rt/criterion/baseline.rs       | 18 ++++++++++--------
+ .../test/src/rt/criterion/stats/rand_util.rs   |  8 +++++---
+ 5 files changed, 21 insertions(+), 34 deletions(-)
 
 diff --git a/crates/js-sys/Cargo.toml b/crates/js-sys/Cargo.toml
-index 112842e09..51e01be5a 100644
+index ee70f10..db9619d 100644
 --- a/crates/js-sys/Cargo.toml
 +++ b/crates/js-sys/Cargo.toml
 @@ -36,7 +36,6 @@ futures-core-03-stream = ["dep:futures-util", "dep:futures-core"]
@@ -22,7 +24,7 @@ index 112842e09..51e01be5a 100644
  
  [lints.rust]
 diff --git a/crates/js-sys/src/futures/queue.rs b/crates/js-sys/src/futures/queue.rs
-index 104ffa03d..11ec371b6 100644
+index 104ffa0..60308ce 100644
 --- a/crates/js-sys/src/futures/queue.rs
 +++ b/crates/js-sys/src/futures/queue.rs
 @@ -113,19 +113,11 @@ impl Queue {
@@ -49,7 +51,7 @@ index 104ffa03d..11ec371b6 100644
      }
  }
 diff --git a/crates/js-sys/src/lib.rs b/crates/js-sys/src/lib.rs
-index efa25abe3..0209f5630 100644
+index efa25ab..9f62dc2 100644
 --- a/crates/js-sys/src/lib.rs
 +++ b/crates/js-sys/src/lib.rs
 @@ -13576,20 +13576,12 @@ impl Promise {
@@ -76,5 +78,68 @@ index efa25abe3..0209f5630 100644
  
      fn get_global_object() -> Object {
          // Accessing the global object is not an easy thing to do, and what we
+diff --git a/crates/test/src/rt/criterion/baseline.rs b/crates/test/src/rt/criterion/baseline.rs
+index b9249c2..c7c6885 100644
+--- a/crates/test/src/rt/criterion/baseline.rs
++++ b/crates/test/src/rt/criterion/baseline.rs
+@@ -26,12 +26,12 @@ pub(crate) struct BenchmarkBaseline {
+ 
+ /// Write the corresponding benchmark ID and corresponding data into the table.
+ pub(crate) fn write(id: &str, baseline: BenchmarkBaseline) {
+-    BASELINE.borrow_mut().insert(id.into(), baseline);
++    BASELINE.with(|baselines| baselines.borrow_mut().insert(id.into(), baseline));
+ }
+ 
+ /// Read the data corresponding to the benchmark ID from the table.
+ pub(crate) fn read(id: &str) -> Option<BenchmarkBaseline> {
+-    BASELINE.borrow().get(id).cloned()
++    BASELINE.with(|baselines| baselines.borrow().get(id).cloned())
+ }
+ 
+ /// Used to write previous benchmark data before the benchmark, for later comparison.
+@@ -39,7 +39,7 @@ pub(crate) fn read(id: &str) -> Option<BenchmarkBaseline> {
+ pub fn __wbgbench_import(baseline: Vec<u8>) {
+     match serde_json::from_slice(&baseline) {
+         Ok(prev) => {
+-            *BASELINE.borrow_mut() = prev;
++            BASELINE.with(|baselines| *baselines.borrow_mut() = prev);
+         }
+         Err(e) => {
+             console_log!("Failed to import previous benchmark {e:?}");
+@@ -50,9 +50,11 @@ pub fn __wbgbench_import(baseline: Vec<u8>) {
+ /// Used to read benchmark data, and then the runner stores it on the local disk.
+ #[wasm_bindgen]
+ pub fn __wbgbench_dump() -> Option<Vec<u8>> {
+-    let baseline = BASELINE.borrow();
+-    if baseline.is_empty() {
+-        return None;
+-    }
+-    serde_json::to_vec(&*baseline).ok()
++    BASELINE.with(|baseline| {
++        let baseline = baseline.borrow();
++        if baseline.is_empty() {
++            return None;
++        }
++        serde_json::to_vec(&*baseline).ok()
++    })
+ }
+diff --git a/crates/test/src/rt/criterion/stats/rand_util.rs b/crates/test/src/rt/criterion/stats/rand_util.rs
+index 048edd6..30c3521 100644
+--- a/crates/test/src/rt/criterion/stats/rand_util.rs
++++ b/crates/test/src/rt/criterion/stats/rand_util.rs
+@@ -16,7 +16,9 @@ static SEED_RAND: LazyCell<RefCell<Rand64>> = LazyCell::new(|| {
+ });
+ 
+ pub fn new_rng() -> Rng {
+-    let mut r = SEED_RAND.borrow_mut();
+-    let seed = ((r.rand_u64() as u128) << 64) | (r.rand_u64() as u128);
+-    Rand64::new(seed)
++    SEED_RAND.with(|seed_rand| {
++        let mut r = seed_rand.borrow_mut();
++        let seed = ((r.rand_u64() as u128) << 64) | (r.rand_u64() as u128);
++        Rand64::new(seed)
++    })
+ }
 -- 
 2.49.0
+

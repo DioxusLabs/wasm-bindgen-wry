@@ -201,7 +201,7 @@ pub fn throw_val(s: JsValue) -> ! {
 #[cold]
 #[inline(never)]
 pub fn throw_str(s: &str) -> ! {
-    panic!("cannot throw JS exception when running outside of wasm: {s}");
+    panic!("{s}");
 }
 
 /// Renamed to [`throw_str`].
@@ -213,12 +213,13 @@ pub fn throw(s: &str) -> ! {
     throw_str(s)
 }
 
-/// Returns the number of live externref objects.
+/// Returns the number of live JS heap references.
 ///
-/// # Panics
-/// This function always panics when running outside of WASM.
+/// On wasm this counts the externref table; wry has no Wasm memory, so it
+/// reports the live entries in the JS-side heap that back `JsValue`s and Rust
+/// closures — the same quantity the upstream leak tests assert is stable.
 pub fn externref_heap_live_count() -> u32 {
-    panic!("cannot introspect wasm memory when running outside of wasm")
+    crate::__wry_call_js_function!("() => window.jsHeap.heapObjectsAlive()", fn() -> u32, ())
 }
 
 /// Returns a handle to this Wasm instance's `WebAssembly.Module`.

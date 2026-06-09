@@ -1,0 +1,471 @@
+From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Thu, 5 Jun 2026 13:00:00 -0500
+Subject: [PATCH 6/6] Adapt tests/wasm companion JS to ESM for wry-bindgen
+
+wry-bindgen loads `module` snippets as native ES modules, so the upstream
+CommonJS companions are rewritten in place:
+  - `require('wasm-bindgen-test')` -> a lazy Proxy over `window` (Rust exports)
+  - `require('assert')`            -> a lazy callable Proxy over `globalThis.__wbgAssert`
+  - `exports.NAME = ...`           -> `export const NAME = ...` (or `export { NAME }`)
+The `__wbgAssert` global is provided by the test crate. Only the companions whose
+Rust files currently pass against wry-bindgen are converted.
+---
+diff --git a/tests/wasm/final.js b/tests/wasm/final.js
+index 15b576d02..7b1bc6d13 100644
+--- a/tests/wasm/final.js
++++ b/tests/wasm/final.js
+@@ -1,6 +1,6 @@
+-const assert = require('assert');
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.MyType = class {
++export const MyType = class {
+   static foo(y) {
+     assert.equal(y, 'x');
+     return y + 'y';
+diff --git a/tests/wasm/js_keywords.js b/tests/wasm/js_keywords.js
+index f7fb26dea..ca076e450 100644
+--- a/tests/wasm/js_keywords.js
++++ b/tests/wasm/js_keywords.js
+@@ -1,7 +1,7 @@
+-const wasm = require("wasm-bindgen-test.js");
+-const assert = require("assert");
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.js_keywords_compile = () => {
++export const js_keywords_compile = () => {
+   assert.strictEqual(wasm._throw(1), 1);
+   assert.strictEqual(wasm._class(1, 2), false);
+   assert.strictEqual(wasm.classy(3), 3);
+@@ -11,14 +11,14 @@ exports.js_keywords_compile = () => {
+   assert.strictEqual(obj.instanceof("Class"), "class is instance of Class");
+ };
+ 
+-exports.test_keyword_1_as_fn_name = (x) => {
++export const test_keyword_1_as_fn_name = (x) => {
+   return wasm._throw(x);
+ };
+ 
+-exports.test_keyword_2_as_fn_name = (x, y) => {
++export const test_keyword_2_as_fn_name = (x, y) => {
+   return wasm._class(x, y);
+ };
+ 
+-exports.test_keyword_as_fn_arg = (x) => {
++export const test_keyword_as_fn_arg = (x) => {
+   return wasm.classy(x);
+ };
+diff --git a/tests/wasm/js_objects.js b/tests/wasm/js_objects.js
+index c131527b8..585dd797c 100644
+--- a/tests/wasm/js_objects.js
++++ b/tests/wasm/js_objects.js
+@@ -1,14 +1,14 @@
+-const wasm = require('wasm-bindgen-test.js');
+-const assert = require('assert');
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+ let SIMPLE_ARG = null;
+ 
+-exports.simple_foo = s => {
++export const simple_foo = s => {
+     assert.strictEqual(SIMPLE_ARG, null);
+     SIMPLE_ARG = s;
+ };
+ 
+-exports.js_simple = () => {
++export const js_simple = () => {
+     assert.strictEqual(SIMPLE_ARG, null);
+     let sym = Symbol('test');
+     wasm.simple_bar(sym);
+@@ -17,12 +17,12 @@ exports.js_simple = () => {
+ 
+ let OWNED_ARG = null;
+ 
+-exports.owned_foo = s => {
++export const owned_foo = s => {
+     assert.strictEqual(OWNED_ARG, null);
+     OWNED_ARG = s;
+ };
+ 
+-exports.js_owned = () => {
++export const js_owned = () => {
+     assert.strictEqual(OWNED_ARG, null);
+     let sym = Symbol('test');
+     wasm.owned_bar(sym);
+@@ -31,71 +31,71 @@ exports.js_owned = () => {
+ 
+ let CLONE_ARG = Symbol('test');
+ 
+-exports.clone_foo1 = s => {
++export const clone_foo1 = s => {
+     assert.strictEqual(s, CLONE_ARG);
+ };
+-exports.clone_foo2 = s => {
++export const clone_foo2 = s => {
+     assert.strictEqual(s, CLONE_ARG);
+ };
+-exports.clone_foo3 = s => {
++export const clone_foo3 = s => {
+     assert.strictEqual(s, CLONE_ARG);
+ };
+-exports.clone_foo4 = s => {
++export const clone_foo4 = s => {
+     assert.strictEqual(s, CLONE_ARG);
+ };
+-exports.clone_foo5 = s => {
++export const clone_foo5 = s => {
+     assert.strictEqual(s, CLONE_ARG);
+ };
+ 
+-exports.js_clone = () => {
++export const js_clone = () => {
+     wasm.clone_bar(CLONE_ARG);
+ };
+ 
+ 
+ let PROMOTE_ARG = Symbol('test');
+ 
+-exports.promote_foo1 = s => {
++export const promote_foo1 = s => {
+     assert.strictEqual(s, PROMOTE_ARG);
+ };
+-exports.promote_foo2 = s => {
++export const promote_foo2 = s => {
+     assert.strictEqual(s, PROMOTE_ARG);
+ };
+-exports.promote_foo3 = s => {
++export const promote_foo3 = s => {
+     assert.strictEqual(s, PROMOTE_ARG);
+ };
+-exports.promote_foo4 = s => {
++export const promote_foo4 = s => {
+     assert.strictEqual(s, PROMOTE_ARG);
+ };
+ 
+-exports.js_promote = () => {
++export const js_promote = () => {
+     wasm.promote_bar(PROMOTE_ARG);
+ };
+ 
+-exports.returning_vector_foo = () => {
++export const returning_vector_foo = () => {
+     return {'foo': 'bar'};
+ };
+ 
+-exports.js_returning_vector = () => {
++export const js_returning_vector = () => {
+     assert.strictEqual(wasm.returning_vector_bar().length, 10);
+ };
+ 
+-exports.js_another_vector_return = () => {
++export const js_another_vector_return = () => {
+     assert.deepStrictEqual(wasm.another_vector_return_get_array(), [1, 2, 3, 4, 5, 6]);
+ };
+ 
+-exports.returning_vector_string_foo = () => {
++export const returning_vector_string_foo = () => {
+     return "This is the mostest awesomest string that can possibly exist.";
+ };
+ 
+-exports.js_returning_vector_string = () => {
++export const js_returning_vector_string = () => {
+     assert.strictEqual(wasm.returning_vector_string_bar().length, 10);
+ };
+ 
+-exports.js_another_vector_string_return = () => {
++export const js_another_vector_string_return = () => {
+     assert.deepStrictEqual(wasm.another_vector_string_return_get_array(), ["1", "2", "3", "4", "5", "6"]);
+ };
+ 
+-exports.verify_serde = function(a) {
++export const verify_serde = function(a) {
+   assert.deepStrictEqual(a, {
+     a: 0,
+     b: 'foo',
+diff --git a/tests/wasm/js_vec.js b/tests/wasm/js_vec.js
+index 2ceeeedb5..cc065ae07 100644
+--- a/tests/wasm/js_vec.js
++++ b/tests/wasm/js_vec.js
+@@ -1,8 +1,8 @@
+-const assert = require('assert');
+-const wasm = require('wasm-bindgen-test');
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+ 
+ // Test if passing large arrays which cause allocation in Wasm are properly handled.
+-exports.pass_array_with_allocation = () => {
++export const pass_array_with_allocation = () => {
+     const values = new Array(10_000).fill(1)
+     assert.strictEqual(wasm.test_sum(values), 10_000);
+ };
+diff --git a/tests/wasm/jscast.js b/tests/wasm/jscast.js
+index 3cecd9915..35e3ac932 100644
+--- a/tests/wasm/jscast.js
++++ b/tests/wasm/jscast.js
+@@ -22,7 +22,7 @@ class JsCast4 extends JsCast3 {
+   }
+ }
+ 
+-exports.JsCast1 = JsCast1;
+-exports.JsCast2 = JsCast2;
+-exports.JsCast3 = JsCast3;
+-exports.JsCast4 = JsCast4;
++export { JsCast1 };
++export { JsCast2 };
++export { JsCast3 };
++export { JsCast4 };
+diff --git a/tests/wasm/math.js b/tests/wasm/math.js
+index e3b518305..510046abc 100644
+--- a/tests/wasm/math.js
++++ b/tests/wasm/math.js
+@@ -1,13 +1,13 @@
+-const wasm = require('wasm-bindgen-test.js');
+-const assert = require('assert');
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.js_auto_bind_math = () => {
++export const js_auto_bind_math = () => {
+     wasm.math(1.0, 2.0);
+ };
+ 
+-exports.roundtrip = x => x;
++export const roundtrip = x => x;
+ 
+-exports.test_js_roundtrip = () => {
++export const test_js_roundtrip = () => {
+   assert.strictEqual(wasm.rust_roundtrip_i8(0), 0);
+   assert.strictEqual(wasm.rust_roundtrip_i8(0x80), -128);
+   assert.strictEqual(wasm.rust_roundtrip_i8(0x7f), 127);
+diff --git a/tests/wasm/option.js b/tests/wasm/option.js
+index ef9ce9854..97091f0fe 100644
+--- a/tests/wasm/option.js
++++ b/tests/wasm/option.js
+@@ -1,23 +1,23 @@
+-const wasm = require('wasm-bindgen-test.js');
+-const assert = require('assert');
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+ class MyType {
+ }
+ 
+-exports.MyType = MyType;
++export { MyType };
+ 
+-exports.take_none_byval = x => {
++export const take_none_byval = x => {
+     assert.strictEqual(x, undefined);
+ };
+-exports.take_some_byval = x => {
++export const take_some_byval = x => {
+     assert.ok(x !== null && x !== undefined);
+     assert.ok(x instanceof MyType);
+ };
+-exports.return_undef_byval = () => undefined;
+-exports.return_null_byval = () => null;
+-exports.return_some_byval = () => new MyType();
++export const return_undef_byval = () => undefined;
++export const return_null_byval = () => null;
++export const return_some_byval = () => new MyType();
+ 
+-exports.test_option_values = () => {
++export const test_option_values = () => {
+     wasm.rust_take_none_byval(null);
+     wasm.rust_take_none_byval(undefined);
+     wasm.rust_take_some_byval(new MyType());
+@@ -27,19 +27,19 @@ exports.test_option_values = () => {
+     assert.ok(x instanceof MyType);
+ };
+ 
+-exports.take_option_jsvalue_none = x => {
++export const take_option_jsvalue_none = x => {
+     assert.strictEqual(x, undefined);
+ };
+ 
+-exports.take_option_jsvalue_some = x => {
++export const take_option_jsvalue_some = x => {
+     assert.ok(x !== null && x !== undefined);
+ };
+ 
+-exports.return_option_jsvalue_none = () => undefined;
++export const return_option_jsvalue_none = () => undefined;
+ 
+-exports.return_option_jsvalue_some = () => "js value";
++export const return_option_jsvalue_some = () => "js value";
+ 
+-exports.test_option_jsvalue_values = () => {
++export const test_option_jsvalue_values = () => {
+     wasm.rust_take_option_jsvalue_none(null);
+     wasm.rust_take_option_jsvalue_none(undefined);
+     wasm.rust_take_option_jsvalue_some("test");
+diff --git a/tests/wasm/reexport.js b/tests/wasm/reexport.js
+index ff34332f4..02dcd6e25 100644
+--- a/tests/wasm/reexport.js
++++ b/tests/wasm/reexport.js
+@@ -1,11 +1,11 @@
+-const assert = require('assert');
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.PI = 3.14159;
++export const PI = 3.14159;
+ 
+-exports.add = function add(a, b) {
++export const add = function add(a, b) {
+     return a + b;
+ };
+ 
+-exports.multiply = function multiply(a, b) {
++export const multiply = function multiply(a, b) {
+     return a * b;
+ };
+diff --git a/tests/wasm/rethrow.js b/tests/wasm/rethrow.js
+index 70e9c3381..bf0291eb0 100644
+--- a/tests/wasm/rethrow.js
++++ b/tests/wasm/rethrow.js
+@@ -1,7 +1,7 @@
+-const wasm = require('wasm-bindgen-test.js');
+-const assert = require('assert');
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.call_throw_one = function() {
++export const call_throw_one = function() {
+   try {
+     wasm.throw_one();
+   } catch (e) {
+@@ -9,6 +9,6 @@ exports.call_throw_one = function() {
+   }
+ };
+ 
+-exports.call_ok = function() {
++export const call_ok = function() {
+   wasm.nothrow();
+ };
+diff --git a/tests/wasm/slice_jsvalue.js b/tests/wasm/slice_jsvalue.js
+index e7b6ecada..f77d1aae6 100644
+--- a/tests/wasm/slice_jsvalue.js
++++ b/tests/wasm/slice_jsvalue.js
+@@ -1,12 +1,12 @@
+-exports.js_receive_slice = function(values) {
++export const js_receive_slice = function(values) {
+     return values.length;
+ };
+ 
+-exports.js_receive_slice_and_sum = function(values) {
++export const js_receive_slice_and_sum = function(values) {
+     return values.reduce((a, b) => a + b, 0);
+ };
+ 
+-exports.js_verify_slice_values = function(values) {
++export const js_verify_slice_values = function(values) {
+     if (values.length !== 3) return false;
+     if (values[0] !== 42) return false;
+     if (values[1] !== "hello") return false;
+diff --git a/tests/wasm/string_vecs.js b/tests/wasm/string_vecs.js
+index de9b0ef58..f3fd02a79 100644
+--- a/tests/wasm/string_vecs.js
++++ b/tests/wasm/string_vecs.js
+@@ -1,7 +1,7 @@
+-const wasm = require('wasm-bindgen-test.js');
+-const assert = require('assert');
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.pass_string_vec = () => {
++export const pass_string_vec = () => {
+     assert.deepStrictEqual(
+         wasm.consume_string_vec(["hello", "world"]),
+         ["hello", "world", "Hello from Rust!"],
+@@ -13,7 +13,7 @@ exports.pass_string_vec = () => {
+     assert.strictEqual(wasm.consume_optional_string_vec(undefined), undefined);
+ };
+ 
+-exports.pass_invalid_string_vec = () => {
++export const pass_invalid_string_vec = () => {
+     try {
+         wasm.consume_string_vec([42]);
+     } catch (e) {
+diff --git a/tests/wasm/structural.js b/tests/wasm/structural.js
+index 0261c50e1..363682e9b 100644
+--- a/tests/wasm/structural.js
++++ b/tests/wasm/structural.js
+@@ -1,7 +1,7 @@
+-const wasm = require('wasm-bindgen-test.js');
+-const assert = require('assert');
++const wasm = new Proxy({}, { get: (_t, n) => window[n] });
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+-exports.js_works = () => {
++export const js_works = () => {
+     let called = false;
+     wasm.run({
+         bar() {
+diff --git a/tests/wasm/variadic.js b/tests/wasm/variadic.js
+index 6094bc881..8f68f890b 100644
+--- a/tests/wasm/variadic.js
++++ b/tests/wasm/variadic.js
+@@ -1,4 +1,4 @@
+-const assert = require('assert');
++const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+ 
+ // a function for testing numbers
+ function variadic_sum(...args) {
+@@ -9,17 +9,17 @@ function variadic_sum(...args) {
+     return answer;
+ }
+ 
+-exports.variadic_sum_u8 = variadic_sum;
+-exports.variadic_sum_u16 = variadic_sum;
+-exports.variadic_sum_u32 = variadic_sum;
+-exports.variadic_sum_u64 = variadic_sum;
+-exports.variadic_sum_i8 = variadic_sum;
+-exports.variadic_sum_i16 = variadic_sum;
+-exports.variadic_sum_i32 = variadic_sum;
+-exports.variadic_sum_i64 = variadic_sum;
+-exports.variadic_sum_f32 = variadic_sum;
+-exports.variadic_sum_f64 = variadic_sum;
+-exports.variadic_sum_rest_vec = variadic_sum;
++export const variadic_sum_u8 = variadic_sum;
++export const variadic_sum_u16 = variadic_sum;
++export const variadic_sum_u32 = variadic_sum;
++export const variadic_sum_u64 = variadic_sum;
++export const variadic_sum_i8 = variadic_sum;
++export const variadic_sum_i16 = variadic_sum;
++export const variadic_sum_i32 = variadic_sum;
++export const variadic_sum_i64 = variadic_sum;
++export const variadic_sum_f32 = variadic_sum;
++export const variadic_sum_f64 = variadic_sum;
++export const variadic_sum_rest_vec = variadic_sum;
+ 
+ // a function for testing nullable numbers
+ function variadic_sum_opt(...args) {
+@@ -32,7 +32,7 @@ function variadic_sum_opt(...args) {
+     return answer;
+ }
+ 
+-exports.variadic_sum_opt = variadic_sum_opt;
++export { variadic_sum_opt };
+ 
+ // a function for testing strings
+ function variadic_concat(...args) {
+@@ -43,8 +43,8 @@ function variadic_concat(...args) {
+     return answer;
+ }
+ 
+-exports.variadic_concat_str = variadic_concat;
+-exports.variadic_concat_string = variadic_concat;
++export const variadic_concat_str = variadic_concat;
++export const variadic_concat_string = variadic_concat;
+ 
+ // a test that takes any type of arguments (for testing JsValue).
+ function variadic_compare_pairs(...args) {
+@@ -56,4 +56,4 @@ function variadic_compare_pairs(...args) {
+     }
+ }
+ 
+-exports.variadic_compare_pairs = variadic_compare_pairs;
++export { variadic_compare_pairs };

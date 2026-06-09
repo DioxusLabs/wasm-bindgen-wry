@@ -4,11 +4,12 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
 pub fn main() {
-    wry_launch::run(|| async {
-        app();
-        std::future::pending::<()>().await
-    })
-    .unwrap();
+    wry_launch::launch();
+}
+
+#[wasm_bindgen(start)]
+pub fn start() {
+    app();
 }
 
 #[wasm_bindgen(inline_js = r#"

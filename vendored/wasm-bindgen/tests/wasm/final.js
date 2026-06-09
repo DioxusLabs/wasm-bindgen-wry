@@ -1,6 +1,6 @@
-const assert = require('assert');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.MyType = class {
+export const MyType = class {
   static foo(y) {
     assert.equal(y, 'x');
     return y + 'y';

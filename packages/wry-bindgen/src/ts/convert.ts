@@ -47,12 +47,10 @@ export function symbol_new(description: string | null): symbol {
   return Symbol(description ?? undefined);
 }
 export function bigint_get_as_i64(x: any): bigint | null {
-  // Return the bigint itself (not a lossy `Number`) so the i64 encoder can
-  // preserve all 64 bits; `Number(...)` would round magnitudes above 2^53.
+  // The low 64 bits as a signed value, or null if not a bigint. Callers
+  // reinterpret the bits and round-trip-check the value, matching
+  // wasm-bindgen's `__wbindgen_bigint_get_as_i64`.
   return typeof x === "bigint" ? BigInt.asIntN(64, x) : null;
-}
-export function bigint_to_string(x: any): string | null {
-  return typeof x === "bigint" ? x.toString() : null;
 }
 export function reflect_get(target: any, key: any): any {
   return Reflect.get(target, key);
@@ -63,12 +61,66 @@ export function as_string(x: any): string | null {
 export function as_f64(x: any): number | null {
   return typeof x === "number" ? x : null;
 }
-export function debug_string(x: any): string {
+// Unary `+` coercion (wasm-bindgen `__wbindgen_as_number`). May throw on e.g. a Symbol.
+export function as_number(x: any): number {
+  return +x;
+}
+// Unary `+` coercion that returns the coerced number, or the thrown error value, so the
+// caller can distinguish success (a number) from failure (wasm-bindgen `__wbindgen_try_into_number`).
+export function try_into_number(x: any): any {
   try {
-    return x.toString();
-  } catch (_error) {
-    return "[unrepresentable]";
+    return +x;
+  } catch (e) {
+    return e;
   }
+}
+// Mirrors wasm-bindgen's `debugString` intrinsic so `Debug for JsValue` matches.
+export function debug_string(val: any): string {
+  const type = typeof val;
+  if (type == "number" || type == "boolean" || val == null) {
+    return `${val}`;
+  }
+  if (type == "string") {
+    return `"${val}"`;
+  }
+  if (type == "symbol") {
+    const description = val.description;
+    return description == null ? "Symbol" : `Symbol(${description})`;
+  }
+  if (type == "function") {
+    const name = val.name;
+    return typeof name == "string" && name.length > 0 ? `Function(${name})` : "Function";
+  }
+  if (Array.isArray(val)) {
+    const length = val.length;
+    let debug = "[";
+    if (length > 0) {
+      debug += debug_string(val[0]);
+    }
+    for (let i = 1; i < length; i++) {
+      debug += ", " + debug_string(val[i]);
+    }
+    debug += "]";
+    return debug;
+  }
+  const builtInMatches = /\[object ([^\]]+)\]/.exec(toString.call(val));
+  let className;
+  if (builtInMatches && builtInMatches.length > 1) {
+    className = builtInMatches[1];
+  } else {
+    return toString.call(val);
+  }
+  if (className == "Object") {
+    try {
+      return "Object(" + JSON.stringify(val) + ")";
+    } catch (_) {
+      return "Object";
+    }
+  }
+  if (val instanceof Error) {
+    return `${val.name}: ${val.message}\n${val.stack}`;
+  }
+  return className;
 }
 
 // Arithmetic operators
@@ -145,6 +197,10 @@ export function js_ge(a: any, b: any): boolean {
 export function js_loose_eq(a: any, b: any): boolean {
   return a == b;
 }
+// Strict `===`, matching wasm-bindgen's `PartialEq for JsValue`.
+export function js_strict_eq(a: any, b: any): boolean {
+  return a === b;
+}
 
 // Other operators
 export function js_in(prop: any, obj: any): boolean {
@@ -163,9 +219,11 @@ export function clone_heap_ref(value: unknown): unknown {
   return value;
 }
 
-// Heap management - drop a value from the JS heap
-export function drop_heap_ref(heapId: number): void {
-  window.jsHeap.remove(heapId);
+// Heap management - drop a value from the JS heap. The id crosses as a `u64`,
+// so it arrives as a BigInt; the heap Map is keyed by Number. Heap ids are
+// small slab indices, so the conversion is lossless.
+export function drop_heap_ref(heapId: number | bigint): void {
+  window.jsHeap.remove(Number(heapId));
 }
 
 // Create a wrapper object for an exported Rust struct

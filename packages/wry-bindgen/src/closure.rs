@@ -215,9 +215,8 @@ where
     T: ?Sized,
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Closure")
-            .field("value", &self.value)
-            .finish()
+        // Mirror wasm-bindgen's opaque `Closure { ... }`.
+        f.write_str("Closure { ... }")
     }
 }
 

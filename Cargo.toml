@@ -8,6 +8,8 @@ members = [
     "packages/wry-bindgen-macro-support",
     "packages/wasm-bindgen",
     "packages/wasm-bindgen-macro",
+    "packages/wasm-bindgen-test",
+    "packages/wasm-bindgen-test-macro",
     "examples/gloo",
     "examples/dioxus-web",
     "examples/yew",

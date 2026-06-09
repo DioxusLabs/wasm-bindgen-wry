@@ -17,10 +17,7 @@ use std::process;
 
 const LOCAL_MANIFESTS: &[(&str, &str)] = &[
     ("packages/wry-bindgen/Cargo.toml", "wry-bindgen"),
-    (
-        "packages/wry-bindgen-macro/Cargo.toml",
-        "wry-bindgen-macro",
-    ),
+    ("packages/wry-bindgen-macro/Cargo.toml", "wry-bindgen-macro"),
     (
         "packages/wry-bindgen-macro-support/Cargo.toml",
         "wry-bindgen-macro-support",
@@ -35,22 +32,26 @@ const LOCAL_MANIFESTS: &[(&str, &str)] = &[
 const LOCAL_CRATES: &[&str] = &[
     "wasm-bindgen",
     "wasm-bindgen-macro",
+    "wasm-bindgen-macro-support",
     "wry-bindgen",
     "wry-bindgen-macro",
     "wry-bindgen-macro-support",
 ];
 const UPSTREAM_PACKAGE_NAMES: &[&str] = &["wasm-bindgen", "not-wasm-bindgen"];
 const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
-    ("vendored/wasm-bindgen/crates/js-sys/Cargo.toml", "js-sys"),
     (
-        "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
-        "web-sys",
+        "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
+        "wasm-bindgen-macro-support",
     ),
+    ("vendored/wasm-bindgen/crates/js-sys/Cargo.toml", "js-sys"),
+    ("vendored/wasm-bindgen/crates/web-sys/Cargo.toml", "web-sys"),
     (
         "vendored/wasm-bindgen/crates/futures/Cargo.toml",
         "wasm-bindgen-futures",
     ),
 ];
+const WASM_BINDGEN_MACRO_SUPPORT_PACKAGE_NAMES: &[&str] =
+    &["wasm-bindgen-macro-support", "wasm-bindgen-macro-support-x"];
 const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x"];
 const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x"];
 const WASM_BINDGEN_FUTURES_PACKAGE_NAMES: &[&str] =
@@ -213,6 +214,7 @@ fn read_patched_upstream_versions(
 
 fn patched_upstream_package_names(crate_name: &str) -> &'static [&'static str] {
     match crate_name {
+        "wasm-bindgen-macro-support" => WASM_BINDGEN_MACRO_SUPPORT_PACKAGE_NAMES,
         "js-sys" => JS_SYS_PACKAGE_NAMES,
         "web-sys" => WEB_SYS_PACKAGE_NAMES,
         "wasm-bindgen-futures" => WASM_BINDGEN_FUTURES_PACKAGE_NAMES,
@@ -960,6 +962,21 @@ version = "0.3.99"
 
         assert!(output.contains("name = \"web-sys-x\""));
         assert!(output.contains("version = \"0.3.99-alpha.2\""));
+
+        let input = r#"[package]
+name = "wasm-bindgen-macro-support-x"
+version = "0.2.122"
+"#;
+        let output = update_package_version_text_with_names(
+            Path::new("Cargo.toml"),
+            input,
+            WASM_BINDGEN_MACRO_SUPPORT_PACKAGE_NAMES,
+            "0.2.122-alpha.2",
+        )
+        .unwrap();
+
+        assert!(output.contains("name = \"wasm-bindgen-macro-support-x\""));
+        assert!(output.contains("version = \"0.2.122-alpha.2\""));
     }
 
     #[test]
@@ -976,6 +993,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "wasm-bindgen-macro"
+version = "0.2.122"
+
+[[package]]
+name = "wasm-bindgen-macro-support"
 version = "0.2.122"
 
 [[package]]

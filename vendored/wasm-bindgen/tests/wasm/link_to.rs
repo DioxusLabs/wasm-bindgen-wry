@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 
-#[wasm_bindgen(module = "/tests/wasm/link_to.js")]
+#[wasm_bindgen(module = "tests/wasm/link_to.js")]
 extern "C" {
     #[wasm_bindgen(catch)]
     fn read_file(url: &str) -> Result<String, JsValue>;
@@ -9,7 +9,7 @@ extern "C" {
 
 #[wasm_bindgen_test]
 fn test_module() {
-    let link = wasm_bindgen::link_to!(module = "/tests/wasm/linked_module.js");
+    let link = wasm_bindgen::link_to!(module = "linked_module.js");
     assert_eq!(
         read_file(&link).unwrap(),
         include_str!("./linked_module.js")

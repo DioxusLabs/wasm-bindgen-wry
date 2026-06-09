@@ -19,3 +19,22 @@ workspace = true
 
 [dependencies]
 unicode-ident = "1.0.5"
+
+[workspace]
+resolver = "2"
+
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = [
+  'cfg(wasm_bindgen_unstable_test_coverage)',
+  'cfg(wasm_bindgen_use_js_sys)',
+  'cfg(xxx_debug_only_print_generated_code)',
+] }
+unused_lifetimes = "warn"
+
+[workspace.lints.clippy]
+large_enum_variant = "allow"
+new_without_default = "allow"
+overly_complex_bool_expr = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+uninlined_format_args = "warn"

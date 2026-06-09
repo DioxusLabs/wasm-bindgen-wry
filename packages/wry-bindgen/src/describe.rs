@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::panic::AssertUnwindSafe;
-use core::{mem::MaybeUninit, ptr::NonNull};
+use core::ptr::NonNull;
 
 use cfg_if::cfg_if;
 
@@ -221,12 +221,6 @@ impl WasmDescribe for () {
 impl<T: WasmDescribe, E: Into<JsValue>> WasmDescribe for Result<T, E> {
     fn describe() {
         inform(RESULT);
-        T::describe();
-    }
-}
-
-impl<T: WasmDescribe> WasmDescribe for MaybeUninit<T> {
-    fn describe() {
         T::describe();
     }
 }

@@ -1,14 +1,14 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
 let SIMPLE_ARG = null;
 
-exports.simple_foo = s => {
+export const simple_foo = s => {
     assert.strictEqual(SIMPLE_ARG, null);
     SIMPLE_ARG = s;
 };
 
-exports.js_simple = () => {
+export const js_simple = () => {
     assert.strictEqual(SIMPLE_ARG, null);
     let sym = Symbol('test');
     wasm.simple_bar(sym);
@@ -17,12 +17,12 @@ exports.js_simple = () => {
 
 let OWNED_ARG = null;
 
-exports.owned_foo = s => {
+export const owned_foo = s => {
     assert.strictEqual(OWNED_ARG, null);
     OWNED_ARG = s;
 };
 
-exports.js_owned = () => {
+export const js_owned = () => {
     assert.strictEqual(OWNED_ARG, null);
     let sym = Symbol('test');
     wasm.owned_bar(sym);
@@ -31,71 +31,71 @@ exports.js_owned = () => {
 
 let CLONE_ARG = Symbol('test');
 
-exports.clone_foo1 = s => {
+export const clone_foo1 = s => {
     assert.strictEqual(s, CLONE_ARG);
 };
-exports.clone_foo2 = s => {
+export const clone_foo2 = s => {
     assert.strictEqual(s, CLONE_ARG);
 };
-exports.clone_foo3 = s => {
+export const clone_foo3 = s => {
     assert.strictEqual(s, CLONE_ARG);
 };
-exports.clone_foo4 = s => {
+export const clone_foo4 = s => {
     assert.strictEqual(s, CLONE_ARG);
 };
-exports.clone_foo5 = s => {
+export const clone_foo5 = s => {
     assert.strictEqual(s, CLONE_ARG);
 };
 
-exports.js_clone = () => {
+export const js_clone = () => {
     wasm.clone_bar(CLONE_ARG);
 };
 
 
 let PROMOTE_ARG = Symbol('test');
 
-exports.promote_foo1 = s => {
+export const promote_foo1 = s => {
     assert.strictEqual(s, PROMOTE_ARG);
 };
-exports.promote_foo2 = s => {
+export const promote_foo2 = s => {
     assert.strictEqual(s, PROMOTE_ARG);
 };
-exports.promote_foo3 = s => {
+export const promote_foo3 = s => {
     assert.strictEqual(s, PROMOTE_ARG);
 };
-exports.promote_foo4 = s => {
+export const promote_foo4 = s => {
     assert.strictEqual(s, PROMOTE_ARG);
 };
 
-exports.js_promote = () => {
+export const js_promote = () => {
     wasm.promote_bar(PROMOTE_ARG);
 };
 
-exports.returning_vector_foo = () => {
+export const returning_vector_foo = () => {
     return {'foo': 'bar'};
 };
 
-exports.js_returning_vector = () => {
+export const js_returning_vector = () => {
     assert.strictEqual(wasm.returning_vector_bar().length, 10);
 };
 
-exports.js_another_vector_return = () => {
+export const js_another_vector_return = () => {
     assert.deepStrictEqual(wasm.another_vector_return_get_array(), [1, 2, 3, 4, 5, 6]);
 };
 
-exports.returning_vector_string_foo = () => {
+export const returning_vector_string_foo = () => {
     return "This is the mostest awesomest string that can possibly exist.";
 };
 
-exports.js_returning_vector_string = () => {
+export const js_returning_vector_string = () => {
     assert.strictEqual(wasm.returning_vector_string_bar().length, 10);
 };
 
-exports.js_another_vector_string_return = () => {
+export const js_another_vector_string_return = () => {
     assert.deepStrictEqual(wasm.another_vector_string_return_get_array(), ["1", "2", "3", "4", "5", "6"]);
 };
 
-exports.verify_serde = function(a) {
+export const verify_serde = function(a) {
   assert.deepStrictEqual(a, {
     a: 0,
     b: 'foo',

@@ -1,0 +1,6 @@
+# The crate compiles under edition 2021 (so the vendored upstream `tests/wasm`
+# files, which use edition-2021 attribute syntax, build via `#[path]`), but its
+# own sources are formatted with the 2024 style. Pin `style_edition` so `cargo
+# fmt` keeps the existing import grouping instead of rewriting it to the 2021
+# style implied by the package edition.
+style_edition = "2024"

@@ -51,7 +51,7 @@ pub(crate) fn test_dropped_closure_disposes_js_callable() {
                 return false;
             } catch (error) {
                 return String(error && error.message ? error.message : error)
-                    .includes("already been dropped");
+                    .includes("after being dropped");
             }
         }
 
@@ -100,7 +100,7 @@ pub(crate) fn test_dropped_once_closure_disposes_js_callable() {
                 return false;
             } catch (error) {
                 return String(error && error.message ? error.message : error)
-                    .includes("already been dropped");
+                    .includes("after being dropped");
             }
         }
 
@@ -189,7 +189,7 @@ pub(crate) fn test_long_lived_callback_survives_setup_scope() {
             return false;
         } catch (error) {
             return String(error && error.message ? error.message : error)
-                .includes("already been dropped");
+                .includes("after being dropped");
         }
     }
 

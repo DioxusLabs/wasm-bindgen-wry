@@ -8,7 +8,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
+use quote::{ToTokens, quote};
 
 /// The main wasm_bindgen attribute macro.
 ///
@@ -22,7 +22,7 @@ pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
     // Expand wry-bindgen for non-wasm32 targets
     let wry_expansion = match wry_bindgen_macro_support::expand(attr2.clone(), input2.clone()) {
         Ok(tokens) => tokens,
-        Err(e) => e.to_compile_error(),
+        Err(e) => e.to_token_stream(),
     };
 
     // For wasm32: Re-emit with the upstream wasm_bindgen attribute
@@ -31,13 +31,20 @@ pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
     // We emit both expansions with cfg guards. The wry_expansion contains all the
     // generated items (functions, types, impls) which will be at the same scope level
     // as the original input would have been.
-    let output = quote! {
-        #[cfg(target_arch = "wasm32")]
-        #[::wasm_bindgen::__wasm_bindgen_upstream_macro(#attr2)]
-        #input2
+    //
+    // With `unstable_force_wry_backend`, emit only the wry expansion so the same
+    // bindings compile against the wry backend on every target, including wasm32.
+    let output = if cfg!(feature = "unstable_force_wry_backend") {
+        wry_expansion
+    } else {
+        quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[::wasm_bindgen::__wasm_bindgen_upstream_macro(#attr2)]
+            #input2
 
-        #[cfg(not(target_arch = "wasm32"))]
-        #wry_expansion
+            #[cfg(not(target_arch = "wasm32"))]
+            #wry_expansion
+        }
     };
 
     output.into()
@@ -45,21 +52,32 @@ pub fn wasm_bindgen(attr: TokenStream, input: TokenStream) -> TokenStream {
 
 /// The link_to proc-macro for JavaScript module linking.
 ///
-/// This only works on wasm32 targets; on desktop it panics.
+/// On wasm32 it delegates to upstream wasm-bindgen; on desktop it expands to a
+/// wry-bindgen runtime registration (see `expand_link_to`).
 #[proc_macro]
 pub fn link_to(input: TokenStream) -> TokenStream {
     let input2: TokenStream2 = input.into();
 
-    // link_to only makes sense on wasm32 - delegate to upstream macro there
-    let output = quote! {
-        {
-            #[cfg(target_arch = "wasm32")]
+    // The desktop expansion registers the JS with the wry runtime and returns its
+    // served URL. On wasm32 the upstream macro handles linking; under
+    // `unstable_force_wry_backend` there is no upstream backend, so the wry
+    // expansion is used on every target.
+    let wry_expansion = match wry_bindgen_macro_support::expand_link_to(input2.clone()) {
+        Ok(tokens) => tokens,
+        Err(e) => e.to_token_stream(),
+    };
+
+    let output = if cfg!(feature = "unstable_force_wry_backend") {
+        wry_expansion
+    } else {
+        quote! {
             {
-                ::wasm_bindgen::__wasm_bindgen_upstream_link_to!(#input2)
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                panic!("link_to! cannot be used outside of wasm32 target")
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ::wasm_bindgen::__wasm_bindgen_upstream_link_to!(#input2)
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                #wry_expansion
             }
         }
     };
@@ -77,19 +95,25 @@ pub fn __wasm_bindgen_class_marker(attr: TokenStream, input: TokenStream) -> Tok
     let input2: TokenStream2 = input.into();
 
     // For wry-bindgen, we need to expand the regular macro on the method
-    let wry_expansion = match wry_bindgen_macro_support::expand(attr2.clone(), input2.clone()) {
-        Ok(tokens) => tokens,
-        Err(e) => e.to_compile_error(),
-    };
+    let wry_expansion =
+        match wry_bindgen_macro_support::expand_class_marker(attr2.clone(), input2.clone()) {
+            Ok(tokens) => tokens,
+            Err(e) => e.to_token_stream(),
+        };
 
-    // For wasm32: delegate to upstream class marker
-    let output = quote! {
-        #[cfg(target_arch = "wasm32")]
-        #[::wasm_bindgen::__wasm_bindgen_upstream_class_marker(#attr2)]
-        #input2
+    // For wasm32: delegate to upstream class marker (unless the wry backend is
+    // forced, in which case emit only the wry expansion).
+    let output = if cfg!(feature = "unstable_force_wry_backend") {
+        wry_expansion
+    } else {
+        quote! {
+            #[cfg(target_arch = "wasm32")]
+            #[::wasm_bindgen::__wasm_bindgen_upstream_class_marker(#attr2)]
+            #input2
 
-        #[cfg(not(target_arch = "wasm32"))]
-        #wry_expansion
+            #[cfg(not(target_arch = "wasm32"))]
+            #wry_expansion
+        }
     };
 
     output.into()

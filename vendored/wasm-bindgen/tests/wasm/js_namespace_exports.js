@@ -1,14 +1,14 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.test_api_namespace = function() {
+export const test_api_namespace = function() {
   assert.ok(wasm.api, "api namespace should exist");
 
   assert.strictEqual(wasm.api.add(2, 3), 5, "api.add should work");
   assert.strictEqual(wasm.api.multiply(4, 5), 20, "api.multiply should work");
 };
 
-exports.test_nested_namespace = function() {
+export const test_nested_namespace = function() {
   assert.ok(wasm.utils, "utils namespace should exist");
   assert.ok(wasm.utils.math, "utils.math namespace should exist");
 
@@ -16,7 +16,7 @@ exports.test_nested_namespace = function() {
   assert.strictEqual(wasm.utils.math.subtract(10, 3), 7, "utils.math.subtract should work");
 };
 
-exports.test_class_namespace = function() {
+export const test_class_namespace = function() {
   assert.ok(wasm.models, "models namespace should exist");
   assert.ok(wasm.models.Counter, "models.Counter class should exist");
 
@@ -33,7 +33,7 @@ exports.test_class_namespace = function() {
   assert.strictEqual(counter.value, 15, "add should increase value by specified amount");
 };
 
-exports.test_enum_namespace = function() {
+export const test_enum_namespace = function() {
   assert.ok(wasm.types, "types namespace should exist");
   assert.ok(wasm.types.Status, "types.Status enum should exist");
 
@@ -46,7 +46,7 @@ exports.test_enum_namespace = function() {
   assert.strictEqual(wasm.types.Status[2], "Complete", "Status[2] should be 'Complete'");
 };
 
-exports.test_nested_enum_namespace = function() {
+export const test_nested_enum_namespace = function() {
   assert.ok(wasm.types, "types namespace should exist");
   assert.ok(wasm.types.http, "types.http namespace should exist");
   assert.ok(wasm.types.http.HttpStatus, "types.http.HttpStatus enum should exist");
@@ -60,7 +60,7 @@ exports.test_nested_enum_namespace = function() {
   assert.strictEqual(wasm.types.http.HttpStatus[500], "ServerError", "HttpStatus[500] should be 'ServerError'");
 };
 
-exports.test_struct_namespace = function() {
+export const test_struct_namespace = function() {
   assert.ok(wasm.shapes, "shapes namespace should exist");
   assert.ok(wasm.shapes.Point, "shapes.Point class should exist");
 
@@ -69,7 +69,7 @@ exports.test_struct_namespace = function() {
 
 // Struct uses `js_name` + `js_namespace`; impl uses `js_class` + `js_namespace`.
 // Constructor and method must be reachable through the namespace export.
-exports.test_renamed_namespaced_class_methods = function() {
+export const test_renamed_namespaced_class_methods = function() {
   assert.ok(wasm.renamed_models, "renamed_models namespace should exist");
   assert.ok(wasm.renamed_models.RenamedCounter, "renamed_models.RenamedCounter class should exist");
 
@@ -85,7 +85,7 @@ exports.test_renamed_namespaced_class_methods = function() {
 // `js_namespace`. The impl macro invocation cannot see the struct's attrs,
 // so the namespace must be carried on the impl block to be folded into the
 // emitted wasm shim symbol name and the cli-support `exported_classes` key.
-exports.test_renamed_class_namespace_on_struct_only = function() {
+export const test_renamed_class_namespace_on_struct_only = function() {
   assert.ok(wasm.struct_only_ns, "struct_only_ns namespace should exist");
   assert.ok(wasm.struct_only_ns.RenamedOnlyStructNs, "struct_only_ns.RenamedOnlyStructNs class should exist");
 
@@ -96,7 +96,7 @@ exports.test_renamed_class_namespace_on_struct_only = function() {
 
 // No rename; both struct and impl carry the same `js_namespace`. Confirms
 // whether the rename is necessary to trigger the regression.
-exports.test_namespaced_class_methods_same_name = function() {
+export const test_namespaced_class_methods_same_name = function() {
   assert.ok(wasm.same_name_ns, "same_name_ns namespace should exist");
   assert.ok(wasm.same_name_ns.SameNameNs, "same_name_ns.SameNameNs class should exist");
 
@@ -110,7 +110,7 @@ exports.test_namespaced_class_methods_same_name = function() {
 // cli-support and matching `js_class` on each impl let them coexist as
 // distinct JS classes. With rust_name keying the two would have
 // clobbered each other in `exported_classes`.
-exports.test_same_rust_ident_distinct_js_names = function() {
+export const test_same_rust_ident_distinct_js_names = function() {
   assert.ok(wasm.CrossModFooAlpha, "CrossModFooAlpha class should exist");
   assert.ok(wasm.CrossModFooBeta, "CrossModFooBeta class should exist");
   assert.notStrictEqual(wasm.CrossModFooAlpha, wasm.CrossModFooBeta, "must be distinct classes");
@@ -126,7 +126,7 @@ exports.test_same_rust_ident_distinct_js_names = function() {
 // Two classes share the same `js_name` ("CrossNs") in different namespaces.
 // Without per-impl namespace participating in symbol naming, the wasm shim
 // names for `CrossNs::new`/`p_value`/`q_value` would collide at wasm-ld.
-exports.test_cross_namespace_same_js_name = function() {
+export const test_cross_namespace_same_js_name = function() {
   assert.ok(wasm.ns_p, "ns_p namespace should exist");
   assert.ok(wasm.ns_q, "ns_q namespace should exist");
   assert.ok(wasm.ns_p.CrossNs, "ns_p.CrossNs class should exist");
@@ -141,7 +141,7 @@ exports.test_cross_namespace_same_js_name = function() {
   assert.strictEqual(typeof q.p_value, "undefined", "Q instance must not expose P's method");
 };
 
-exports.test_nested_struct_namespace = function() {
+export const test_nested_struct_namespace = function() {
   assert.ok(wasm.shapes, "shapes namespace should exist");
   assert.ok(wasm.shapes["3d"], "shapes.3d namespace should exist");
   assert.ok(wasm.shapes["3d"].Point3D, "shapes.3d.Point3D class should exist");

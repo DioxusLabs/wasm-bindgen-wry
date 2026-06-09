@@ -1,9 +1,9 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.js_identity = a => a;
+export const js_identity = a => a;
 
-exports.js_works = () => {
+export const js_works = () => {
     assert.strictEqual(wasm.letter(), 'a');
     assert.strictEqual(wasm.face(), '😀');
     assert.strictEqual(wasm.rust_identity(''), '\u0000');

@@ -1,21 +1,14 @@
-use std::any::Any;
-use std::future::Future;
-use std::io::{self, Write};
-use std::panic::AssertUnwindSafe;
-use std::pin::Pin;
 use std::process::ExitCode;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 
-use futures_channel::mpsc::{UnboundedReceiver, unbounded};
-use futures_util::{FutureExt, StreamExt, pin_mut, select};
-use libtest_mimic::{Arguments, Failed};
-use wasm_bindgen::{Closure, wasm_bindgen};
-use wry_bindgen_runtime::wire::batch_async;
-use wry_launch::set_on_error;
+use wasm_bindgen::wasm_bindgen;
+
+#[path = "../common/harness.rs"]
+mod harness;
+
+use harness::{BatchMode, TestCase, async_test, harness_main, sync_test, trial_name};
 
 mod add_number_js;
+mod arg_type_alias;
 #[allow(clippy::redundant_closure)]
 mod async_bindings;
 mod batch_stress;
@@ -23,6 +16,7 @@ mod borrow_stack;
 mod callbacks;
 mod catch_attribute;
 mod clamped;
+mod closure_panic;
 mod closure_paths;
 mod deferred_heap_refs;
 mod export_call;
@@ -37,6 +31,7 @@ mod string_enum;
 mod structs;
 mod thread_local;
 mod timer_callbacks;
+mod upstream_attr_codegen;
 mod wasm_bindgen_compat;
 
 #[wasm_bindgen(inline_js = "export function heap_objects_alive(f) {
@@ -46,109 +41,6 @@ extern "C" {
     /// Get the number of alive JS heap objects
     #[wasm_bindgen(js_name = heap_objects_alive)]
     pub fn heap_objects_alive() -> u32;
-}
-
-const TEST_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-#[derive(Clone, Copy)]
-enum BatchMode {
-    NonBatched,
-    Batched,
-}
-
-impl BatchMode {
-    fn suffix(self) -> &'static str {
-        match self {
-            BatchMode::NonBatched => "nonbatched",
-            BatchMode::Batched => "batched",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Default)]
-struct HarnessOptions {
-    repeat_for: Option<Duration>,
-    quiet: bool,
-}
-
-// The futures returned by test bodies are !Send because they can hold
-// Rc<RefCell<_>> values. They are polled on the single-threaded runtime where
-// they were constructed.
-type TestFuture = Pin<Box<dyn Future<Output = ()>>>;
-type TestBody = Box<dyn FnOnce() -> TestFuture>;
-
-struct TestCase {
-    name: String,
-    body: TestBody,
-}
-
-struct WallClockTimeoutGuard {
-    done: Arc<AtomicBool>,
-}
-
-impl Drop for WallClockTimeoutGuard {
-    fn drop(&mut self) {
-        self.done.store(true, Ordering::SeqCst);
-    }
-}
-
-fn arm_wall_clock_timeout(timeout: Duration) -> WallClockTimeoutGuard {
-    let done = Arc::new(AtomicBool::new(false));
-    let done_for_thread = done.clone();
-    let watchdog_timeout = timeout + Duration::from_secs(1);
-    std::thread::spawn(move || {
-        std::thread::sleep(watchdog_timeout);
-        if !done_for_thread.load(Ordering::SeqCst) {
-            eprintln!(
-                "Test exceeded wall-clock timeout after {} seconds",
-                watchdog_timeout.as_secs()
-            );
-            std::process::exit(101);
-        }
-    });
-
-    WallClockTimeoutGuard { done }
-}
-
-async fn run_with_timeout(fut: impl Future<Output = ()>, mode: BatchMode, timeout: Duration) {
-    let _wall_clock_timeout = arm_wall_clock_timeout(timeout);
-    let body = async move {
-        match mode {
-            BatchMode::NonBatched => fut.await,
-            BatchMode::Batched => batch_async(fut).await,
-        }
-    };
-    tokio::select! {
-        _ = body => {}
-        _ = tokio::time::sleep(timeout) => {
-            panic!("Test timed out after {} seconds", timeout.as_secs())
-        }
-    }
-}
-
-fn sync_test<F>(name: String, mode: BatchMode, f: F) -> TestCase
-where
-    F: Fn() + Copy + 'static,
-{
-    TestCase {
-        name,
-        body: Box::new(move || Box::pin(run_with_timeout(async move { f() }, mode, TEST_TIMEOUT))),
-    }
-}
-
-fn async_test<Fut, F>(name: String, mode: BatchMode, f: F) -> TestCase
-where
-    F: Fn() -> Fut + Copy + 'static,
-    Fut: Future<Output = ()> + 'static,
-{
-    TestCase {
-        name,
-        body: Box::new(move || Box::pin(run_with_timeout(f(), mode, TEST_TIMEOUT))),
-    }
-}
-
-fn trial_name(module: &str, name: &str, mode: BatchMode) -> String {
-    format!("{module}::{name}::{}", mode.suffix())
 }
 
 /// Generate one case per (test, batch_mode) pair for sync `fn()` tests.
@@ -227,6 +119,12 @@ fn build_tests() -> Vec<TestCase> {
         add_number_js::test_add_number_js,
         add_number_js::test_add_number_js_batch,
         roundtrip::test_roundtrip,
+        arg_type_alias::test_export_slice_arg_alias,
+        arg_type_alias::test_export_str_arg_alias,
+        arg_type_alias::test_export_mut_slice_arg_alias,
+        arg_type_alias::test_export_struct_ref_arg_alias,
+        arg_type_alias::test_import_slice_arg_alias,
+        arg_type_alias::test_return_type_alias,
         callbacks::test_call_callback,
         callbacks::test_dropped_closure_disposes_js_callable,
         callbacks::test_dropped_once_closure_disposes_js_callable,
@@ -247,6 +145,7 @@ fn build_tests() -> Vec<TestCase> {
         closure_paths::test_max_arity_closure_paths,
         reentrant_callbacks::test_reentrant_fn_closure,
         reentrant_callbacks::test_interleaved_fn_closures,
+        closure_panic::test_closure_panic_surfaces_as_js_error,
         jsvalue::test_jsvalue_constants,
         jsvalue::test_jsvalue_bool,
         jsvalue::test_jsvalue_default,
@@ -285,10 +184,17 @@ fn build_tests() -> Vec<TestCase> {
         catch_attribute::test_catch_successful_call,
         catch_attribute::test_catch_with_arguments,
         catch_attribute::test_catch_method,
+        catch_attribute::test_result_alias_export_throws,
         structs::test_struct_bindings,
         structs::test_exported_struct_arg_before_heap_ref_arg,
         export_call::test_js_calls_exported_usize_js_thunk,
         export_call::test_js_calls_exported_usize_js_thunk_batched,
+        export_call::test_unit_export_write_back_free_function,
+        export_call::test_returning_export_write_back_order,
+        export_call::test_unit_export_write_back_constructor,
+        export_call::test_unit_export_write_back_static_method,
+        export_call::test_unit_export_write_back_instance_method,
+        export_call::test_unit_export_write_back_setter,
         clamped::test_clamped_is_uint8clampedarray,
         clamped::test_clamped_vec_is_uint8clampedarray,
         clamped::test_jsvalue_from_clamped_vec_is_uint8clampedarray,
@@ -304,6 +210,18 @@ fn build_tests() -> Vec<TestCase> {
         borrow_stack::test_borrowed_ref_deep_nesting,
         thread_local::test_thread_local,
         thread_local::test_thread_local_window,
+        upstream_attr_codegen::test_variadic_import_spreads_final_argument,
+        upstream_attr_codegen::test_imported_js_namespace_paths,
+        upstream_attr_codegen::test_reexport_installs_imported_values,
+        upstream_attr_codegen::test_static_string_thread_local_and_reexport,
+        upstream_attr_codegen::test_namespaced_export_and_this,
+        upstream_attr_codegen::test_start_export_runs_during_initialization,
+        upstream_attr_codegen::test_numeric_enums_export_and_roundtrip,
+        upstream_attr_codegen::test_dynamic_union_export_argument_decode,
+        upstream_attr_codegen::test_dynamic_union_import_return_decode,
+        upstream_attr_codegen::test_dynamic_union_nested_and_fallback,
+        upstream_attr_codegen::test_dynamic_union_export_return_encode,
+        upstream_attr_codegen::test_exported_class_metadata_paths,
         module_import::test_module_import,
         indexing::test_indexing_getter_array,
         indexing::test_indexing_setter_array,
@@ -333,285 +251,23 @@ fn build_tests() -> Vec<TestCase> {
         async_bindings::test_call_async_returning_js_value,
         async_bindings::test_catch_async_call_ok,
         async_bindings::test_catch_async_call_err,
+        async_bindings::test_async_import_result_alias_propagates_err,
+        async_bindings::test_async_export_result_alias_rejects,
         async_bindings::test_async_method,
         async_bindings::test_async_method_with_catch,
         async_bindings::test_async_static_method,
         async_bindings::test_already_resolved_async,
         async_bindings::test_already_rejected_async_catch,
         async_bindings::test_join_many_async,
+        upstream_attr_codegen::test_async_export_returns_promise,
+        upstream_attr_codegen::test_async_receiver_methods_return_promise,
+        upstream_attr_codegen::test_async_constructor_returns_instance_promise,
+        upstream_attr_codegen::test_async_static_method_returns_promise,
     );
 
     tests
 }
 
-fn extract_panic_message(payload: Box<dyn Any + Send>) -> Failed {
-    let msg = if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_string()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "test panicked".to_string()
-    };
-    Failed::from(msg)
-}
-
-fn install_js_error_reporter() -> UnboundedReceiver<String> {
-    let (sender, receiver) = unbounded();
-    set_on_error(Closure::new(move |err: String, stack: String| {
-        let message = if stack.is_empty() {
-            err
-        } else {
-            format!("{err}\nStack trace:\n{stack}")
-        };
-        let _ = sender.unbounded_send(message.clone());
-
-        eprintln!("Fatal JavaScript error event:\n{message}");
-        let _ = io::stdout().flush();
-        let _ = io::stderr().flush();
-        std::process::exit(101);
-    }));
-    receiver
-}
-
-fn js_error_failure(message: String) -> Failed {
-    Failed::from(format!("JavaScript error event:\n{message}"))
-}
-
-async fn run_test_body(body: TestBody) -> Result<(), Failed> {
-    let fut = std::panic::catch_unwind(AssertUnwindSafe(body)).map_err(extract_panic_message)?;
-    AssertUnwindSafe(fut)
-        .catch_unwind()
-        .await
-        .map_err(extract_panic_message)
-}
-
-async fn run_test(body: TestBody, js_errors: &mut UnboundedReceiver<String>) -> Result<(), Failed> {
-    if let Some(Some(message)) = js_errors.next().now_or_never() {
-        return Err(js_error_failure(message));
-    }
-
-    let body = run_test_body(body).fuse();
-    let js_error = js_errors.next().fuse();
-    pin_mut!(body, js_error);
-
-    select! {
-        result = body => {
-            if result.is_ok() {
-                if let Some(Some(message)) = js_errors.next().now_or_never() {
-                    return Err(js_error_failure(message));
-                }
-            }
-            result
-        }
-        message = js_error => {
-            let message = message.unwrap_or_else(|| "JavaScript error reporter stopped".to_string());
-            Err(js_error_failure(message))
-        }
-    }
-}
-
-fn is_filtered_out(args: &Arguments, test: &TestCase) -> bool {
-    if let Some(filter) = &args.filter {
-        match args.exact {
-            true if &test.name != filter => return true,
-            false if !test.name.contains(filter) => return true,
-            _ => {}
-        }
-    }
-
-    for skip_filter in &args.skip {
-        match args.exact {
-            true if &test.name == skip_filter => return true,
-            false if test.name.contains(skip_filter) => return true,
-            _ => {}
-        }
-    }
-
-    // This harness does not define ignored tests, so `--ignored` filters every
-    // test out just like libtest would.
-    args.ignored
-}
-
-fn print_failures(failures: &[(String, Option<String>)]) {
-    if failures.is_empty() {
-        return;
-    }
-
-    println!();
-    println!("failures:");
-    println!();
-
-    for (name, message) in failures {
-        println!("---- {name} ----");
-        if let Some(message) = message {
-            println!("{message}");
-        }
-        println!();
-    }
-
-    println!();
-    println!("failures:");
-    for (name, _) in failures {
-        println!("    {name}");
-    }
-}
-
-async fn run_tests(
-    args: Arguments,
-    mut tests: Vec<TestCase>,
-    js_errors: &mut UnboundedReceiver<String>,
-    quiet: bool,
-) -> bool {
-    let started = Instant::now();
-    let initial_count = tests.len();
-    tests.retain(|test| !is_filtered_out(&args, test));
-    let filtered = initial_count - tests.len();
-
-    if args.list {
-        for test in tests {
-            println!("{}: test", test.name);
-        }
-        return true;
-    }
-
-    let plural = if tests.len() == 1 { "" } else { "s" };
-    if !quiet {
-        println!();
-        println!("running {} test{plural}", tests.len());
-    }
-
-    let name_width = tests
-        .iter()
-        .map(|test| test.name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let mut passed = 0;
-    let mut ignored = 0;
-    let mut failures = Vec::new();
-
-    for test in tests {
-        if !quiet {
-            print!("test {: <name_width$} ... ", test.name);
-            io::stdout().flush().unwrap();
-        }
-
-        if args.bench {
-            ignored += 1;
-            if !quiet {
-                println!("ignored");
-            }
-            continue;
-        }
-
-        match run_test(test.body, js_errors).await {
-            Ok(()) => {
-                passed += 1;
-                if !quiet {
-                    println!("ok");
-                }
-            }
-            Err(failed) => {
-                if !quiet {
-                    println!("FAILED");
-                }
-                failures.push((test.name.clone(), failed.message().map(ToOwned::to_owned)));
-            }
-        }
-    }
-
-    print_failures(&failures);
-
-    let result = if failures.is_empty() { "ok" } else { "FAILED" };
-    if !quiet || !failures.is_empty() {
-        println!();
-        println!(
-            "test result: {result}. {passed} passed; {} failed; {ignored} ignored; 0 measured; {filtered} filtered out; finished in {:.2}s",
-            failures.len(),
-            started.elapsed().as_secs_f64(),
-        );
-        println!();
-    }
-
-    failures.is_empty()
-}
-
-fn parse_harness_args() -> (HarnessOptions, Vec<String>) {
-    let mut options = HarnessOptions::default();
-    let mut libtest_args = Vec::new();
-
-    let mut args = std::env::args();
-    if let Some(executable) = args.next() {
-        libtest_args.push(executable);
-    }
-
-    for arg in args {
-        if let Some(value) = arg.strip_prefix("--wry-repeat-for-secs=") {
-            options.repeat_for = value.parse::<u64>().ok().map(Duration::from_secs);
-        } else if arg == "--wry-quiet" {
-            options.quiet = true;
-        } else {
-            libtest_args.push(arg);
-        }
-    }
-
-    if options.repeat_for.is_none() {
-        options.repeat_for = std::env::var("WRY_BINDGEN_REPEAT_FOR_SECS")
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-            .map(Duration::from_secs);
-    }
-
-    (options, libtest_args)
-}
-
-async fn run_selected_tests(
-    args: Arguments,
-    js_errors: &mut UnboundedReceiver<String>,
-    quiet: bool,
-) -> bool {
-    run_tests(args, build_tests(), js_errors, quiet).await
-}
-
 fn main() -> ExitCode {
-    let (options, libtest_args) = parse_harness_args();
-    let args = Arguments::from_iter(libtest_args);
-
-    wry_launch::run_headless(move || async move {
-        let mut js_errors = install_js_error_reporter();
-        let passed = if let Some(duration) = options.repeat_for.filter(|_| !args.list) {
-            let start = Instant::now();
-            let mut iteration = 0u64;
-
-            loop {
-                iteration += 1;
-                if !options.quiet {
-                    println!(
-                        "=== main_thread_tests iteration {iteration} elapsed {:?} ===",
-                        start.elapsed()
-                    );
-                }
-
-                if !run_selected_tests(args.clone(), &mut js_errors, options.quiet).await {
-                    break false;
-                }
-
-                if start.elapsed() >= duration {
-                    println!(
-                        "=== completed {iteration} clean main_thread_tests iterations in {:?} ===",
-                        start.elapsed()
-                    );
-                    break true;
-                }
-            }
-        } else {
-            run_selected_tests(args, &mut js_errors, options.quiet).await
-        };
-
-        let _ = io::stdout().flush();
-        let _ = io::stderr().flush();
-        std::process::exit(if passed { 0 } else { 101 });
-    })
-    .expect("failed to run headless test harness");
-
-    ExitCode::SUCCESS
+    harness_main(build_tests)
 }

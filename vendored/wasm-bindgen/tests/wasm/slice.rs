@@ -1,9 +1,10 @@
 #![cfg(test)]
 
 use paste::paste;
+#[cfg(target_arch = "wasm32")]
 use std::mem::MaybeUninit;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen::Clamped;
+use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 
 #[wasm_bindgen(module = "tests/wasm/slice.js")]
@@ -24,10 +25,13 @@ extern "C" {
     #[wasm_bindgen(js_name = js_clamped)]
     fn js_clamped3(val: Clamped<&mut [u8]>, offset: u8);
 
+    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(js_name = js_clamped)]
     fn js_clamped_uninit(val: Clamped<&[MaybeUninit<u8>]>, offset: u8);
+    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(js_name = js_clamped)]
     fn js_clamped2_uninit(val: Clamped<Vec<MaybeUninit<u8>>>, offset: u8);
+    #[cfg(target_arch = "wasm32")]
     #[wasm_bindgen(js_name = js_clamped)]
     fn js_clamped3_uninit(val: Clamped<&mut [MaybeUninit<u8>]>, offset: u8);
 }
@@ -53,6 +57,7 @@ macro_rules! export_macro {
 
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen]
         pub fn [<export_uninit_ $i>](a: &[MaybeUninit<$i>]) -> Vec<MaybeUninit<$i>> {
             assert_eq!(a.len(), 2);
@@ -62,6 +67,7 @@ macro_rules! export_macro {
             a.to_vec()
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen]
         pub fn [<export_optional_uninit_ $i>](a: Option<Vec<MaybeUninit<$i>>>) -> Option<Vec<MaybeUninit<$i>>> {
             a.map(|a| {
@@ -98,11 +104,13 @@ macro_rules! import_macro {
             [<import_js_ $i>](a, Some(a), None)
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen(module = "tests/wasm/slice.js")]
         extern "C" {
             fn [<import_js_uninit_ $i>](a: &[MaybeUninit<$i>], b: Option<&[MaybeUninit<$i>]>, c: Option<&[MaybeUninit<$i>]>) -> Vec<MaybeUninit<$i>>;
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen]
         pub fn [<import_rust_uninit_ $i>](a: &[MaybeUninit<$i>]) -> Vec<MaybeUninit<$i>> {
             assert_eq!(a.len(), 2);
@@ -130,6 +138,7 @@ macro_rules! pass_array_marco {
             assert_eq!(a[1], 2 as $i);
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen]
         pub fn [<pass_array_rust_uninit_ $i>](a: &[MaybeUninit<$i>]) {
             assert_eq!(a.len(), 2);
@@ -153,6 +162,7 @@ macro_rules! import_mut_macro {
             #[wasm_bindgen(module = "tests/wasm/slice.js")]
             extern "C" {
                 fn [<import_mut_js_ $i>](a: &mut [$i], b: Option<&mut [$i]>, c: Option<&mut [$i]>);
+                #[cfg(target_arch = "wasm32")]
                 fn [<import_mut_js_uninit_ $i>](a: &mut [MaybeUninit<$i>], b: Option<&mut [MaybeUninit<$i>]>, c: Option<&mut [MaybeUninit<$i>]>);
             }
 
@@ -176,6 +186,7 @@ macro_rules! import_mut_macro {
                 assert_eq!(buf2[2], 6 as $i);
             }
 
+            #[cfg(target_arch = "wasm32")]
             fn [<import_mut_rust_uninit_ $i>]() {
                 let mut buf1 = [
                     1 as $i,
@@ -200,7 +211,10 @@ macro_rules! import_mut_macro {
         #[wasm_bindgen_test]
         fn import_mut() {
             $([<import_mut_rust_ $i>]();)*
-            $([<import_mut_rust_uninit_ $i>]();)*
+            $(
+                #[cfg(target_arch = "wasm32")]
+                [<import_mut_rust_uninit_ $i>]();
+            )*
         }
     } )
 }
@@ -219,6 +233,7 @@ macro_rules! export_mut_macro {
             a[1] = 5 as $i;
         }
 
+        #[cfg(target_arch = "wasm32")]
         #[wasm_bindgen]
         pub fn [<export_mut_uninit_ $i>](a: &mut [MaybeUninit<$i>])  {
             assert_eq!(a.len(), 3);
@@ -285,23 +300,30 @@ fn take_clamped() {
     js_clamped2(Clamped(vec![4, 5, 6]), 4);
     js_clamped3(Clamped(&mut [7, 8, 9]), 7);
 
-    js_clamped_uninit(Clamped(slice_uninit_ref(&[1, 2, 3])), 1);
-    js_clamped2_uninit(Clamped(slice_uninit_ref(&[4, 5, 6]).to_vec()), 4);
-    js_clamped3_uninit(Clamped(slice_uninit_mut(&mut [7, 8, 9])), 7);
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_clamped_uninit(Clamped(slice_uninit_ref(&[1, 2, 3])), 1);
+        js_clamped2_uninit(Clamped(slice_uninit_ref(&[4, 5, 6]).to_vec()), 4);
+        js_clamped3_uninit(Clamped(slice_uninit_mut(&mut [7, 8, 9])), 7);
+    }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn slice_ref<T>(slice: &[MaybeUninit<T>]) -> &[T] {
     unsafe { &*(std::ptr::from_ref(slice) as *const [T]) }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn slice_mut<T>(slice: &mut [MaybeUninit<T>]) -> &mut [T] {
     unsafe { &mut *(std::ptr::from_mut(slice) as *mut [T]) }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn slice_uninit_ref<T>(slice: &[T]) -> &[MaybeUninit<T>] {
     unsafe { &*(std::ptr::from_ref(slice) as *const [MaybeUninit<T>]) }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn slice_uninit_mut<T>(slice: &mut [T]) -> &mut [MaybeUninit<T>] {
     unsafe { &mut *(std::ptr::from_mut(slice) as *mut [MaybeUninit<T>]) }
 }

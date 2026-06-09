@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -41,6 +42,8 @@ impl<T: BinaryDecode> BatchableResult for Option<T> {}
 impl<T: BinaryDecode, E: BinaryDecode> BatchableResult for Result<T, E> {}
 
 impl<T: BinaryDecode> BatchableResult for Vec<T> {}
+
+impl<T: BinaryDecode> BatchableResult for Box<[T]> {}
 
 impl BatchableResult for JsRef {
     fn try_placeholder(batch: &mut Runtime) -> Option<Self> {

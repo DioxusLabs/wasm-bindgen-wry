@@ -8,26 +8,25 @@ use web_sys::{HtmlCanvasElement, window};
 
 use piet::{RenderContext, samples};
 use piet_web::WebRenderContext;
+use wasm_bindgen::prelude::*;
 
 //TODO: figure out how to dynamically select the sample?
 const SAMPLE_PICTURE_NO: usize = 11;
 
 fn main() {
-    wry_launch::run(|| async {
-        window()
-            .unwrap()
-            .document()
-            .unwrap()
-            .body()
-            .unwrap()
-            .set_inner_html(r#"<canvas id="canvas"></canvas>"#);
-        run();
-        std::future::pending::<()>().await;
-    })
-    .unwrap();
+    wry_launch::launch();
 }
 
-pub fn run() {
+#[wasm_bindgen(start)]
+pub fn start() {
+    window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .body()
+        .unwrap()
+        .set_inner_html(r#"<canvas id="canvas"></canvas>"#);
+
     let window = window().unwrap();
     let canvas = window
         .document()

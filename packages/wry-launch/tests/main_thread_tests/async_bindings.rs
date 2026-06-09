@@ -239,3 +239,56 @@ pub(crate) async fn test_join_many_async() {
         expected.remove(index);
     }
 }
+
+// A `Result` return reached through an alias whose name is not `Result`.
+type AsyncResultAlias<T> = Result<T, JsValue>;
+
+pub(crate) async fn test_async_import_result_alias_propagates_err() {
+    #[wasm_bindgen(inline_js = "export async function alias_reject(error) {
+        return new Promise((resolve, reject) => {
+            setTimeout(() => { reject(error); }, 50);
+        });
+    }")]
+    extern "C" {
+        #[wasm_bindgen(catch, js_name = alias_reject)]
+        async fn alias_reject(error: &str) -> AsyncResultAlias<()>;
+    }
+
+    // The rejection propagates as `Err` (via `FromJsFuture`) even though the
+    // return type is spelled via an alias; the old name-matching codegen would
+    // have panicked with "async function failed".
+    let result = alias_reject("aliased async boom").await;
+    let err = result
+        .err()
+        .expect("expected Err from a rejected aliased async import");
+    assert_eq!(err.as_string().unwrap(), "aliased async boom");
+}
+
+#[wasm_bindgen]
+pub async fn async_aliased_export(fail: bool) -> AsyncResultAlias<u32> {
+    if fail {
+        Err(JsValue::from_str("async export boom"))
+    } else {
+        Ok(42)
+    }
+}
+
+pub(crate) async fn test_async_export_result_alias_rejects() {
+    #[wasm_bindgen(inline_js = "export async function call_async_aliased(fail) {
+        try {
+            return await window.async_aliased_export(fail);
+        } catch (e) {
+            return 99;
+        }
+    }")]
+    extern "C" {
+        #[wasm_bindgen(js_name = call_async_aliased)]
+        async fn call_async_aliased(fail: bool) -> u32;
+    }
+
+    // `Ok` resolves the promise with the value; `Err` rejects it (via
+    // `IntoJsResult`), so the catch path returns the sentinel. The aliased return
+    // would not even have compiled under the old name-matching codegen.
+    assert_eq!(call_async_aliased(false).await, 42);
+    assert_eq!(call_async_aliased(true).await, 99);
+}

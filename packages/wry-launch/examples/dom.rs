@@ -3,15 +3,12 @@
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 use web_sys::{Document, HtmlElement};
-use wry_launch::run;
 
-fn main() -> wry::Result<()> {
-    run(|| async {
-        app();
-        std::future::pending().await
-    })
+fn main() {
+    wry_launch::launch();
 }
 
+#[wasm_bindgen(start)]
 fn app() {
     let window = web_sys::window().expect("should have a window in this context");
     let document = window.document().expect("window should have a document");

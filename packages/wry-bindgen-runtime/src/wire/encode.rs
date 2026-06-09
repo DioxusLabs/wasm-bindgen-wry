@@ -1,6 +1,8 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::future::Future;
+use core::ops::AsyncFnOnce;
 
 use super::{DecodeError, DecodedData, EncodedData, JsRef};
 
@@ -16,13 +18,200 @@ pub trait JsRefEncode {
     fn js_ref(&self) -> JsRef;
 }
 
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// How long a decoded borrow must remain valid.
+#[doc(hidden)]
+pub trait BorrowScope: sealed::Sealed {}
+
+/// The borrow only needs to outlive the synchronous call, so a JS handle may
+/// ride JS's borrow stack.
+#[doc(hidden)]
+pub struct CallScoped;
+
+/// The borrow must outlive the `Promise` an `async` export returns, so a JS
+/// handle anchors an owned copy instead of riding the borrow stack.
+#[doc(hidden)]
+pub struct Anchored;
+
+impl sealed::Sealed for CallScoped {}
+impl sealed::Sealed for Anchored {}
+impl BorrowScope for CallScoped {}
+impl BorrowScope for Anchored {}
+
+/// Decode one exported-function or callback argument from the wire, for borrow
+/// scope `S`.
+///
+/// [`decode`](ArgAbi::decode) produces a [`Guard`](ArgAbi::Guard) that owns
+/// whatever backs the argument for the duration of the call. [`project`] invokes
+/// a continuation with the [`Projected`](ArgAbi::Projected) value the Rust
+/// function actually receives (`&T`, `&mut T`, or an owned `T`) while the guard
+/// is still alive.
+#[doc(hidden)]
+pub trait ArgAbi<S: BorrowScope> {
+    /// The type whose `TypeDef` is advertised to JS for this argument.
+    type Wire: EncodeTypeDef;
+
+    /// Owns whatever keeps the projected argument valid across the call.
+    type Guard;
+
+    /// The guard type after projection, retained for any later write-back.
+    type ProjectedGuard;
+
+    /// What the Rust function receives, borrowed from the guard for `'a`.
+    type Projected<'a>;
+
+    /// Decode the guard from the incoming wire bytes.
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError>;
+
+    /// Project the call argument for the duration of `with`, then return the
+    /// continuation result and guard for any later write-back.
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R;
+
+    /// Append any post-call write-back data to the export response.
+    fn write_back(_guard: Self::ProjectedGuard, _encoder: &mut EncodedData) {}
+
+    /// The `async` counterpart of [`project`](ArgAbi::project): drive the async
+    /// continuation `with` with the projected argument while owning the guard for
+    /// the returned future's lifetime.
+    fn project_async<R, F>(guard: Self::Guard, with: F) -> impl Future<Output = R>
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R;
+}
+
+impl<S, T> ArgAbi<S> for T
+where
+    S: BorrowScope,
+    T: BinaryDecode + EncodeTypeDef,
+{
+    type Wire = T;
+    type Guard = T;
+    type ProjectedGuard = ();
+    type Projected<'a> = T;
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <T as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(guard);
+        (result, ())
+    }
+
+    async fn project_async<R, F>(guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(guard).await
+    }
+}
+
+impl<S: BorrowScope> ArgAbi<S> for &str {
+    type Wire = String;
+    type Guard = String;
+    type ProjectedGuard = ();
+    type Projected<'a> = &'a str;
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <String as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(&guard);
+        (result, ())
+    }
+
+    async fn project_async<R, F>(guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(&guard).await
+    }
+}
+
+impl<S, T> ArgAbi<S> for &[T]
+where
+    S: BorrowScope,
+    T: BinaryDecode + EncodeTypeDef + 'static,
+{
+    type Wire = Vec<T>;
+    type Guard = Vec<T>;
+    type ProjectedGuard = ();
+    type Projected<'a> = &'a [T];
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <Vec<T> as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(&guard);
+        (result, ())
+    }
+
+    async fn project_async<R, F>(guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(&guard).await
+    }
+}
+
+impl<S, T> ArgAbi<S> for &mut [T]
+where
+    S: BorrowScope,
+    T: BinaryDecode + BinaryEncode + EncodeTypeDef + 'static,
+{
+    type Wire = MutSliceArg<T>;
+    type Guard = MutSliceArg<T>;
+    type ProjectedGuard = Self::Guard;
+    type Projected<'a> = &'a mut [T];
+
+    fn decode(decoder: &mut DecodedData) -> Result<Self::Guard, DecodeError> {
+        <MutSliceArg<T> as BinaryDecode>::decode(decoder)
+    }
+
+    fn project<R, F>(mut guard: Self::Guard, with: F) -> (R, Self::ProjectedGuard)
+    where
+        F: for<'a> FnOnce(Self::Projected<'a>) -> R,
+    {
+        let result = with(guard.as_mut_slice());
+        (result, guard)
+    }
+
+    fn write_back(guard: Self::ProjectedGuard, encoder: &mut EncodedData) {
+        MutSliceArg::write_back(guard, encoder);
+    }
+
+    async fn project_async<R, F>(mut guard: Self::Guard, with: F) -> R
+    where
+        F: for<'a> AsyncFnOnce(Self::Projected<'a>) -> R,
+    {
+        with(guard.as_mut_slice()).await
+    }
+}
+
 pub(crate) const TYPE_CACHED: u8 = 0xFF;
 pub(crate) const TYPE_FULL: u8 = 0xFE;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TypeTag {
-    Null = 0,
+    // The Rust unit type `()`. It carries no bytes; JS decodes it to `undefined`,
+    // so an export returning `()` resolves to `undefined`, matching wasm-bindgen.
+    Undefined = 0,
     Bool = 1,
     U8 = 2,
     U16 = 3,
@@ -47,6 +236,18 @@ enum TypeTag {
     BorrowedRef = 22,
     U8Clamped = 23,
     StringEnum = 24,
+    DynamicUnion = 25,
+    Char = 26,
+    ThrowingResult = 27,
+    NumericEnum = 28,
+    RustValue = 29,
+    RustBorrow = 30,
+    // A `&mut [T]` argument. It rides the wire exactly like `Array` (a
+    // length-prefixed element list), but the distinct tag tells the receiving
+    // side to copy the (possibly mutated) elements back to the caller after the
+    // call returns — wry has no shared linear memory, so the write-back travels
+    // as data appended to the response. The element type def follows the tag.
+    MutArray = 31,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -101,13 +302,73 @@ impl TypeDef {
         self.push_tag(TypeTag::HeapRef);
     }
 
+    /// The wire type for an exported Rust struct passed or returned by value.
+    /// On the wire it behaves exactly like a [`heap_ref`](Self::heap_ref) (the
+    /// object wrapper rides the JS heap), but the distinct tag lets JS apply
+    /// wasm-bindgen's moved-value semantics: passing the wrapper by value
+    /// transfers ownership to Rust, so JS zeroes the wrapper's handle and a later
+    /// use throws "Attempt to use a moved value".
+    #[doc(hidden)]
+    pub fn rust_value(&mut self, class_name: &str) {
+        self.push_tag(TypeTag::RustValue);
+        // The class name lets JS find an inheritance descendant's per-class
+        // ancestor slot, so a by-value pass of a descendant as its ancestor can
+        // be rejected (the descendant's own handle differs from the ancestor
+        // view's). A non-participating struct has no such slot, so the check is a
+        // no-op for it.
+        self.push_str(class_name);
+    }
+
     #[doc(hidden)]
     pub fn borrowed_ref(&mut self) {
         self.push_tag(TypeTag::BorrowedRef);
     }
 
+    /// A borrowed `&T` to an exported struct: the routed object handle rides the
+    /// wire as a plain `u32` (like a method receiver), so no borrow-stack
+    /// round-trip is needed to read it. `class_name` lets JS route an inheritance
+    /// descendant passed as `&Ancestor` to its shared ancestor-view handle.
+    #[doc(hidden)]
+    pub fn rust_borrow(&mut self, class_name: &str) {
+        self.push_tag(TypeTag::RustBorrow);
+        self.push_str(class_name);
+    }
+
+    /// Build the type def of `T` and, if it is an exported struct (`RustValue`
+    /// tag), return its class name. Used to forward an exported struct's class
+    /// name onto a borrowed `&T` argument so JS can route inheritance descendants
+    /// to their ancestor view.
+    #[doc(hidden)]
+    pub fn rust_value_class_name<T: EncodeTypeDef + ?Sized>() -> Option<alloc::string::String> {
+        let def = TypeDef::of::<T>();
+        let bytes = def.bytes();
+        if bytes.first().copied() != Some(TypeTag::RustValue as u8) {
+            return None;
+        }
+        let len_bytes = bytes.get(1..5)?;
+        let len = u32::from_le_bytes(len_bytes.try_into().ok()?) as usize;
+        let name_bytes = bytes.get(5..5 + len)?;
+        core::str::from_utf8(name_bytes).ok().map(Into::into)
+    }
+
     #[doc(hidden)]
     pub fn u8_clamped(&mut self) {
+        self.push_tag(TypeTag::U8Clamped);
+    }
+
+    /// A mutable array (`&mut [T]`): the inner array type def follows (an
+    /// `Array` of `T`). JS copies the mutated elements back to the caller's
+    /// array after the call.
+    pub fn mut_array<T: EncodeTypeDef + ?Sized>(&mut self) {
+        self.push_tag(TypeTag::MutArray);
+        self.push_tag(TypeTag::Array);
+        T::encode_type_def(self);
+    }
+
+    /// A mutable clamped array (`Clamped<&mut [u8]>`). The inner array type is a
+    /// `U8Clamped` (the element is always `u8`); JS copies the mutated bytes back.
+    pub fn mut_u8_clamped(&mut self) {
+        self.push_tag(TypeTag::MutArray);
         self.push_tag(TypeTag::U8Clamped);
     }
 
@@ -117,6 +378,41 @@ impl TypeDef {
         for variant in variants {
             self.push_str(variant);
         }
+    }
+
+    /// A C-style enum: JS validates that a value is one of `values` (decoded as
+    /// `i32` when `signed`, else `u32`) so a non-enum value is rejected rather
+    /// than silently coerced.
+    pub fn numeric_enum(&mut self, signed: bool, values: &[u32]) {
+        self.push_tag(TypeTag::NumericEnum);
+        self.push_u8(signed as u8);
+        self.push_u8(u8::try_from(values.len()).expect("too many numeric enum variants"));
+        for value in values {
+            self.bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn dynamic_union(
+        &mut self,
+        variant_count: usize,
+        encode_variants: impl FnOnce(&mut TypeDef),
+    ) {
+        self.push_tag(TypeTag::DynamicUnion);
+        self.push_u8(u8::try_from(variant_count).expect("too many dynamic union variants"));
+        encode_variants(self);
+    }
+
+    #[doc(hidden)]
+    pub fn dynamic_union_string_variant(&mut self, value: &str) {
+        self.push_u8(0);
+        self.push_str(value);
+    }
+
+    #[doc(hidden)]
+    pub fn dynamic_union_type_variant<T: EncodeTypeDef>(&mut self) {
+        self.push_u8(1);
+        T::encode_type_def(self);
     }
 
     #[doc(hidden)]
@@ -157,7 +453,7 @@ pub trait EncodeTypeDef {
 
 impl EncodeTypeDef for () {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.push_tag(TypeTag::Null);
+        type_def.push_tag(TypeTag::Undefined);
     }
 }
 
@@ -213,7 +509,9 @@ impl BinaryDecode for bool {
 
 impl EncodeTypeDef for char {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.push_tag(TypeTag::U32);
+        // The wire payload is the u32 code point, but JS converts to/from a 1-char
+        // string (matching wasm-bindgen) via the `Char` type tag.
+        type_def.push_tag(TypeTag::Char);
     }
 }
 
@@ -225,8 +523,12 @@ impl BinaryEncode for char {
 
 impl BinaryDecode for char {
     fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
-        char::from_u32(decoder.take_u32()?)
-            .ok_or_else(|| DecodeError::custom("invalid char scalar value"))
+        let cp = decoder.take_u32()?;
+        char::from_u32(cp).ok_or_else(|| {
+            DecodeError::custom(alloc::format!(
+                "expected a valid Unicode scalar value, found {cp}"
+            ))
+        })
     }
 }
 
@@ -327,7 +629,7 @@ impl EncodeTypeDef for &str {
 
 impl<T: JsRefEncode + ?Sized> EncodeTypeDef for &T {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.heap_ref();
+        type_def.borrowed_ref();
     }
 }
 
@@ -423,6 +725,26 @@ impl<T: BinaryDecode, E: BinaryDecode> BinaryDecode for Result<T, E> {
     }
 }
 
+/// A `Result` returned from an exported Rust function. The wire payload is
+/// identical to `Result`, but the distinct type tag tells JS to throw the `Err`
+/// value as an exception instead of returning a `{err}` object, matching
+/// wasm-bindgen's behavior for fallible exports.
+pub struct ThrowingResult<T, E>(pub Result<T, E>);
+
+impl<T: EncodeTypeDef, E: EncodeTypeDef> EncodeTypeDef for ThrowingResult<T, E> {
+    fn encode_type_def(type_def: &mut TypeDef) {
+        type_def.push_tag(TypeTag::ThrowingResult);
+        T::encode_type_def(type_def);
+        E::encode_type_def(type_def);
+    }
+}
+
+impl<T: BinaryEncode, E: BinaryEncode> BinaryEncode for ThrowingResult<T, E> {
+    fn encode(self, encoder: &mut EncodedData) {
+        self.0.encode(encoder);
+    }
+}
+
 impl<T: EncodeTypeDef> EncodeTypeDef for Vec<T> {
     fn encode_type_def(type_def: &mut TypeDef) {
         type_def.push_tag(TypeTag::Array);
@@ -439,8 +761,7 @@ impl<T: EncodeTypeDef> EncodeTypeDef for &[T] {
 
 impl<T: EncodeTypeDef> EncodeTypeDef for &mut [T] {
     fn encode_type_def(type_def: &mut TypeDef) {
-        type_def.push_tag(TypeTag::Array);
-        T::encode_type_def(type_def);
+        type_def.mut_array::<T>();
     }
 }
 
@@ -448,6 +769,61 @@ impl<T: EncodeTypeDef> EncodeTypeDef for Box<[T]> {
     fn encode_type_def(type_def: &mut TypeDef) {
         type_def.push_tag(TypeTag::Array);
         T::encode_type_def(type_def);
+    }
+}
+
+/// The wire form of a `&mut [T]` export argument. JS sends the array (under the
+/// `MutArray` tag), Rust decodes it into an owned buffer the export mutates, and
+/// the mutated buffer is copied back to JS in the response (`write_back`). The
+/// export codegen advertises this type, decodes it, mutably borrows `buffer`,
+/// then re-encodes it after the return value.
+pub struct MutSliceArg<T> {
+    buffer: Vec<T>,
+}
+
+impl<T: EncodeTypeDef> EncodeTypeDef for MutSliceArg<T> {
+    fn encode_type_def(type_def: &mut TypeDef) {
+        type_def.mut_array::<T>();
+    }
+}
+
+impl<T: BinaryDecode> BinaryDecode for MutSliceArg<T> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
+        Ok(MutSliceArg {
+            buffer: Vec::<T>::decode(decoder)?,
+        })
+    }
+}
+
+impl<T> MutSliceArg<T> {
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
+        self.buffer.as_mut_slice()
+    }
+
+    /// Append the (possibly mutated) elements to the export response so JS can
+    /// copy them back into the caller's array.
+    pub(crate) fn write_back(self, encoder: &mut EncodedData)
+    where
+        T: BinaryEncode,
+    {
+        encoder.push_u32(self.buffer.len() as u32);
+        for val in self.buffer {
+            val.encode(encoder);
+        }
+    }
+}
+
+impl<T> core::ops::Deref for MutSliceArg<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        self.buffer.as_slice()
+    }
+}
+
+impl<T> core::ops::DerefMut for MutSliceArg<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.buffer.as_mut_slice()
     }
 }
 
@@ -474,9 +850,19 @@ impl<T: BinaryDecode> BinaryDecode for Vec<T> {
         let len = decoder.take_u32()? as usize;
         let mut vec = Vec::with_capacity(len);
         for _ in 0..len {
-            vec.push(T::decode(decoder)?);
+            // A failed element decode means JS supplied an array element of the
+            // wrong type; report it with wasm-bindgen's message.
+            let item = T::decode(decoder)
+                .map_err(|_| DecodeError::custom("array contains a value of the wrong type"))?;
+            vec.push(item);
         }
         Ok(vec)
+    }
+}
+
+impl<T: BinaryDecode> BinaryDecode for Box<[T]> {
+    fn decode(decoder: &mut DecodedData) -> Result<Self, DecodeError> {
+        Ok(Vec::<T>::decode(decoder)?.into_boxed_slice())
     }
 }
 
@@ -502,6 +888,27 @@ ref_encode_via_clone!(
     bool, char, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, usize, isize, String,
 );
 
+/// Register the write-back for a `&mut [T]` argument passed to a JS import.
+///
+/// wry has no shared linear memory, so a JS function that mutates a `&mut [T]`
+/// argument cannot write into the Rust slice directly. Instead the receiver (JS)
+/// appends the mutated array after the call's return value, and this queues a
+/// closure that — once the return value is decoded — reads the array back and
+/// copies it into the original slice. The whole encode -> call -> decode ->
+/// write-back runs synchronously inside `run_js_sync`, so the raw slice pointer
+/// captured here stays valid until the write-back runs.
+fn register_slice_write_back<T: BinaryDecode + 'static>(slice: &mut [T]) {
+    let raw = slice as *mut [T];
+    crate::batch::push_write_back(Box::new(move |decoder: &mut DecodedData| {
+        let updated = Vec::<T>::decode(decoder).expect("failed to decode &mut [T] write-back");
+        // SAFETY: The raw pointer was captured from the original slice, and the write-back runs synchronously inside `run_js_sync` after the return value is decoded, so the original slice is still valid and uniquely borrowed when we write back into it.
+        let target = unsafe { &mut *raw };
+        for (dst, src) in target.iter_mut().zip(updated) {
+            *dst = src;
+        }
+    }));
+}
+
 macro_rules! slice_encode_via_copy {
     ($($ty:ty),* $(,)?) => {
         $(
@@ -517,9 +924,10 @@ macro_rules! slice_encode_via_copy {
             impl BinaryEncode for &mut [$ty] {
                 fn encode(self, encoder: &mut EncodedData) {
                     encoder.push_u32(self.len() as u32);
-                    for val in self {
+                    for val in self.iter() {
                         (*val).encode(encoder);
                     }
+                    register_slice_write_back(self);
                 }
             }
         )*
@@ -530,6 +938,29 @@ slice_encode_via_copy!(
     bool, char, u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, f32, f64, usize, isize
 );
 
+// A `&[String]` argument (e.g. a `slice_to_array` import taking `&[String]`).
+// `String` is neither a copy-primitive nor a handle type, so it falls outside
+// both the primitive and `JsRefEncode` slice impls; each element is cloned and
+// encoded as a length-prefixed UTF-8 string, matching `Vec<String>`.
+impl BinaryEncode for &[String] {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.len() as u32);
+        for val in self {
+            val.clone().encode(encoder);
+        }
+    }
+}
+
+impl BinaryEncode for &mut [String] {
+    fn encode(self, encoder: &mut EncodedData) {
+        encoder.push_u32(self.len() as u32);
+        for val in self.iter() {
+            val.clone().encode(encoder);
+        }
+        register_slice_write_back(self);
+    }
+}
+
 impl<T: JsRefEncode> BinaryEncode for &[T] {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.len() as u32);
@@ -539,12 +970,13 @@ impl<T: JsRefEncode> BinaryEncode for &[T] {
     }
 }
 
-impl<T: JsRefEncode> BinaryEncode for &mut [T] {
+impl<T: JsRefEncode + BinaryDecode + 'static> BinaryEncode for &mut [T] {
     fn encode(self, encoder: &mut EncodedData) {
         encoder.push_u32(self.len() as u32);
-        for val in self {
+        for val in self.iter() {
             val.js_ref().raw().encode(encoder);
         }
+        register_slice_write_back(self);
     }
 }
 

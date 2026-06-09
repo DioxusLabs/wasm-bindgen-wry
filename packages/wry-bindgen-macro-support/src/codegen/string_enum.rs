@@ -1,6 +1,6 @@
-use crate::ast::StringEnum;
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
+use wasm_bindgen_macro_support::ast::StringEnum;
 
 use super::common::clippy_allows;
 
@@ -28,19 +28,6 @@ pub(super) fn generate_string_enum(
         .map(|v| quote_spanned!(span=> #enum_name::#v))
         .collect();
 
-    // Generate the enum definition with repr(u32)
-    let enum_def = quote! {
-        #(#rust_attrs)*
-        #[non_exhaustive]
-        #[repr(u32)]
-        #vis enum #enum_name {
-            #(#variants = #variant_indices,)*
-            #[automatically_derived]
-            #[doc(hidden)]
-            __Invalid
-        }
-    };
-
     // Generate helper methods (from_str, to_str, from_js_value)
     let allows = clippy_allows();
     let impl_methods = quote! {
@@ -48,10 +35,10 @@ pub(super) fn generate_string_enum(
         impl #enum_name {
             /// Convert a string to this enum variant.
             #allows
-            pub fn from_str(s: &str) -> ::core::option::Option<#enum_name> {
+            pub fn from_str(s: &str) -> #krate::__rt::core::option::Option<#enum_name> {
                 match s {
-                    #(#variant_values => ::core::option::Option::Some(#variant_paths),)*
-                    _ => ::core::option::Option::None,
+                    #(#variant_values => #krate::__rt::core::option::Option::Some(#variant_paths),)*
+                    _ => #krate::__rt::core::option::Option::None,
                 }
             }
 
@@ -59,14 +46,14 @@ pub(super) fn generate_string_enum(
             pub fn to_str(&self) -> &'static str {
                 match self {
                     #(#variant_paths => #variant_values,)*
-                    #enum_name::__Invalid => ::core::panic!(#invalid_to_str_msg),
+                    #enum_name::__Invalid => #krate::__rt::core::panic!(#invalid_to_str_msg),
                 }
             }
 
             /// Convert a JsValue (if it's a string) to this enum variant.
             #allows
-            #vis fn from_js_value(obj: &#krate::JsValue) -> ::core::option::Option<#enum_name> {
-                ::core::option::Option::and_then(obj.as_string(), |s| Self::from_str(&s))
+            #vis fn from_js_value(obj: &#krate::JsValue) -> #krate::__rt::core::option::Option<#enum_name> {
+                #krate::__rt::core::option::Option::and_then(obj.as_string(), |s| Self::from_str(&s))
             }
         }
     };
@@ -93,11 +80,11 @@ pub(super) fn generate_string_enum(
     // Generate BinaryDecode implementation - decode u32 to variant
     let binary_decode_impl = quote! {
         impl #krate::__rt::BinaryDecode for #enum_name {
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> ::core::result::Result<Self, #krate::__rt::DecodeError> {
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self, #krate::__rt::DecodeError> {
                 let discriminant = <u32 as #krate::__rt::BinaryDecode>::decode(decoder)?;
                 match discriminant {
-                    #(#variant_indices => ::core::result::Result::Ok(#variant_paths),)*
-                    _ => ::core::result::Result::Ok(#enum_name::__Invalid),
+                    #(#variant_indices => #krate::__rt::core::result::Result::Ok(#variant_paths),)*
+                    _ => #krate::__rt::core::result::Result::Ok(#enum_name::__Invalid),
                 }
             }
         }
@@ -108,13 +95,50 @@ pub(super) fn generate_string_enum(
         impl #krate::__rt::BatchableResult for #enum_name {}
     };
 
+    // A string enum is a value type (not `JsGeneric`); carry the ABI markers
+    // explicitly so it flows through `ReturnWasmAbi` when returned by an export.
+    let wasm_abi_impl = quote! {
+        impl #krate::convert::IntoWasmAbi for #enum_name {}
+        impl #krate::convert::FromWasmAbi for #enum_name {}
+    };
+
     // Generate From<EnumName> for JsValue
     let into_jsvalue_impl = quote! {
         #[automatically_derived]
-        impl ::core::convert::From<#enum_name> for #krate::JsValue {
+        impl #krate::__rt::core::convert::From<#enum_name> for #krate::JsValue {
             fn from(val: #enum_name) -> Self {
                 #krate::JsValue::from_str(val.to_str())
             }
+        }
+    };
+
+    let try_from_jsvalue_impl = quote! {
+        #[automatically_derived]
+        impl #krate::convert::TryFromJsValue for #enum_name {
+            fn try_from_js_value_ref(value: &#krate::JsValue) -> #krate::__rt::core::option::Option<Self> {
+                Self::from_js_value(value)
+            }
+        }
+    };
+
+    let promising_impl = quote! {
+        #[automatically_derived]
+        impl #krate::sys::Promising for #enum_name {
+            type Resolution = #enum_name;
+        }
+    };
+
+    // Upstream parsing does not preserve string-enum tokens; wasm-bindgen
+    // generates a replacement enum with an internal invalid sentinel.
+    let enum_def = quote! {
+        #(#rust_attrs)*
+        #[non_exhaustive]
+        #[repr(u32)]
+        #vis enum #enum_name {
+            #(#variants = #variant_indices,)*
+            #[automatically_derived]
+            #[doc(hidden)]
+            __Invalid
         }
     };
 
@@ -125,10 +149,9 @@ pub(super) fn generate_string_enum(
         #binary_encode_impl
         #binary_decode_impl
         #batchable_impl
+        #wasm_abi_impl
         #into_jsvalue_impl
+        #try_from_jsvalue_impl
+        #promising_impl
     })
 }
-
-// ============================================================================
-// Export Code Generation (for Rust structs/impl blocks exposed to JavaScript)
-// ============================================================================

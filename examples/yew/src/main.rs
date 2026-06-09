@@ -4,6 +4,7 @@ use gloo::utils::window;
 use serde_derive::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter};
+use wasm_bindgen::prelude::*;
 use web_sys::HtmlInputElement as InputElement;
 use yew::events::{FocusEvent, KeyboardEvent};
 use yew::html::IntoPropValue;
@@ -11,13 +12,10 @@ use yew::html::Scope;
 use yew::{Classes, Component, Context, Html, NodeRef, TargetCast, classes, html};
 
 pub fn main() {
-    wry_launch::run(|| async {
-        app();
-        std::future::pending::<()>().await;
-    })
-    .unwrap();
+    wry_launch::launch();
 }
 
+#[wasm_bindgen(start)]
 fn app() {
     window().document().unwrap().head().unwrap().set_inner_html(
         r#"<meta charset="utf-8" />

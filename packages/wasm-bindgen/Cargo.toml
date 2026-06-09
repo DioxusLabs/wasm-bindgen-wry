@@ -10,19 +10,28 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 default = ["std"]
 std = []
 # Mirror upstream wasm-bindgen's feature surface so downstream crates that enable
-# these features still build against the shim. Features that map to optional
-# upstream dependencies (serde, serde_json) or other crates' features (gg-alloc,
-# strict-macro) are declared as no-ops here since the shim has no such deps.
+# these features still build against the shim. Features that map to other crates'
+# features (gg-alloc, strict-macro) are declared as no-ops here since the shim has
+# no such deps.
 enable-interning = ["std"]
-serde-serialize = ["serde", "serde_json", "std"]
-serde = []
-serde_json = []
+# `serde-serialize` gates `JsValue::{from,into}_serde`. Forward it to whichever
+# backend is live so the methods exist downstream: `wry-bindgen` (desktop, and
+# wasm32 under `unstable_force_wry_backend`) or upstream wasm-bindgen (normal
+# wasm32). The `?` keeps the forward from force-enabling the optional backend.
+serde-serialize = ["wry-bindgen?/serde-serialize", "wasm-bindgen-upstream/serde-serialize", "std"]
+serde = ["serde-serialize"]
+serde_json = ["serde-serialize"]
 spans = []
 strict-macro = []
 gg-alloc = []
 msrv = []
 rustversion = []
 xxx_debug_only_print_generated_code = []
+# Use the wry backend on every target, including wasm32, instead of upstream
+# wasm-bindgen there. Forces the macro to emit the wry expansion and pulls in
+# wry-bindgen on wasm32 so the wasm32-gated dependents can be compiled against the
+# wry backend (compat testing). Unstable: no stability guarantees.
+unstable_force_wry_backend = ["wasm-bindgen-macro/unstable_force_wry_backend", "dep:wry-bindgen"]
 
 [dependencies]
 wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-macro", version = "=0.2.122" }
@@ -35,8 +44,12 @@ wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122" }
 # from git (not crates.io) so the workspace `[patch.crates-io]` that redirects
 # `wasm-bindgen` to this shim does not capture it (which would be a dependency
 # cycle). The tag matches the BASE commit the vendored tree is patched from.
+# When `unstable_force_wry_backend` is enabled, the macro emits only Wry code,
+# but keeping the upstream dependency available lets normal wasm32 builds
+# delegate to upstream without feature-dependent target dependency tricks.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-upstream = { package = "wasm-bindgen", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122" }
+wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122", optional = true }
 
 [lints]
 workspace = true

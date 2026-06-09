@@ -1,13 +1,13 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.js_auto_bind_math = () => {
+export const js_auto_bind_math = () => {
     wasm.math(1.0, 2.0);
 };
 
-exports.roundtrip = x => x;
+export const roundtrip = x => x;
 
-exports.test_js_roundtrip = () => {
+export const test_js_roundtrip = () => {
   assert.strictEqual(wasm.rust_roundtrip_i8(0), 0);
   assert.strictEqual(wasm.rust_roundtrip_i8(0x80), -128);
   assert.strictEqual(wasm.rust_roundtrip_i8(0x7f), 127);

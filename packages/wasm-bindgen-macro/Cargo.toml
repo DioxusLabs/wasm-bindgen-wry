@@ -9,6 +9,13 @@ repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 [lib]
 proc-macro = true
 
+[features]
+# Emit the wry-bindgen expansion on every target, including wasm32, instead of
+# delegating to upstream wasm-bindgen there. Driven by the wasm-bindgen shim's
+# feature of the same name so wasm32-gated dependents can be compiled against the
+# wry backend (compat testing). Unstable: no stability guarantees.
+unstable_force_wry_backend = []
+
 [dependencies]
 wry-bindgen-macro-support = { path = "../wry-bindgen-macro-support", version = "=0.2.122" }
 proc-macro2 = "1.0"

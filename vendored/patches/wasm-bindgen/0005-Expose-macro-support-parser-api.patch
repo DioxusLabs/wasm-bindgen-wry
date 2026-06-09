@@ -1,0 +1,463 @@
+diff --git a/crates/macro-support/Cargo.toml b/crates/macro-support/Cargo.toml
+index e3f968019..bea458827 100644
+--- a/crates/macro-support/Cargo.toml
++++ b/crates/macro-support/Cargo.toml
+@@ -12,11 +12,13 @@ rust-version = "1.77"
+ version = "0.2.122"
+ 
+ [features]
++default = ["expand"]
++expand = ["dep:bumpalo"]
+ extra-traits = ["syn/extra-traits"]
+ strict-macro = []
+ 
+ [dependencies]
+-bumpalo = "3.0.0"
++bumpalo = { version = "3.0.0", optional = true }
+ proc-macro2 = "1.0"
+ quote = '1.0'
+ syn = { version = '2.0', features = ['visit', 'visit-mut', 'full', 'extra-traits'] }
+@@ -24,3 +26,22 @@ wasm-bindgen-shared = { path = "../shared", version = "=0.2.122" }
+ 
+ [lints]
+ workspace = true
++
++[workspace]
++resolver = "2"
++
++[workspace.lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = [
++  'cfg(wasm_bindgen_unstable_test_coverage)',
++  'cfg(wasm_bindgen_use_js_sys)',
++  'cfg(xxx_debug_only_print_generated_code)',
++] }
++unused_lifetimes = "warn"
++
++[workspace.lints.clippy]
++large_enum_variant = "allow"
++new_without_default = "allow"
++overly_complex_bool_expr = "allow"
++too_many_arguments = "allow"
++type_complexity = "allow"
++uninlined_format_args = "warn"
+diff --git a/crates/macro-support/src/ast.rs b/crates/macro-support/src/ast.rs
+index e4a8ebff9..54df91a7c 100644
+--- a/crates/macro-support/src/ast.rs
++++ b/crates/macro-support/src/ast.rs
+@@ -632,7 +632,7 @@ pub enum LitOrExpr {
+ impl Export {
+     /// Mangles a rust -> javascript export, so that the created Ident will be unique over function
+     /// name and class name, if the function belongs to a javascript class.
+-    pub(crate) fn rust_symbol(&self) -> Ident {
++    pub fn rust_symbol(&self) -> Ident {
+         let mut generated_name = String::from("__wasm_bindgen_generated");
+         if let Some(class) = &self.js_class {
+             generated_name.push('_');
+@@ -654,7 +654,7 @@ impl Export {
+     /// This is the name of the shim function that gets exported and takes the raw
+     /// ABI form of its arguments and converts them back into their normal,
+     /// "high level" form before calling the actual function.
+-    pub(crate) fn export_name(&self) -> String {
++    pub fn export_name(&self) -> String {
+         let fn_name = self.function.name.to_string();
+         let base_name = match &self.js_class {
+             Some(class) => shared::struct_function_export_name(class, &fn_name),
+diff --git a/crates/macro-support/src/lib.rs b/crates/macro-support/src/lib.rs
+index a34123688..d2dd9566b 100644
+--- a/crates/macro-support/src/lib.rs
++++ b/crates/macro-support/src/lib.rs
+@@ -5,25 +5,288 @@
+ #[macro_use]
+ mod error;
+ 
+-mod ast;
++pub mod ast;
++#[cfg(feature = "expand")]
+ mod codegen;
++#[cfg(feature = "expand")]
+ mod encode;
++#[cfg(feature = "expand")]
+ mod generics;
+ mod hash;
+-mod parser;
++pub mod parser;
+ 
++#[cfg(feature = "expand")]
+ use codegen::TryToTokens;
+-use error::Diagnostic;
+-pub use parser::BindgenAttrs;
++pub use error::Diagnostic;
++pub use parser::{BindgenAttr, BindgenAttrs, JsNamespace};
+ use parser::{ConvertToAst, MacroParse};
+ use proc_macro2::TokenStream;
+ use quote::quote;
+ use quote::ToTokens;
++#[cfg(feature = "expand")]
+ use quote::TokenStreamExt;
++use syn::ext::IdentExt;
+ use syn::parse::{Parse, ParseStream, Result as SynResult};
+ use syn::Token;
+ 
++/// Parsed upstream macro-support AST plus Rust tokens preserved by the parser.
++///
++/// The parser emits these tokens for user Rust items that must remain in the
++/// expanded output while the AST carries wasm-bindgen metadata for generated
++/// glue.
++pub struct ParseOutput {
++    pub program: ast::Program,
++    pub tokens: TokenStream,
++    pub main: Option<syn::Ident>,
++}
++
++/// Parse a `#[wasm_bindgen]` input item into the upstream macro-support AST.
++pub fn parse(attr: TokenStream, input: TokenStream) -> Result<ast::Program, Diagnostic> {
++    Ok(parse_with_tokens(attr, input)?.program)
++}
++
++/// Parse a `#[wasm_bindgen]` input item into the upstream macro-support AST and
++/// return the Rust tokens the upstream parser preserves.
++pub fn parse_with_tokens(attr: TokenStream, input: TokenStream) -> Result<ParseOutput, Diagnostic> {
++    parser::reset_attrs_used();
++
++    let item = match syn::parse2::<syn::Item>(input)? {
++        syn::Item::Struct(item) => return parse_struct_item_with_tokens(attr, item),
++        syn::Item::Impl(item) => return parse_impl_item_with_tokens(attr, item),
++        syn::Item::Const(item) => return parse_const_item_with_tokens(attr, item),
++        item => item,
++    };
++
++    let opts: BindgenAttrs = syn::parse2(attr)?;
++    let main = match &item {
++        syn::Item::Fn(item) if opts.main().is_some() => Some(item.sig.ident.clone()),
++        _ => None,
++    };
++    let mut tokens = TokenStream::new();
++    let mut program = ast::Program::default();
++    item.macro_parse(&mut program, (Some(opts), &mut tokens))?;
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(ParseOutput {
++        program,
++        tokens,
++        main,
++    })
++}
++
++fn parse_const_item_with_tokens(
++    attr: TokenStream,
++    item: syn::ItemConst,
++) -> Result<ParseOutput, Diagnostic> {
++    let opts = syn::parse2(attr)?;
++    let mut program = ast::Program::default();
++    item.clone().macro_parse(&mut program, opts)?;
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(ParseOutput {
++        program,
++        tokens: item.to_token_stream(),
++        main: None,
++    })
++}
++
++fn parse_struct_item_with_tokens(
++    attr: TokenStream,
++    mut item: syn::ItemStruct,
++) -> Result<ParseOutput, Diagnostic> {
++    let opts: BindgenAttrs = syn::parse2(attr.clone())?;
++    let wasm_bindgen = opts
++        .wasm_bindgen()
++        .cloned()
++        .unwrap_or_else(|| syn::parse_quote! { ::wasm_bindgen });
++    let extends_path = opts.attrs.iter().find_map(|(_, a)| match a {
++        parser::BindgenAttr::Extends(_, path) => Some(path.clone()),
++        _ => None,
++    });
++    parser::inject_parent_field(&mut item, extends_path.as_ref(), &wasm_bindgen)?;
++
++    // The upstream struct path is two-stage: the attribute macro re-emits the
++    // struct with `#[wasm_bindgen(...)]`, then the derive marker parses it.
++    // Reset attribute accounting for that marker-like parse.
++    parser::reset_attrs_used();
++    let mut item: syn::ItemStruct = syn::parse2(quote! {
++        #[wasm_bindgen(#attr)]
++        #item
++    })?;
++
++    let mut program = ast::Program::default();
++    program.structs.push((&mut item).convert(&program)?);
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(ParseOutput {
++        program,
++        tokens: item.to_token_stream(),
++        main: None,
++    })
++}
++
++fn parse_impl_item_with_tokens(
++    attr: TokenStream,
++    mut item: syn::ItemImpl,
++) -> Result<ParseOutput, Diagnostic> {
++    let opts: BindgenAttrs = syn::parse2(attr)?;
++
++    if item.defaultness.is_some() {
++        return Err(Diagnostic::spanned_error(
++            &item.defaultness,
++            "#[wasm_bindgen] default impls are not supported",
++        ));
++    }
++    if item.unsafety.is_some() {
++        return Err(Diagnostic::spanned_error(
++            &item.unsafety,
++            "#[wasm_bindgen] unsafe impls are not supported",
++        ));
++    }
++    if let Some((_, path, _)) = &item.trait_ {
++        return Err(Diagnostic::spanned_error(
++            path,
++            "#[wasm_bindgen] trait impls are not supported",
++        ));
++    }
++    if !item.generics.params.is_empty() {
++        return Err(Diagnostic::spanned_error(
++            &item.generics,
++            "#[wasm_bindgen] generic impls aren't supported",
++        ));
++    }
++
++    let class_path = match item.self_ty.as_ref() {
++        syn::Type::Path(path) if path.qself.is_none() => &path.path,
++        other => {
++            return Err(Diagnostic::spanned_error(
++                other,
++                "unsupported self type in #[wasm_bindgen] impl",
++            ));
++        }
++    };
++    let class = class_path
++        .segments
++        .last()
++        .ok_or_else(|| Diagnostic::spanned_error(class_path, "expected an impl self type"))?
++        .ident
++        .clone();
++
++    let mut program = ast::Program::default();
++    if let Some(path) = opts.wasm_bindgen() {
++        program.wasm_bindgen = path.clone();
++    }
++    if let Some(path) = opts.wasm_bindgen_futures() {
++        program.wasm_bindgen_futures = path.clone();
++    }
++    if let Some(path) = opts.js_sys() {
++        program.js_sys = path.clone();
++    }
++
++    let marker = ClassMarker {
++        class: class.clone(),
++        js_class: opts
++            .js_class()
++            .map(|s| s.0.to_string())
++            .unwrap_or_else(|| class.unraw().to_string()),
++        js_namespace: opts.js_namespace().map(|(ns, _)| ns.0),
++        wasm_bindgen: program.wasm_bindgen.clone(),
++        wasm_bindgen_futures: program.wasm_bindgen_futures.clone(),
++        js_sys: program.js_sys.clone(),
++    };
++
++    let mut errors = Vec::new();
++    for impl_item in item.items.iter_mut() {
++        match impl_item {
++            syn::ImplItem::Fn(method) => {
++                if let Err(error) = method.macro_parse(&mut program, &marker) {
++                    errors.push(error);
++                }
++            }
++            syn::ImplItem::Const(_) => errors.push(Diagnostic::spanned_error(
++                impl_item,
++                "const definitions aren't supported with #[wasm_bindgen]",
++            )),
++            syn::ImplItem::Type(_) => errors.push(Diagnostic::spanned_error(
++                impl_item,
++                "type definitions in impls aren't supported with #[wasm_bindgen]",
++            )),
++            syn::ImplItem::Macro(_) => errors.push(Diagnostic::spanned_error(
++                impl_item,
++                "macros in impls aren't supported",
++            )),
++            syn::ImplItem::Verbatim(_) => panic!("unparsed impl item?"),
++            other => errors.push(Diagnostic::spanned_error(
++                other,
++                "failed to parse this item as a known item",
++            )),
++        }
++    }
++    Diagnostic::from_vec(errors)?;
++    opts.check_used();
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(ParseOutput {
++        program,
++        tokens: item.to_token_stream(),
++        main: None,
++    })
++}
++
++/// Parse a struct body through the upstream exported-struct converter.
++pub fn parse_struct(input: TokenStream) -> Result<ast::Struct, Diagnostic> {
++    parser::reset_attrs_used();
++
++    let mut item = syn::parse2::<syn::ItemStruct>(input)?;
++    let program = ast::Program::default();
++    let parsed = (&mut item).convert(&program)?;
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(parsed)
++}
++
++/// Parse an internal class marker method into the upstream macro-support AST.
++pub fn parse_class_marker(
++    attr: TokenStream,
++    input: TokenStream,
++) -> Result<ast::Program, Diagnostic> {
++    Ok(parse_class_marker_with_tokens(attr, input)?.program)
++}
++
++/// Parse an internal class marker method into the upstream macro-support AST
++/// and return the method tokens preserved by the upstream parser.
++pub fn parse_class_marker_with_tokens(
++    attr: TokenStream,
++    input: TokenStream,
++) -> Result<ParseOutput, Diagnostic> {
++    parser::reset_attrs_used();
++
++    let mut item = syn::parse2::<syn::ImplItemFn>(input)?;
++    let opts: ClassMarker = syn::parse2(attr)?;
++    let mut program = ast::Program::default();
++    item.macro_parse(&mut program, &opts)?;
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(ParseOutput {
++        program,
++        tokens: item.to_token_stream(),
++        main: None,
++    })
++}
++
++/// Parse a `wasm_bindgen::link_to!` input into its module AST.
++pub fn parse_link_to(input: TokenStream) -> Result<ast::LinkToModule, Diagnostic> {
++    parser::reset_attrs_used();
++
++    let opts = syn::parse2(input)?;
++    let parsed = parser::link_to(opts)?;
++    parser::unused_attrs_diagnostic()?;
++
++    Ok(parsed)
++}
++
+ /// Takes the parsed input from a `#[wasm_bindgen]` macro and returns the generated bindings
++#[cfg(feature = "expand")]
+ pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diagnostic> {
+     parser::reset_attrs_used();
+     // if struct is encountered, add `derive` attribute and let everything happen there (workaround
+@@ -68,6 +331,7 @@ pub fn expand(attr: TokenStream, input: TokenStream) -> Result<TokenStream, Diag
+ }
+ 
+ /// Takes the parsed input from a `wasm_bindgen::link_to` macro and returns the generated link
++#[cfg(feature = "expand")]
+ pub fn expand_link_to(input: TokenStream) -> Result<TokenStream, Diagnostic> {
+     parser::reset_attrs_used();
+     let opts = syn::parse2(input)?;
+@@ -80,6 +344,7 @@ pub fn expand_link_to(input: TokenStream) -> Result<TokenStream, Diagnostic> {
+ }
+ 
+ /// Takes the parsed input from a `#[wasm_bindgen]` macro and returns the generated bindings
++#[cfg(feature = "expand")]
+ pub fn expand_class_marker(
+     attr: TokenStream,
+     input: TokenStream,
+@@ -222,6 +487,7 @@ impl Parse for ClassMarker {
+     }
+ }
+ 
++#[cfg(feature = "expand")]
+ pub fn expand_struct_marker(item: TokenStream) -> Result<TokenStream, Diagnostic> {
+     parser::reset_attrs_used();
+ 
+diff --git a/crates/macro-support/src/parser.rs b/crates/macro-support/src/parser.rs
+index 5cdd603f7..4807620b3 100644
+--- a/crates/macro-support/src/parser.rs
++++ b/crates/macro-support/src/parser.rs
+@@ -68,7 +68,7 @@ pub struct BindgenAttrs {
+ /// (except for "default", which is allowed as a special case).
+ #[cfg_attr(feature = "extra-traits", derive(Debug))]
+ #[derive(Clone)]
+-pub struct JsNamespace(Vec<String>);
++pub struct JsNamespace(pub Vec<String>);
+ 
+ macro_rules! attrgen {
+     ($mac:ident) => {
+@@ -154,7 +154,7 @@ macro_rules! methods {
+             Diagnostic::from_vec(errors)
+         }
+ 
+-        fn check_used(self) {
++        pub(crate) fn check_used(self) {
+             // Account for the fact this method was called
+             ATTRS.with(|state| {
+                 state.checks.set(state.checks.get() + 1);
+@@ -2956,6 +2956,28 @@ pub fn check_unused_attrs(tokens: &mut TokenStream) {
+     })
+ }
+ 
++pub fn unused_attrs_diagnostic() -> Result<(), Diagnostic> {
++    ATTRS.with(|state| {
++        assert_eq!(state.parsed.get(), state.checks.get());
++        let errors = state
++            .unused_attrs
++            .borrow()
++            .iter()
++            .filter_map(|UnusedState { error, ident }| {
++                if *error {
++                    Some(Diagnostic::span_error(
++                        ident.span(),
++                        format!("invalid attribute {ident} in this position"),
++                    ))
++                } else {
++                    None
++                }
++            })
++            .collect();
++        Diagnostic::from_vec(errors)
++    })
++}
++
+ fn operation_kind(opts: &BindgenAttrs) -> ast::OperationKind {
+     let mut operation_kind = ast::OperationKind::Regular;
+     if opts.this().is_some() {
+diff --git a/crates/shared/Cargo.toml b/crates/shared/Cargo.toml
+index c57d1bdff..4545636ae 100644
+--- a/crates/shared/Cargo.toml
++++ b/crates/shared/Cargo.toml
+@@ -19,3 +19,22 @@ workspace = true
+ 
+ [dependencies]
+ unicode-ident = "1.0.5"
++
++[workspace]
++resolver = "2"
++
++[workspace.lints.rust]
++unexpected_cfgs = { level = "warn", check-cfg = [
++  'cfg(wasm_bindgen_unstable_test_coverage)',
++  'cfg(wasm_bindgen_use_js_sys)',
++  'cfg(xxx_debug_only_print_generated_code)',
++] }
++unused_lifetimes = "warn"
++
++[workspace.lints.clippy]
++large_enum_variant = "allow"
++new_without_default = "allow"
++overly_complex_bool_expr = "allow"
++too_many_arguments = "allow"
++type_complexity = "allow"
++uninlined_format_args = "warn"

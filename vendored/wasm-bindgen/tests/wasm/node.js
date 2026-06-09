@@ -1,15 +1,15 @@
-const assert = require('assert');
-const wasm = require('wasm-bindgen-test');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
 
 var called = false;
 
-exports.hit = function() {
+export const hit = function() {
   called = true;
 };
 
-exports.FOO = 1.0;
+export const FOO = 1.0;
 
-exports.test_works = function() {
+export const test_works = function() {
   assert.strictEqual(called, true);
 
   var r = wasm.Foo.new();

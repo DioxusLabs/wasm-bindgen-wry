@@ -29,6 +29,7 @@ wry-bindgen-core = { path = "../wry-bindgen-core", version = "0.1.0" }
 wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.122" }
 # We use this instead of std because wasm bindgen supports no_std environments
 cfg-if = "1.0.0"
+ouroboros = { version = "0.18.5", default-features = false }
 serde = { version = "1", optional = true }
 serde_json = { version = "1", optional = true }
 

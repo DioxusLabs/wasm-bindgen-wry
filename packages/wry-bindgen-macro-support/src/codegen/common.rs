@@ -34,36 +34,52 @@ pub(super) fn generate_wry_call_js_function(
     }
 }
 
-pub(super) fn generate_member_type_helpers(
-    arg_types: &[TokenStream],
-    return_type: Option<TokenStream>,
+pub(super) fn generate_js_reexport_spec(
+    static_name: &str,
+    export_name: TokenStream,
+    namespace: TokenStream,
+    module: Option<&Ident>,
+    js_code: &str,
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
-    let return_body = match return_type {
-        Some(ty) => quote_spanned! {span=>
-            ::core::option::Option::Some(#krate::__rt::TypeDef::of::<#ty>())
+    let static_ident = format_ident!("{static_name}");
+    match module {
+        Some(module) if js_code.contains("{__wry_module}") => quote_spanned! {span=>
+            const _: () = {
+                #[allow(non_upper_case_globals)]
+                static #static_ident: #krate::__rt::JsReexportSpec = #krate::__rt::JsReexportSpec::with_module(
+                    &#module,
+                    #export_name,
+                    #namespace,
+                    |__wry_module| #krate::__rt::alloc::format!(#js_code, __wry_module = __wry_module),
+                );
+
+                #krate::__rt::inventory::submit! {
+                    #static_ident
+                }
+            };
         },
-        None => quote_spanned! {span=> ::core::option::Option::None },
-    };
+        _ => quote_spanned! {span=>
+            const _: () = {
+                #[allow(non_upper_case_globals)]
+                static #static_ident: #krate::__rt::JsReexportSpec = #krate::__rt::JsReexportSpec::new(
+                    #export_name,
+                    #namespace,
+                    || #krate::__rt::alloc::string::String::from(#js_code),
+                );
 
-    quote_spanned! {span=>
-        fn __wry_arg_types() -> #krate::alloc::vec::Vec<#krate::__rt::TypeDef> {
-            #krate::alloc::vec![
-                #(#krate::__rt::TypeDef::of::<#arg_types>()),*
-            ]
-        }
-
-        fn __wry_return_type() -> ::core::option::Option<#krate::__rt::TypeDef> {
-            #return_body
-        }
+                #krate::__rt::inventory::submit! {
+                    #static_ident
+                }
+            };
+        },
     }
 }
 
-pub(super) fn generate_js_export_spec(
+pub(super) fn generate_js_export_registration(
     static_name: &str,
-    export_name: TokenStream,
-    body: TokenStream,
+    export_spec: TokenStream,
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
@@ -71,11 +87,77 @@ pub(super) fn generate_js_export_spec(
     quote_spanned! {span=>
         const _: () = {
             #[allow(non_upper_case_globals)]
-            static #static_ident: #krate::__rt::JsExportSpec = #krate::__rt::JsExportSpec::new(
-                #export_name,
-                |decoder| {
-                    #body
-                }
+            static #static_ident: #krate::__rt::JsExportSpecRegistration =
+                #krate::__rt::JsExportSpecRegistration::new(|| { #export_spec });
+
+            #krate::__rt::inventory::submit! {
+                #static_ident
+            }
+        };
+    }
+}
+
+pub(super) fn namespace_tokens(
+    namespace: Option<&[String]>,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    match namespace {
+        Some(namespace) if !namespace.is_empty() => {
+            let segments: Vec<_> = namespace
+                .iter()
+                .map(|segment| syn::LitStr::new(segment, span))
+                .collect();
+            quote_spanned! {span=> &[#(#segments),*] }
+        }
+        _ => quote_spanned! {span=> &[] },
+    }
+}
+
+pub(super) struct ClassSpec<'a> {
+    pub(super) static_name: &'a str,
+    pub(super) class_name: TokenStream,
+    pub(super) js_name: TokenStream,
+    pub(super) js_namespace: TokenStream,
+    pub(super) private: TokenStream,
+    pub(super) extends: TokenStream,
+    pub(super) extends_js_class: TokenStream,
+    pub(super) extends_js_namespace: TokenStream,
+    pub(super) inspectable: TokenStream,
+    pub(super) public_fields: TokenStream,
+}
+
+pub(super) fn generate_js_class_spec(
+    spec: ClassSpec<'_>,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let static_ident = format_ident!("{}", spec.static_name);
+    let ClassSpec {
+        class_name,
+        js_name,
+        js_namespace,
+        private,
+        extends,
+        extends_js_class,
+        extends_js_namespace,
+        inspectable,
+        public_fields,
+        ..
+    } = spec;
+
+    quote_spanned! {span=>
+        const _: () = {
+            #[allow(non_upper_case_globals)]
+            static #static_ident: #krate::__rt::JsClassSpec = #krate::__rt::JsClassSpec::new(
+                #class_name,
+                #js_name,
+                #js_namespace,
+                #private,
+                #extends,
+                #extends_js_class,
+                #extends_js_namespace,
+                #inspectable,
+                #public_fields,
             );
 
             #krate::__rt::inventory::submit! {
@@ -90,9 +172,11 @@ pub(super) struct ClassMemberSpec<'a> {
     pub(super) class_name: TokenStream,
     pub(super) member_name: TokenStream,
     pub(super) export_name: TokenStream,
-    pub(super) arg_count: TokenStream,
-    pub(super) type_helpers: TokenStream,
+    pub(super) arg_types: TokenStream,
+    pub(super) return_type: TokenStream,
     pub(super) member_kind: TokenStream,
+    /// `true` when the member takes `self` by value (consuming the receiver).
+    pub(super) consumes_self: TokenStream,
 }
 
 pub(super) fn generate_js_class_member_spec(
@@ -105,25 +189,24 @@ pub(super) fn generate_js_class_member_spec(
         class_name,
         member_name,
         export_name,
-        arg_count,
-        type_helpers,
+        arg_types,
+        return_type,
         member_kind,
+        consumes_self,
         ..
     } = spec;
 
     quote_spanned! {span=>
         const _: () = {
-            #type_helpers
-
             #[allow(non_upper_case_globals)]
             static #static_ident: #krate::__rt::JsClassMemberSpec = #krate::__rt::JsClassMemberSpec::new(
                 #class_name,
                 #member_name,
                 #export_name,
-                #arg_count,
-                __wry_arg_types,
-                __wry_return_type,
-                #member_kind
+                #arg_types,
+                #return_type,
+                #member_kind,
+                #consumes_self,
             );
 
             #krate::__rt::inventory::submit! {
@@ -146,9 +229,4 @@ pub(super) fn extract_result_ok_type(ty: &syn::Type) -> Option<syn::Type> {
         }
     }
     None
-}
-
-/// Check if a type is the unit type ()
-pub(super) fn is_unit_type(ty: &syn::Type) -> bool {
-    matches!(ty, syn::Type::Tuple(tuple) if tuple.elems.is_empty())
 }

@@ -1,38 +1,38 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.return_null = () => null;
+export const return_null = () => null;
 
-exports.return_undefined = () => undefined;
+export const return_undefined = () => undefined;
 
-exports.return_number = () => 42;
+export const return_number = () => 42;
 
-exports.return_string = () => "hello";
+export const return_string = () => "hello";
 
-exports.take_nullable_null = (val) => {
+export const take_nullable_null = (val) => {
     assert.ok(val === null || val === undefined, 
         `expected null or undefined, got ${val}`);
 };
 
-exports.take_nullable_value = (val) => {
+export const take_nullable_value = (val) => {
     assert.ok(val !== null && val !== undefined,
         `expected a value, got ${val}`);
     assert.strictEqual(val, 123);
 };
 
-exports.take_nullable_number = (val) => {
+export const take_nullable_number = (val) => {
     assert.ok(val !== null && val !== undefined,
         `expected a number, got ${val}`);
     assert.strictEqual(typeof val, 'number');
 };
 
-exports.take_nullable_string = (val) => {
+export const take_nullable_string = (val) => {
     assert.ok(val !== null && val !== undefined,
         `expected a string, got ${val}`);
     assert.strictEqual(typeof val, 'string');
 };
 
-exports.test_nullable_exports = () => {
+export const test_nullable_exports = () => {
     // Test rust functions that return JsOption
     const nullVal = wasm.rust_return_nullable_null();
     assert.ok(nullVal === null || nullVal === undefined,

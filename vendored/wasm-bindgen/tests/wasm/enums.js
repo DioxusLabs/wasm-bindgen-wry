@@ -1,7 +1,7 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.js_c_style_enum = () => {
+export const js_c_style_enum = () => {
     assert.strictEqual(wasm.Color.Green, 0);
     assert.strictEqual(wasm.Color.Yellow, 1);
     assert.strictEqual(wasm.Color.Red, 2);
@@ -13,7 +13,7 @@ exports.js_c_style_enum = () => {
     assert.strictEqual(wasm.enum_cycle(wasm.Color.Green), wasm.Color.Yellow);
 };
 
-exports.js_c_style_enum_with_custom_values = () => {
+export const js_c_style_enum_with_custom_values = () => {
     assert.strictEqual(wasm.ColorWithCustomValues.Green, 21);
     assert.strictEqual(wasm.ColorWithCustomValues.Yellow, 34);
     assert.strictEqual(wasm.ColorWithCustomValues.Red, 2);
@@ -25,42 +25,42 @@ exports.js_c_style_enum_with_custom_values = () => {
     assert.strictEqual(wasm.enum_with_custom_values_cycle(wasm.ColorWithCustomValues.Green), wasm.ColorWithCustomValues.Yellow);
 };
 
-exports.js_handle_optional_enums = x => wasm.handle_optional_enums(x);
+export const js_handle_optional_enums = x => wasm.handle_optional_enums(x);
 
-exports.js_expect_enum = (a, b) => {
+export const js_expect_enum = (a, b) => {
   assert.strictEqual(a, b);
 };
 
-exports.js_expect_enum_none = a => {
+export const js_expect_enum_none = a => {
   assert.strictEqual(a, undefined);
 };
 
-exports.js_renamed_enum = b => {
+export const js_renamed_enum = b => {
   assert.strictEqual(wasm.JsRenamedEnum.B, b);
 };
 
-exports.js_enum_with_error_variant = () => {
+export const js_enum_with_error_variant = () => {
     assert.strictEqual(wasm.EnumWithErrorVariant.Error, 2);
 };
 
 // Helper to create a Foo object for testing
-exports.makeFoo = () => {
+export const makeFoo = () => {
     return { type: 'Foo', data: 'test' };
 };
 
 // Round-trip helpers that force the wasm/JS boundary so the dynamic-union
 // dispatcher actually runs. Each just calls back into the corresponding
 // exported Rust function with the value unchanged.
-exports.js_string_enum_fallback_roundtrip = e => wasm.string_enum_fallback_roundtrip(e);
-exports.js_nested_union_roundtrip = o => wasm.nested_union_roundtrip(o);
-exports.js_optional_union_roundtrip = o => wasm.optional_union_roundtrip(o);
-exports.js_fallback_union_roundtrip = u => wasm.fallback_union_roundtrip(u);
+export const js_string_enum_fallback_roundtrip = e => wasm.string_enum_fallback_roundtrip(e);
+export const js_nested_union_roundtrip = o => wasm.nested_union_roundtrip(o);
+export const js_optional_union_roundtrip = o => wasm.optional_union_roundtrip(o);
+export const js_fallback_union_roundtrip = u => wasm.fallback_union_roundtrip(u);
 
 // Async round-trip: returning from an `async function` produces a
 // `Promise<Union>` on the JS side; awaiting it on the Rust import side
 // requires `From<Promise<Union>> for JsFuture<Union>` to compile.
-exports.js_async_union_roundtrip = async o => wasm.async_union_roundtrip(o);
+export const js_async_union_roundtrip = async o => wasm.async_union_roundtrip(o);
 
 // Same shape, `Result<Union, JsValue>` form (success-only here; reject
 // path is exercised by other catch tests in the suite).
-exports.js_async_union_result = async o => wasm.async_union_roundtrip(o);
+export const js_async_union_result = async o => wasm.async_union_roundtrip(o);

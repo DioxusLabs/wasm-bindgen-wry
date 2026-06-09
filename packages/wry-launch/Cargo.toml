@@ -1,7 +1,10 @@
 [package]
 name = "wry-launch"
 version = "0.1.0"
-edition = "2024"
+# Edition 2021 so the vendored upstream `tests/wasm/*.rs` files compile when
+# pulled in unmodified via `#[path]`: some of them use edition-2021 attribute
+# syntax (e.g. a bare `#[no_mangle]`) that edition 2024 rejects.
+edition = "2021"
 
 [dependencies]
 base64 = "0.22.1"
@@ -30,10 +33,20 @@ futures-channel = "0.3.31"
 rand = "0.9.2"
 libtest-mimic = "0.8"
 criterion = "0.5.1"
+paste = "1.0.15"
+wasm-bindgen-test = { path = "../wasm-bindgen-test" }
+wasm-bindgen-test-crate-a = { path = "../wasm-bindgen/tests/crates/a" }
+wasm-bindgen-test-crate-b = { path = "../wasm-bindgen/tests/crates/b" }
+wry-launch-rust2015-extern-type = { path = "tests/rust2015-extern-type" }
 
 [[test]]
 name = "main_thread_tests"
 path = "tests/main_thread_tests/main.rs"
+harness = false
+
+[[test]]
+name = "upstream_tests"
+path = "tests/upstream_tests/main.rs"
 harness = false
 
 [[bench]]
@@ -52,10 +65,6 @@ path = "examples/dom.rs"
 [[example]]
 name = "paint"
 path = "examples/paint.rs"
-
-[[example]]
-name = "reentrancy_async"
-path = "examples/reentrancy_async.rs"
 
 [lints]
 workspace = true

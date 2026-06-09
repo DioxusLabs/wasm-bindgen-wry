@@ -6,7 +6,8 @@ import { RustFunction, RustFunctionPolicy } from "./rust_function";
  * Must match the Rust TypeTag enum exactly.
  */
 enum TypeTag {
-  Null = 0,
+  // The Rust unit type `()`. Carries no bytes and decodes to `undefined`.
+  Undefined = 0,
   Bool = 1,
   U8 = 2,
   U16 = 3,
@@ -31,6 +32,13 @@ enum TypeTag {
   BorrowedRef = 22,
   U8Clamped = 23,
   StringEnum = 24,
+  DynamicUnion = 25,
+  Char = 26,
+  ThrowingResult = 27,
+  NumericEnum = 28,
+  RustValue = 29,
+  RustBorrow = 30,
+  MutArray = 31,
 }
 
 /**
@@ -39,6 +47,14 @@ enum TypeTag {
 interface TypeClass {
   encode(encoder: DataEncoder, value: any): void;
   decode(decoder: DataDecoder): any;
+  /**
+   * Append a `&mut [T]` write-back payload for `value` to `encoder`, if this
+   * type carries one (a `MutArray`, or a container nesting one). Most types have
+   * nothing to write back. Called after a Rust-to-JS import returns: the mutated
+   * arrays travel back to Rust appended after the return value, in argument
+   * order, matching how Rust queued the write-backs while encoding the call.
+   */
+  appendWriteBack?(encoder: DataEncoder, value: any): void;
 }
 
 /**
@@ -70,7 +86,51 @@ class HeapRefType implements TypeClass {
     if (!window.jsHeap.has(id)) {
       throw new Error(`Unknown JS heap reference ID: ${id}`);
     }
-    return window.jsHeap.get(id);
+    // A return value transfers ownership to JS (the Rust side forgot it), so
+    // take the slot. Everywhere else this is a borrow, so just read it.
+    return window.jsHeap.isTakingOwnership()
+      ? window.jsHeap.remove(id)
+      : window.jsHeap.get(id);
+  }
+}
+
+/**
+ * Type class for an exported Rust struct passed or returned by value.
+ *
+ * On the wire it is encoded and decoded exactly like a {@link HeapRefType}: the
+ * object wrapper rides the JS heap and Rust extracts its handle. The distinct
+ * type carries wasm-bindgen's moved-value semantics — a by-value pass transfers
+ * ownership to Rust, so the caller (see `callExport`) zeroes the wrapper's
+ * `__handle` afterward and a later use throws "Attempt to use a moved value".
+ */
+class RustValueType implements TypeClass {
+  // The exported struct's class name, used to reject a by-value pass of an
+  // inheritance descendant as its ancestor.
+  constructor(private readonly className: string = "") {}
+
+  encode(encoder: DataEncoder, obj: any): void {
+    // A wrapper whose handle was already zeroed (consumed) is being reused.
+    if (obj != null && obj.__handle === 0) {
+      throw new Error("Attempt to use a moved value");
+    }
+    // Consuming a descendant by-value as its ancestor would hand the
+    // descendant's object to the ancestor's store slot (type confusion). The
+    // ancestor slot of a true descendant is a separate handle from its own, so
+    // reject. A direct instance (or a JS-only subclass whose super() set the
+    // slot equal to the own handle) passes.
+    if (obj != null && this.className) {
+      const slot = obj["__wbg_ptr_" + this.className];
+      if (typeof slot === "number" && slot !== obj.__handle) {
+        throw new TypeError(
+          `${this.className}: cannot be consumed by-value as its ancestor`,
+        );
+      }
+    }
+    encoder.pushHeapRef(obj);
+  }
+
+  decode(decoder: DataDecoder): unknown {
+    return heapRefTypeInstance.decode(decoder);
   }
 }
 
@@ -96,6 +156,33 @@ class BorrowedRefType implements TypeClass {
 }
 
 /**
+ * Type class for a `&T` argument to an exported Rust struct. The routed object
+ * handle rides the wire as a plain `u32` (like a method receiver), so Rust reads
+ * it directly without a borrow-stack round-trip. An inheritance descendant passed
+ * as `&Ancestor` is routed to its shared ancestor-view handle (`__wbg_ptr_<Class>`)
+ * so the checked-out object really is the ancestor's shared `T`.
+ */
+class RustBorrowType implements TypeClass {
+  constructor(private readonly className: string) {}
+
+  encode(encoder: DataEncoder, obj: any): void {
+    if (obj == null) {
+      throw new TypeError(`expected a ${this.className} instance, got null`);
+    }
+    if (obj.__handle === 0) {
+      throw new Error("Attempt to use a moved value");
+    }
+    const slot = obj["__wbg_ptr_" + this.className];
+    const handle = typeof slot === "number" ? slot : obj.__handle;
+    encoder.pushU32(handle);
+  }
+
+  decode(_decoder: DataDecoder): unknown {
+    throw new Error("RustBorrow is an argument-only wire type");
+  }
+}
+
+/**
  * Type class for string values with encoding/decoding methods
  */
 class StringType implements TypeClass {
@@ -105,6 +192,22 @@ class StringType implements TypeClass {
 
   decode(decoder: DataDecoder): string {
     return decoder.takeStr();
+  }
+}
+
+/**
+ * Rust `char`: the wire payload is the u32 code point, but in JS it is a 1-character
+ * string (matching wasm-bindgen).
+ */
+class CharType implements TypeClass {
+  // The argument is named `c` so a non-string input produces the same
+  // "c.codePointAt is not a function" TypeError that wasm-bindgen's glue does.
+  encode(encoder: DataEncoder, c: string): void {
+    encoder.pushU32(c.codePointAt(0) ?? 0);
+  }
+
+  decode(decoder: DataDecoder): string {
+    return String.fromCodePoint(decoder.takeU32());
   }
 }
 
@@ -128,6 +231,65 @@ class StringEnumType implements TypeClass {
   decode(decoder: DataDecoder): string {
     const index = decoder.takeU32();
     return this.lookupArray[index];
+  }
+}
+
+/**
+ * Type class for a C-style enum. Encoding rejects values that are not one of the
+ * declared variants (a non-number, or a number outside the variant set), so a
+ * wrong-typed value throws here instead of silently coercing to a variant.
+ */
+class NumericEnumType implements TypeClass {
+  declare private signed: boolean;
+  declare private values: Set<number>;
+
+  constructor(signed: boolean, values: number[]) {
+    this.signed = signed;
+    this.values = new Set(values);
+  }
+
+  encode(encoder: DataEncoder, value: number): void {
+    if (typeof value !== "number" || !this.values.has(value)) {
+      throw new Error("the value provided is not a valid enum value");
+    }
+    encoder.pushU32(value >>> 0);
+  }
+
+  decode(decoder: DataDecoder): number {
+    return this.signed ? decoder.takeI32() : decoder.takeU32();
+  }
+}
+
+type DynamicUnionVariant =
+  | { kind: "string"; value: string }
+  | { kind: "type"; type: TypeClass };
+
+/**
+ * Type class for dynamic unions. JS-to-Rust values are sent as heap refs so
+ * Rust can run the same runtime dispatch as upstream; Rust-to-JS values are
+ * decoded from a variant index plus the variant payload.
+ */
+class DynamicUnionType implements TypeClass {
+  declare private variants: DynamicUnionVariant[];
+
+  constructor(variants: DynamicUnionVariant[]) {
+    this.variants = variants;
+  }
+
+  encode(encoder: DataEncoder, value: unknown): void {
+    heapRefTypeInstance.encode(encoder, value);
+  }
+
+  decode(decoder: DataDecoder): unknown {
+    const index = decoder.takeU8();
+    const variant = this.variants[index];
+    if (variant === undefined) {
+      throw new Error(`Invalid dynamic union variant index: ${index}`);
+    }
+    if (variant.kind === "string") {
+      return variant.value;
+    }
+    return variant.type.decode(decoder);
   }
 }
 
@@ -162,13 +324,13 @@ class CallbackType implements TypeClass {
 /**
  * Type class for null values with encoding/decoding methods
  */
-class NullType implements TypeClass {
-  encode(encoder: DataEncoder, value: null): void {
-    // Null doesn't need to encode anything
+class UndefinedType implements TypeClass {
+  encode(encoder: DataEncoder, value: undefined): void {
+    // The unit type carries no bytes.
   }
 
-  decode(decoder: DataDecoder): null {
-    return null;
+  decode(decoder: DataDecoder): undefined {
+    return undefined;
   }
 }
 
@@ -184,18 +346,19 @@ class NumericType implements TypeClass {
     this.size = size;
   }
 
-  encode(encoder: DataEncoder, value: number): void {
+  encode(encoder: DataEncoder, value: number | bigint): void {
     switch (this.size) {
       case "u8":
-        encoder.pushU8(value);
+        encoder.pushU8(Number(value));
         break;
       case "u16":
-        encoder.pushU16(value);
+        encoder.pushU16(Number(value));
         break;
       case "u32":
-        encoder.pushU32(value);
+        encoder.pushU32(Number(value));
         break;
       case "u64":
+        // i64/u64 are BigInt; pushU64 also accepts a plain number.
         encoder.pushU64(value);
         break;
       case "u128":
@@ -203,15 +366,15 @@ class NumericType implements TypeClass {
         break;
       case "i8":
         // Signed integers encode as unsigned (Rust: self as u8)
-        encoder.pushU8(value & 0xff);
+        encoder.pushU8(Number(value) & 0xff);
         break;
       case "i16":
         // Signed integers encode as unsigned (Rust: self as u16)
-        encoder.pushU16(value & 0xffff);
+        encoder.pushU16(Number(value) & 0xffff);
         break;
       case "i32":
         // Signed integers encode as unsigned (Rust: self as u32)
-        encoder.pushU32(value >>> 0);
+        encoder.pushU32(Number(value) >>> 0);
         break;
       case "i64":
         // Signed integers encode as unsigned (Rust: self as u64)
@@ -222,23 +385,23 @@ class NumericType implements TypeClass {
         encoder.pushU128(value);
         break;
       case "usize":
-        // usize encodes as u64
-        encoder.pushU64(value);
+        // usize encodes as u64 but stays a JS number (wasm32 pointer width).
+        encoder.pushU64(Number(value));
         break;
       case "isize":
-        // isize encodes as u64 (Rust: self as u64)
-        encoder.pushU64(value);
+        // isize encodes as u64 (Rust: self as u64) but stays a JS number.
+        encoder.pushU64(Number(value));
         break;
       case "f32":
-        encoder.pushF32(value);
+        encoder.pushF32(Number(value));
         break;
       case "f64":
-        encoder.pushF64(value);
+        encoder.pushF64(Number(value));
         break;
     }
   }
 
-  decode(decoder: DataDecoder): number {
+  decode(decoder: DataDecoder): number | bigint {
     switch (this.size) {
       case "u8":
         return decoder.takeU8();
@@ -247,9 +410,9 @@ class NumericType implements TypeClass {
       case "u32":
         return decoder.takeU32();
       case "u64":
-        return decoder.takeU64();
+        return decoder.takeBigUint64();
       case "u128":
-        return decoder.takeU128();
+        return decoder.takeBigUint128();
       case "i8":
         return decoder.takeI8();
       case "i16":
@@ -257,14 +420,14 @@ class NumericType implements TypeClass {
       case "i32":
         return decoder.takeI32();
       case "i64":
-        return decoder.takeI64();
+        return decoder.takeBigInt64();
       case "i128":
-        return decoder.takeI128();
+        return decoder.takeBigInt128();
       case "usize":
-        // usize decodes as u64
+        // usize decodes as a plain number (wasm32 pointer width).
         return decoder.takeU64();
       case "isize":
-        // isize decodes as i64
+        // isize decodes as a plain number (wasm32 pointer width).
         return decoder.takeI64();
       case "f32":
         return decoder.takeF32();
@@ -293,9 +456,17 @@ class OptionType implements TypeClass {
   decode(decoder: DataDecoder): any {
     const isPresent = decoder.takeU8();
     if (isPresent === 0) {
-      return null; // Return null
+      return undefined; // `None` decodes to `undefined`, matching wasm-bindgen
     } else {
       return this.wrappedType.decode(decoder);
+    }
+  }
+
+  appendWriteBack(encoder: DataEncoder, value: any): void {
+    // A `None` registers no write-back on the Rust side, so append one only for
+    // a present value (e.g. `Some(&mut [T])`), matching the Rust ordering.
+    if (value !== null && value !== undefined) {
+      this.wrappedType.appendWriteBack?.(encoder, value);
     }
   }
 }
@@ -338,6 +509,43 @@ class ResultType implements TypeClass {
 }
 
 /**
+ * A `Result` returned from an exported Rust function. The wire payload matches
+ * `Result`, but the `Err` value is thrown as an exception instead of being
+ * returned as a `{ err }` object — matching wasm-bindgen's behavior for fallible
+ * exports.
+ */
+class ThrowingResultType implements TypeClass {
+  declare private okType: TypeClass;
+  declare private errType: TypeClass;
+
+  constructor(okType: TypeClass, errType: TypeClass) {
+    this.okType = okType;
+    this.errType = errType;
+  }
+
+  encode(encoder: DataEncoder, value: any): void {
+    const result: Ok | Err = value;
+    if ("ok" in result) {
+      encoder.pushU8(1);
+      this.okType.encode(encoder, result.ok);
+    } else if ("err" in result) {
+      encoder.pushU8(0);
+      this.errType.encode(encoder, result.err);
+    } else {
+      throw new Error("Invalid RustType value: must be Ok or Err");
+    }
+  }
+
+  decode(decoder: DataDecoder): any {
+    const isOk = decoder.takeU8();
+    if (isOk === 1) {
+      return this.okType.decode(decoder);
+    }
+    throw this.errType.decode(decoder);
+  }
+}
+
+/**
  * Type class for array/Vec values with encoding/decoding methods
  */
 class ArrayType implements TypeClass {
@@ -350,7 +558,12 @@ class ArrayType implements TypeClass {
   encode(encoder: DataEncoder, value: any[]): void {
     encoder.pushU32(value.length);
     for (const element of value) {
-      this.elementType.encode(encoder, element);
+      try {
+        this.elementType.encode(encoder, element);
+      } catch {
+        // An element of the wrong type surfaces as wasm-bindgen's array message.
+        throw new Error("array contains a value of the wrong type");
+      }
     }
   }
 
@@ -361,6 +574,48 @@ class ArrayType implements TypeClass {
       result.push(this.elementType.decode(decoder));
     }
     return result;
+  }
+}
+
+/**
+ * Type class for a mutable array argument (`&mut [T]`).
+ *
+ * On the wire it is identical to its inner array type, but the distinct class
+ * lets the caller copy the mutated elements back into the original JS array
+ * after the call returns — wry has no shared linear memory, so the receiver
+ * appends the (possibly mutated) array to its response and the caller copies it
+ * back. `encode`/`decode` delegate to the inner array type; `copyBack` reads a
+ * write-back payload and writes it element-by-element into `target`.
+ */
+class MutArrayType implements TypeClass {
+  declare readonly inner: TypeClass;
+
+  constructor(inner: TypeClass) {
+    this.inner = inner;
+  }
+
+  encode(encoder: DataEncoder, value: any): void {
+    this.inner.encode(encoder, value);
+  }
+
+  decode(decoder: DataDecoder): any {
+    return this.inner.decode(decoder);
+  }
+
+  /**
+   * Decode a write-back payload and copy its elements into `target` (the
+   * caller's original array), keeping `target`'s identity and length.
+   */
+  copyBack(decoder: DataDecoder, target: any): void {
+    const updated = this.inner.decode(decoder);
+    const count = Math.min(target.length, updated.length);
+    for (let i = 0; i < count; i++) {
+      target[i] = updated[i];
+    }
+  }
+
+  appendWriteBack(encoder: DataEncoder, value: any): void {
+    this.inner.encode(encoder, value);
   }
 }
 
@@ -406,10 +661,11 @@ const F64Type = new NumericType("f64");
 
 // Pre-instantiated singleton types
 const boolTypeInstance = new BoolType();
-const nullTypeInstance = new NullType();
+const undefinedTypeInstance = new UndefinedType();
 const heapRefTypeInstance = new HeapRefType();
 const borrowedRefTypeInstance = new BorrowedRefType();
 const stringTypeInstance = new StringType();
+const charTypeInstance = new CharType();
 
 /**
  * Parse a TypeDef from a byte array and return a TypeClass.
@@ -419,8 +675,8 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
   const tag = bytes[offset.value++];
 
   switch (tag) {
-    case TypeTag.Null:
-      return nullTypeInstance;
+    case TypeTag.Undefined:
+      return undefinedTypeInstance;
     case TypeTag.Bool:
       return boolTypeInstance;
     case TypeTag.U8:
@@ -453,10 +709,34 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       return IsizeType;
     case TypeTag.String:
       return stringTypeInstance;
+    case TypeTag.Char:
+      return charTypeInstance;
     case TypeTag.HeapRef:
       return heapRefTypeInstance;
+    case TypeTag.RustValue: {
+      const len =
+        bytes[offset.value] |
+        (bytes[offset.value + 1] << 8) |
+        (bytes[offset.value + 2] << 16) |
+        (bytes[offset.value + 3] << 24);
+      offset.value += 4;
+      const strBytes = bytes.subarray(offset.value, offset.value + len);
+      offset.value += len;
+      return new RustValueType(new TextDecoder().decode(strBytes));
+    }
     case TypeTag.BorrowedRef:
       return borrowedRefTypeInstance;
+    case TypeTag.RustBorrow: {
+      const len =
+        bytes[offset.value] |
+        (bytes[offset.value + 1] << 8) |
+        (bytes[offset.value + 2] << 16) |
+        (bytes[offset.value + 3] << 24);
+      offset.value += 4;
+      const strBytes = bytes.subarray(offset.value, offset.value + len);
+      offset.value += len;
+      return new RustBorrowType(new TextDecoder().decode(strBytes));
+    }
     case TypeTag.Callback: {
       const paramCount = bytes[offset.value++];
       const paramTypes: TypeClass[] = [];
@@ -475,9 +755,18 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
       const errType = parseTypeDef(bytes, offset);
       return new ResultType(okType, errType);
     }
+    case TypeTag.ThrowingResult: {
+      const okType = parseTypeDef(bytes, offset);
+      const errType = parseTypeDef(bytes, offset);
+      return new ThrowingResultType(okType, errType);
+    }
     case TypeTag.Array: {
       const elementType = parseTypeDef(bytes, offset);
       return new ArrayType(elementType);
+    }
+    case TypeTag.MutArray: {
+      const innerType = parseTypeDef(bytes, offset);
+      return new MutArrayType(innerType);
     }
     case TypeTag.U8Clamped:
       return u8ClampedTypeInstance;
@@ -504,6 +793,54 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
 
       return new StringEnumType(lookupArray);
     }
+    case TypeTag.NumericEnum: {
+      const signed = bytes[offset.value++] !== 0;
+      const variantCount = bytes[offset.value++];
+      const values: number[] = [];
+      for (let i = 0; i < variantCount; i++) {
+        const raw =
+          (bytes[offset.value] |
+            (bytes[offset.value + 1] << 8) |
+            (bytes[offset.value + 2] << 16) |
+            (bytes[offset.value + 3] << 24)) >>>
+          0;
+        offset.value += 4;
+        values.push(signed ? raw | 0 : raw);
+      }
+      return new NumericEnumType(signed, values);
+    }
+    case TypeTag.DynamicUnion: {
+      const variantCount = bytes[offset.value++];
+      const variants: DynamicUnionVariant[] = [];
+
+      for (let i = 0; i < variantCount; i++) {
+        const kind = bytes[offset.value++];
+        if (kind === 0) {
+          const len =
+            bytes[offset.value] |
+            (bytes[offset.value + 1] << 8) |
+            (bytes[offset.value + 2] << 16) |
+            (bytes[offset.value + 3] << 24);
+          offset.value += 4;
+
+          const strBytes = bytes.subarray(offset.value, offset.value + len);
+          offset.value += len;
+          variants.push({
+            kind: "string",
+            value: new TextDecoder().decode(strBytes),
+          });
+        } else if (kind === 1) {
+          variants.push({
+            kind: "type",
+            type: parseTypeDef(bytes, offset),
+          });
+        } else {
+          throw new Error(`Invalid dynamic union variant kind: ${kind}`);
+        }
+      }
+
+      return new DynamicUnionType(variants);
+    }
     default:
       throw new Error(`Unknown TypeTag: ${tag}`);
   }
@@ -512,5 +849,7 @@ function parseTypeDef(bytes: Uint8Array, offset: { value: number }): TypeClass {
 export {
   TypeClass,
   HeapRefType,
+  RustValueType,
+  MutArrayType,
   parseTypeDef,
 };

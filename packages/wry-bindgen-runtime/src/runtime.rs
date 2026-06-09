@@ -332,6 +332,16 @@ pub(crate) fn dispatch_inbound_message(response: &IPCMessage) -> Option<DecodedD
             handle_inbound_evaluate(data);
             None
         }
+        DecodedVariant::Threw { message } => {
+            // The JS side parsed this batch's types before the throwing op, so
+            // ack the pending type-cache frame (as a Respond would) to keep it
+            // balanced across the unwind.
+            with_runtime(|runtime| runtime.pop_and_ack_type_cache_frame());
+            // A non-`catch` JS import threw. Unwind the Rust caller so its
+            // destructors run; the panic is caught at the export/callback
+            // boundary and rethrown to JS, matching wasm-bindgen.
+            panic!("{message}");
+        }
     }
 }
 
@@ -349,11 +359,17 @@ fn handle_rust_callback(data: &mut DecodedData) {
 
             // Clone the Rc while briefly borrowing the batch state, then release the borrow.
             // This allows nested callbacks to access the object store during our callback execution.
-            let callback = with_runtime(|state| {
-                let rust_callback = state.get_object::<RustCallback>(key);
-
-                rust_callback.clone()
-            });
+            // A missing handle means the closure was already dropped (a borrowed
+            // closure invoked after its import returned) or re-entered; report a
+            // catchable error rather than panicking on an invalid handle.
+            let callback = with_runtime(|state| state.try_clone_object::<RustCallback>(key));
+            let Some(callback) = callback else {
+                let response = finish_respond_error_message(
+                    "closure invoked recursively or after being dropped",
+                );
+                with_runtime(|runtime| runtime.ipc().send_ipc(response));
+                return;
+            };
 
             // Push a borrow frame before calling the callback - nested calls
             // won't clear our borrowed refs. The guard pops the frame even if
@@ -361,17 +377,21 @@ fn handle_rust_callback(data: &mut DecodedData) {
             let _frame = BorrowFrameGuard::new();
 
             let mut encoder = respond_encoder();
-            // Call through the cloned Rc (uniform Fn interface). A decode error
-            // surfaces here with context instead of an opaque `unwrap` panic
-            // inside the callback trampoline (mirrors the export path below).
-            let result = callback.call(data, &mut encoder);
-            // Flush any JS operations the callback queued before responding.
+            // Run the callback, catching a panic so it surfaces to JS as a thrown
+            // error carrying the panic message instead of unwinding across the
+            // IPC/FFI boundary and aborting. Destructors run during the unwind, so
+            // the `force_flush` below still ships any JS ops their `Drop`s queued.
+            let call_outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                callback.call(data, &mut encoder)
+            }));
+            // Flush any JS operations the callback (or its destructors) queued.
             crate::batch::force_flush();
-            match result {
-                Ok(()) => finish_respond_message(encoder),
-                Err(err) => {
-                    panic!("Rust callback {key} failed to decode arguments: {err}")
-                }
+            match call_outcome {
+                Ok(Ok(())) => finish_respond_message(encoder),
+                Ok(Err(err)) => finish_respond_error_message(&alloc::format!(
+                    "Rust callback {key} failed to decode arguments: {err}"
+                )),
+                Err(payload) => finish_respond_error_message(&panic_message(payload)),
             }
         }
         // Drop a native Rust object when JS GC'd the wrapper
@@ -389,16 +409,32 @@ fn handle_rust_callback(data: &mut DecodedData) {
             let export_name: alloc::string::String =
                 crate::encode::BinaryDecode::decode(data).expect("Failed to decode export name");
 
-            let result = inventory::iter::<crate::wire::JsExportSpec>()
-                .find_map(|export| export.call_if_name(&export_name, data))
-                .unwrap_or_else(|| panic!("Unknown export: {export_name}"));
+            // Direct exports decode borrowed JS refs from the active JS borrow
+            // frame, just like callbacks. Keep the Rust-side borrow cursor
+            // framed for the whole export call so nested JS calls can still use
+            // those borrowed refs.
+            let _frame = BorrowFrameGuard::new();
 
-            // Send response
-            match result {
-                Ok(encoded) => finish_respond_message(encoded),
-                Err(err) => {
-                    panic!("Export call failed: {err}");
+            // A panic in the exported function is caught and rethrown as a JS
+            // exception (like a bad-argument decode failure), so a panicking
+            // export propagates to the JS caller instead of aborting.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                for registration in inventory::iter::<crate::wire::JsExportSpecRegistration> {
+                    let export = registration.spec();
+                    if export.signature().name() == export_name {
+                        return export.call(data);
+                    }
                 }
+                panic!("Unknown export: {export_name}")
+            }));
+
+            // Send response. A decode/call failure becomes a JS exception the
+            // caller can catch, matching wasm-bindgen's throw-on-bad-argument
+            // behavior instead of aborting the process.
+            match result {
+                Ok(Ok(encoded)) => finish_respond_message(encoded),
+                Ok(Err(err)) => finish_respond_error_message(&alloc::format!("{err}")),
+                Err(payload) => finish_respond_error_message(&panic_message(payload)),
             }
         }
         _ => panic!("Unknown Rust callback function ID: {fn_id}"),
@@ -429,6 +465,23 @@ fn respond_encoder() -> crate::ipc::EncodedData {
 
 fn finish_respond_message(encoder: crate::ipc::EncodedData) -> IPCMessage {
     with_runtime(|runtime| runtime.finish_respond_message(encoder))
+}
+
+fn finish_respond_error_message(message: &str) -> IPCMessage {
+    with_runtime(|runtime| runtime.finish_respond_error_message(message))
+}
+
+/// Extracts the message from a caught panic payload, matching the common
+/// `panic!("...")` cases (`&str` and `String`) the way the standard panic hook
+/// does, so the JS exception reads as the original panic message.
+fn panic_message(payload: alloc::boxed::Box<dyn core::any::Any + Send>) -> alloc::string::String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        alloc::string::String::from(*message)
+    } else if let Some(message) = payload.downcast_ref::<alloc::string::String>() {
+        message.clone()
+    } else {
+        alloc::string::String::from("Rust code panicked")
+    }
 }
 
 #[cfg(test)]

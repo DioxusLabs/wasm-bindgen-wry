@@ -49,15 +49,18 @@ impl TryFrom<JsValue> for f64 {
     type Error = JsValue;
 
     fn try_from(val: JsValue) -> Result<Self, Self::Error> {
-        val.as_f64().ok_or(val)
+        f64::try_from(&val)
     }
 }
 
 impl TryFrom<&JsValue> for f64 {
     type Error = JsValue;
 
+    /// Applies the unary `+` JS operator, matching wasm-bindgen: the coerced number on
+    /// success (NaN for e.g. "hi"), or the thrown error value (e.g. for a Symbol).
     fn try_from(val: &JsValue) -> Result<Self, Self::Error> {
-        val.as_f64().ok_or_else(|| val.clone())
+        let jsval = crate::js_helpers::js_try_into_number(val);
+        jsval.as_f64().ok_or(jsval)
     }
 }
 
@@ -142,46 +145,34 @@ impl<T: convert::TryFromJsValue> convert::TryFromJsValue for Vec<T> {
     }
 }
 
-fn js_number_is_integer_in_range(number: f64, min: f64, max: f64) -> bool {
-    number.is_finite() && number.fract() == 0.0 && (min..=max).contains(&number)
+/// ECMAScript `ToUint32` of a JS number: a non-number is rejected, otherwise the
+/// value is truncated toward zero and reduced modulo 2^32. Mirrors
+/// wasm-bindgen's `to_uint_32` so the narrowing integer casts below follow the
+/// same WebAssembly `ToWebAssemblyValue` wrapping semantics rather than range
+/// checking (e.g. `i8::try_from_js_value(128.0)` wraps to `-128`).
+fn to_uint_32(v: &JsValue) -> Option<u32> {
+    v.as_f64().map(|n| {
+        if n.is_infinite() {
+            0
+        } else {
+            (n as i64) as u32
+        }
+    })
 }
 
-macro_rules! try_from_js_value_signed_int {
+macro_rules! try_from_js_value_int {
     ($($ty:ty),* $(,)?) => {
         $(
             impl convert::TryFromJsValue for $ty {
                 fn try_from_js_value_ref(val: &JsValue) -> Option<$ty> {
-                    let number = val.as_f64()?;
-                    if js_number_is_integer_in_range(number, <$ty>::MIN as f64, <$ty>::MAX as f64) {
-                        Some(number as $ty)
-                    } else {
-                        None
-                    }
+                    to_uint_32(val).map(|n| n as $ty)
                 }
             }
         )*
     };
 }
 
-macro_rules! try_from_js_value_unsigned_int {
-    ($($ty:ty),* $(,)?) => {
-        $(
-            impl convert::TryFromJsValue for $ty {
-                fn try_from_js_value_ref(val: &JsValue) -> Option<$ty> {
-                    let number = val.as_f64()?;
-                    if js_number_is_integer_in_range(number, 0.0, <$ty>::MAX as f64) {
-                        Some(number as $ty)
-                    } else {
-                        None
-                    }
-                }
-            }
-        )*
-    };
-}
-
-try_from_js_value_signed_int!(i8, i16, i32);
-try_from_js_value_unsigned_int!(u8, u16, u32);
+try_from_js_value_int!(i8, u8, i16, u16, i32, u32);
 
 impl convert::TryFromJsValue for f32 {
     fn try_from_js_value_ref(val: &JsValue) -> Option<f32> {
@@ -197,26 +188,42 @@ impl convert::TryFromJsValue for f64 {
 
 impl convert::TryFromJsValue for i64 {
     fn try_from_js_value_ref(val: &JsValue) -> Option<i64> {
-        crate::js_helpers::js_bigint_get_as_i64(val)
+        // The intrinsic already yields the signed low 64 bits; reject values
+        // that didn't fit via the bigint round-trip (the comparison is `===`).
+        let as_self = crate::js_helpers::js_bigint_get_as_i64(val)?;
+        if val == &as_self { Some(as_self) } else { None }
     }
 }
 
 impl convert::TryFromJsValue for u64 {
     fn try_from_js_value_ref(val: &JsValue) -> Option<u64> {
-        crate::js_helpers::js_bigint_to_string(val)?.parse().ok()
+        // Bit-reinterpret the signed low 64 bits as unsigned, then reject values
+        // that didn't fit via the bigint round-trip below.
+        let as_self = crate::js_helpers::js_bigint_get_as_i64(val)?.cast_unsigned();
+        if val == &as_self { Some(as_self) } else { None }
     }
 }
 
-impl convert::TryFromJsValue for i128 {
-    fn try_from_js_value_ref(v: &JsValue) -> Option<i128> {
-        crate::js_helpers::js_bigint_to_string(v)?.parse().ok()
-    }
+macro_rules! num128_from_js {
+    ($($ty:ty, $hi_ty:ty;)*) => ($(
+        impl convert::TryFromJsValue for $ty {
+            fn try_from_js_value_ref(v: &JsValue) -> Option<$ty> {
+                // Low 64 bits, interpreted as unsigned for both i128 and u128.
+                let lo = crate::js_helpers::js_bigint_get_as_i64(v)?.cast_unsigned();
+                // `v` is now known to be a bigint, so the shift can't throw.
+                let hi = v >> JsValue::from(64_u64);
+                // Range-check the high half against its 64-bit type, then widen
+                // both halves losslessly and recombine.
+                <$hi_ty as convert::TryFromJsValue>::try_from_js_value_ref(&hi)
+                    .map(|hi| (<$ty>::from(hi) << 64) | <$ty>::from(lo))
+            }
+        }
+    )*)
 }
 
-impl convert::TryFromJsValue for u128 {
-    fn try_from_js_value_ref(v: &JsValue) -> Option<u128> {
-        crate::js_helpers::js_bigint_to_string(v)?.parse().ok()
-    }
+num128_from_js! {
+    i128, i64;
+    u128, u64;
 }
 
 impl convert::TryFromJsValue for isize {

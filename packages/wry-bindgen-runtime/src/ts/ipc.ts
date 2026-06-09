@@ -9,7 +9,7 @@
  * - string buffer: from str_offset to end
  *
  * Message format in the u8 buffer:
- * - First u8: message type (0 = Evaluate, 1 = Respond)
+ * - First u8: message type (0 = Evaluate, 1 = Respond, 2 = RespondError)
  * - Remaining data depends on message type
  */
 
@@ -20,7 +20,14 @@ import { parseTypeDef, TypeClass, HeapRefType } from "./types";
 enum MessageType {
   Evaluate = 0,
   Respond = 1,
+  RespondError = 2,
+  // JS→Rust: an op in an Evaluate batch threw (a non-`catch` import). Rust
+  // turns it into a panic so the Rust caller unwinds.
+  RespondThrew = 3,
 }
+
+// Sentinel distinguishing "no op threw" from an op that threw `undefined`.
+const NOT_THROWN = Symbol("not-thrown");
 
 // Type caching markers - must match Rust's TYPE_CACHED and TYPE_FULL
 const TYPE_CACHED = 0xff;
@@ -181,6 +188,12 @@ function handleBinaryResponse(
     if (msgType === MessageType.Respond) {
       installDeferredHeapRefs(decoder);
       return decoder;
+    } else if (msgType === MessageType.RespondError) {
+      // Rust signalled that the call failed (e.g. an argument could not be
+      // decoded). Surface it as a thrown exception the caller can catch,
+      // matching wasm-bindgen's throw-on-bad-argument behavior.
+      installDeferredHeapRefs(decoder);
+      throw new Error(decoder.takeStr());
     } else if (msgType === MessageType.Evaluate) {
       installDeferredHeapRefs(decoder);
 
@@ -201,6 +214,7 @@ function handleBinaryResponse(
       // the reservation scope is popped without its fill-count check, so this
       // cleanup never throws over and masks the original (e.g. decode) error.
       let succeeded = false;
+      let thrown: unknown = NOT_THROWN;
       try {
         while (decoder.hasMoreU32()) {
           const fnId = decoder.takeU32();
@@ -230,11 +244,36 @@ function handleBinaryResponse(
           } else {
             typeInfo.returnType.encode(encoder, result);
           }
+
+          // Copy any `&mut [T]` arguments the import mutated back to Rust: the
+          // mutated arrays follow the return value, in argument order, matching
+          // the write-backs Rust queued while encoding the call.
+          for (let i = 0; i < typeInfo.paramTypes.length; i++) {
+            typeInfo.paramTypes[i].appendWriteBack?.(encoder, params[i]);
+          }
         }
         succeeded = true;
+      } catch (error) {
+        // An op threw — a non-`catch` JS import propagating an exception. Report
+        // it to Rust so the Rust caller unwinds (running destructors) instead of
+        // letting the exception escape and desync the IPC.
+        thrown = error;
       } finally {
         window.jsHeap.popBorrowFrame();
         window.jsHeap.popReservationScope(succeeded);
+      }
+
+      if (thrown !== NOT_THROWN) {
+        const errEncoder = new DataEncoder(window.jsHeap.deferHeapRefs());
+        errEncoder.pushU8(MessageType.RespondThrew);
+        errEncoder.pushStr(
+          thrown instanceof Error ? thrown.message : String(thrown)
+        );
+        currentResponse = sync_request_binary(
+          `/__wbg__/handler`,
+          errEncoder.finalize()
+        );
+        continue;
       }
 
       currentResponse = sync_request_binary(

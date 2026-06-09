@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{ImportFunction, ImportFunctionKind};
 use proc_macro2::TokenStream;
 use quote::{quote, quote_spanned};
+use syn::Ident;
+use wasm_bindgen_macro_support::ast::{ImportFunction, ImportFunctionKind, MethodKind};
 
 pub(super) struct GeneratedArgs {
     /// Function parameter declarations: `arg1: T1, arg2: T2`
@@ -52,6 +53,36 @@ impl GenericEraseContext {
     }
 }
 
+pub(super) fn import_function_is_instance_method(func: &ImportFunction) -> bool {
+    matches!(
+        &func.kind,
+        ImportFunctionKind::Method {
+            kind: MethodKind::Operation(operation),
+            ..
+        } if !operation.is_static
+    )
+}
+
+pub(super) fn function_argument_parts(
+    argument: &wasm_bindgen_macro_support::ast::FunctionArgumentData,
+    index: usize,
+) -> syn::Result<(Ident, &syn::Type)> {
+    let ty = argument.pat_type.ty.as_ref();
+    match argument.pat_type.pat.as_ref() {
+        syn::Pat::Ident(ident) => Ok((ident.ident.clone(), ty)),
+        // A wildcard argument (`fn f(_: u8)`) carries no binding name; synthesize
+        // a positional one so the value still rides the boundary to JS.
+        syn::Pat::Wild(wild) => Ok((
+            Ident::new(&format!("__wry_arg{index}"), wild.underscore_token.span),
+            ty,
+        )),
+        pat => Err(syn::Error::new_spanned(
+            pat,
+            "complex patterns are not supported by wry-bindgen codegen",
+        )),
+    }
+}
+
 /// Generate argument lists
 pub(super) fn generate_args(
     func: &ImportFunction,
@@ -63,32 +94,29 @@ pub(super) fn generate_args(
     let span = func.rust_name.span();
     let erase = GenericEraseContext::new(func);
 
-    // For methods, add self as first call arg (but not as fn param since we use &self)
-    match &func.kind {
-        ImportFunctionKind::Method { .. }
-        | ImportFunctionKind::Getter { .. }
-        | ImportFunctionKind::Setter { .. }
-        | ImportFunctionKind::IndexingGetter { .. }
-        | ImportFunctionKind::IndexingSetter { .. }
-        | ImportFunctionKind::IndexingDeleter { .. } => {
-            fn_types.push(quote_spanned! {span=> &#krate::JsValue });
-            call_values.push(quote_spanned! {span=> &self.obj });
-        }
-        _ => {}
+    let skip_receiver = import_function_is_instance_method(func);
+    if skip_receiver {
+        fn_types.push(quote_spanned! {span=> &#krate::JsValue });
+        call_values.push(quote_spanned! {span=> &self.obj });
     }
 
     // Add explicit arguments
-    for arg in &func.arguments {
-        let name = &arg.name;
-        let ty = &arg.ty;
+    for (index, arg) in func
+        .function
+        .arguments
+        .iter()
+        .skip(usize::from(skip_receiver))
+        .enumerate()
+    {
+        let (name, ty) = function_argument_parts(arg, index)?;
         fn_params.push(quote_spanned! {span=> #name: #ty });
         if erase.type_uses_erased_params(ty) {
             let concrete_ty = erase.concrete_type(ty, krate);
             fn_types.push(quote_spanned! {span=> #concrete_ty });
             call_values.push(quote_spanned! {span=>
                 unsafe {
-                    ::core::mem::transmute_copy(
-                        &::core::mem::ManuallyDrop::new(#name)
+                    #krate::__rt::core::mem::transmute_copy(
+                        &#krate::__rt::core::mem::ManuallyDrop::new(#name)
                     )
                 }
             });
@@ -150,17 +178,25 @@ pub(super) fn add_js_call_bounds_to_generics(
         .map(|param| param.ident.to_string())
         .collect();
 
-    for arg in &func.arguments {
-        if erase.type_uses_erased_params(&arg.ty) {
-            let concrete_ty = erase.concrete_type(&arg.ty, krate);
-            push_erasure_bound(generics, &arg.ty, &concrete_ty, krate, false);
+    let skip_receiver = import_function_is_instance_method(func);
+    for arg in func
+        .function
+        .arguments
+        .iter()
+        .skip(usize::from(skip_receiver))
+    {
+        let arg_ty = arg.pat_type.ty.as_ref();
+        if erase.type_uses_erased_params(arg_ty) {
+            let concrete_ty = erase.concrete_type(arg_ty, krate);
+            push_erasure_bound(generics, arg_ty, &concrete_ty, krate, false);
         }
-        if type_uses_type_params(&arg.ty, &known_type_params) {
-            push_arg_type_bounds(generics, &arg.ty, krate);
+        if type_uses_type_params(arg_ty, &known_type_params) {
+            push_arg_type_bounds(generics, arg_ty, krate);
         }
     }
 
-    if include_ret && let Some(ret) = &func.ret {
+    if include_ret && let Some(ret) = &func.function.ret {
+        let ret = &ret.r#type;
         if erase.type_uses_erased_params(ret) {
             let concrete_ty = erase.concrete_type(ret, krate);
             push_erasure_bound(generics, ret, &concrete_ty, krate, true);

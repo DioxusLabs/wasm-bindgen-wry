@@ -48,7 +48,7 @@ mod object_store {
 
     pub(crate) fn drop_object(handle: ObjectHandle) -> bool {
         let object: Option<Box<dyn Any>> =
-            crate::batch::with_runtime(|state| state.remove_object_untyped(handle));
+            crate::batch::with_runtime(|state| state.drop_object_handle(handle));
         let dropped = object.is_some();
         drop(object);
         dropped

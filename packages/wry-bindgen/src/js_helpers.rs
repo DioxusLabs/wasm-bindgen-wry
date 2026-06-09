@@ -6,7 +6,7 @@ use crate::JsValue;
 use crate::object_store::ObjectHandle;
 use crate::wasm_bindgen;
 
-#[wasm_bindgen(crate = crate, inline_js = include_str!("./js/convert.js"))]
+#[wasm_bindgen(wasm_bindgen = crate, module = "./js/convert.js")]
 extern "C" {
     #[wasm_bindgen(js_name = "is_undefined")]
     pub(crate) fn js_is_undefined(x: &JsValue) -> bool;
@@ -59,9 +59,6 @@ extern "C" {
     #[wasm_bindgen(js_name = "bigint_get_as_i64")]
     pub(crate) fn js_bigint_get_as_i64(x: &JsValue) -> Option<i64>;
 
-    #[wasm_bindgen(js_name = "bigint_to_string")]
-    pub(crate) fn js_bigint_to_string(x: &JsValue) -> Option<String>;
-
     #[wasm_bindgen(js_name = "reflect_get")]
     pub(crate) fn js_reflect_get(target: &JsValue, key: &JsValue) -> JsValue;
 
@@ -72,6 +69,14 @@ extern "C" {
     /// Get the f64 value of a JsValue if it is a number, otherwise None.
     #[wasm_bindgen(js_name = "as_f64")]
     pub(crate) fn js_as_f64(x: &JsValue) -> Option<f64>;
+
+    /// Coerce a JsValue to a number via the unary `+` operator (`__wbindgen_as_number`).
+    #[wasm_bindgen(js_name = "as_number")]
+    pub(crate) fn js_as_number(x: &JsValue) -> f64;
+
+    /// Unary `+` coercion returning the number, or the thrown error value on failure.
+    #[wasm_bindgen(js_name = "try_into_number")]
+    pub(crate) fn js_try_into_number(x: &JsValue) -> JsValue;
 
     /// Get a debug string representation of the JsValue.
     #[wasm_bindgen(js_name = "debug_string")]
@@ -140,6 +145,9 @@ extern "C" {
     #[wasm_bindgen(js_name = "js_loose_eq")]
     pub(crate) fn js_loose_eq(a: &JsValue, b: &JsValue) -> bool;
 
+    #[wasm_bindgen(js_name = "js_strict_eq")]
+    pub(crate) fn js_strict_eq(a: &JsValue, b: &JsValue) -> bool;
+
     // Other operators
     #[wasm_bindgen(js_name = "js_in")]
     pub(crate) fn js_in(prop: &JsValue, obj: &JsValue) -> bool;
@@ -151,10 +159,6 @@ extern "C" {
     // Heap management - clone a value in the JS heap
     #[wasm_bindgen(js_name = "clone_heap_ref")]
     pub(crate) fn js_clone_heap_ref(value: &JsValue) -> JsValue;
-
-    // Heap management - drop a value from the JS heap
-    #[wasm_bindgen(js_name = "drop_heap_ref")]
-    pub fn js_drop_heap_ref(heap_id: u64);
 
     // Create a wrapper object for an exported Rust struct
     #[wasm_bindgen(js_name = "create_rust_object_wrapper")]

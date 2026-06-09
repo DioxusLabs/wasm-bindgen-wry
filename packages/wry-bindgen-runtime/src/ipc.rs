@@ -10,6 +10,10 @@ pub(crate) use crate::wire::{DecodedData, EncodedData};
 pub(crate) enum MessageType {
     Evaluate = 0,
     Respond = 1,
+    /// A response carrying an error string; JS throws it as an exception. Used when an
+    /// exported call fails (e.g. an argument can't be decoded), matching wasm-bindgen's
+    /// behavior of throwing rather than aborting.
+    RespondError = 2,
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +32,10 @@ impl IPCMessage {
         match message_type {
             0 => Ok(DecodedVariant::Evaluate { data: decoded }),
             1 => Ok(DecodedVariant::Respond { data: decoded }),
+            // A non-`catch` JS import threw while running this batch.
+            3 => Ok(DecodedVariant::Threw {
+                message: <alloc::string::String as BinaryDecode>::decode(&mut decoded)?,
+            }),
             value => Err(DecodeError::custom(format!(
                 "invalid message type: {value}"
             ))),
@@ -40,8 +48,16 @@ impl IPCMessage {
 }
 
 pub(crate) enum DecodedVariant<'a> {
-    Respond { data: DecodedData<'a> },
-    Evaluate { data: DecodedData<'a> },
+    Respond {
+        data: DecodedData<'a>,
+    },
+    Evaluate {
+        data: DecodedData<'a>,
+    },
+    /// A non-`catch` JS import threw; the Rust caller must unwind.
+    Threw {
+        message: alloc::string::String,
+    },
 }
 
 #[derive(Default)]

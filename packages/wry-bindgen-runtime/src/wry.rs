@@ -170,6 +170,13 @@ impl WebviewState {
 
         false
     }
+
+    fn mark_initialized(&mut self) -> bool {
+        match self.loading_state {
+            WebviewLoadingState::Pending { .. } => self.mark_loaded(),
+            WebviewLoadingState::Loaded => true,
+        }
+    }
 }
 
 enum DriverAction {
@@ -254,6 +261,7 @@ impl ProtocolHandler {
     /// Create a protocol handler closure suitable for `WebViewBuilder::with_asynchronous_custom_protocol`.
     ///
     /// The returned closure handles this subset of "{protocol}://" requests:
+    /// - "/__wbg__/preinitialized" - enables startup calls before the app lock
     /// - "/__wbg__/initialized" - signals webview loaded
     /// - "/__wbg__/snippets/{path}" - serves inline JS modules
     /// - "/__wbg__/init.js" - serves the initialization script
@@ -292,7 +300,12 @@ impl ProtocolHandler {
         // Serve inline_js modules from __wbg__/snippets/
         if let Some(path_without_snippets) = path_without_wbg.strip_prefix("snippets/") {
             let responder = WryBindgenResponder::from(responder);
-            if let Some(content) = FUNCTION_REGISTRY.get_module(path_without_snippets) {
+            // Inventory-collected modules first, then any registered at runtime by
+            // `link_to!` (whose content is only known once the macro call runs).
+            if let Some(content) = FUNCTION_REGISTRY
+                .get_module(path_without_snippets)
+                .or_else(|| crate::function_registry::linked_module(path_without_snippets))
+            {
                 responder.respond(module_response(content));
                 return None;
             }
@@ -306,8 +319,15 @@ impl ProtocolHandler {
             return None;
         }
 
+        if path_without_wbg == "preinitialized" {
+            let _ = webviews.borrow_mut().mark_loaded();
+            let responder = WryBindgenResponder::from(responder);
+            responder.respond(blank_response());
+            return None;
+        }
+
         if path_without_wbg == "initialized" {
-            let acquire_lock = webviews.borrow_mut().mark_loaded();
+            let acquire_lock = webviews.borrow_mut().mark_initialized();
             if acquire_lock {
                 self.driver_commands.send(DriverCommand::AcquireLock);
             }

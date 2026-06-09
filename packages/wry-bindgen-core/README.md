@@ -13,7 +13,7 @@ let handle = with_runtime(|rt| rt.insert_object(Counter::default()));
 
 // ...then borrow it back by handle later.
 with_runtime(|rt| {
-    let mut counter = rt.object::<Counter>(handle);
+    let mut counter = rt.object_mut::<Counter>(handle).expect("counter handle");
     counter.tick();
 });
 ```

@@ -44,12 +44,7 @@ pub use wry::WebViewBuilder;
 ///     let webview = WebViewBuilder::new()
 ///         .with_devtools(false);
 ///
-///     LaunchBuilder::new()
-///         .window(window)
-///         .webview(webview)
-///         .run(|| async {
-///             // Your app code here
-///         })
+///     LaunchBuilder::new().window(window).webview(webview).launch()
 /// }
 /// ```
 pub struct LaunchBuilder {
@@ -112,8 +107,12 @@ impl LaunchBuilder {
         self
     }
 
-    /// Run the application with the configured settings.
-    pub fn run<F, Fut>(self, app: F) -> wry::Result<()>
+    /// Launch the application with the configured settings.
+    pub fn launch(self) -> wry::Result<()> {
+        self.launch_with_app(|| std::future::pending::<()>())
+    }
+
+    fn launch_with_app<F, Fut>(self, app: F) -> wry::Result<()>
     where
         F: FnOnce() -> Fut + Send + 'static,
         Fut: std::future::Future<Output = ()>,
@@ -138,56 +137,32 @@ impl LaunchBuilder {
     }
 }
 
-/// Run a webview application with the given app function.
+/// Launch a webview application and keep the runtime alive.
 ///
-/// The app function will be spawned in a separate thread and can use
-/// the wry-bindgen bindings to interact with the JavaScript runtime.
+/// Application initialization can be defined with `#[wasm_bindgen(start)]`; the
+/// generated start export is invoked during webview initialization.
 ///
 /// # Example
 ///
 /// ```ignore
-/// use wry_launch::{run, batch, WINDOW};
+/// use wasm_bindgen::prelude::*;
 ///
-/// fn main() -> wry::Result<()> {
-///     run(app)
+/// fn main() {
+///     wry_launch::launch();
 /// }
 ///
-/// fn app() {
-///     batch(|| {
-///         let document = WINDOW.with(|w| w.document());
-///         // ... build your UI
-///     });
+/// #[wasm_bindgen(start)]
+/// fn start() {
+///     // Your app code here
 /// }
 /// ```
-pub fn run<F, Fut>(app: F) -> wry::Result<()>
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = ()>,
-{
-    LaunchBuilder::new().run(app)
+pub fn launch() {
+    LaunchBuilder::new().launch().unwrap();
 }
 
 /// Run a headless webview application with the given app function.
 ///
-/// This is identical to `run()` except the window will be invisible.
-/// Useful for testing, automation, or background processing.
-///
-/// # Example
-///
-/// ```ignore
-/// use wry_launch::{run_headless, batch, WINDOW};
-///
-/// fn main() -> wry::Result<()> {
-///     run_headless(app)
-/// }
-///
-/// fn app() {
-///     batch(|| {
-///         let document = WINDOW.with(|w| w.document());
-///         // ... build your UI
-///     });
-/// }
-/// ```
+/// The window is invisible. This is primarily useful for tests and automation.
 pub fn run_headless<F, Fut>(app: F) -> wry::Result<()>
 where
     F: FnOnce() -> Fut + Send + 'static,
@@ -205,5 +180,5 @@ where
     LaunchBuilder::new()
         .window(window)
         .webview(webview)
-        .run(app)
+        .launch_with_app(app)
 }

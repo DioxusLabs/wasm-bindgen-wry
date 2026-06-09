@@ -68,7 +68,7 @@ pub struct BindgenAttrs {
 /// (except for "default", which is allowed as a special case).
 #[cfg_attr(feature = "extra-traits", derive(Debug))]
 #[derive(Clone)]
-pub struct JsNamespace(Vec<String>);
+pub struct JsNamespace(pub Vec<String>);
 
 macro_rules! attrgen {
     ($mac:ident) => {
@@ -154,7 +154,7 @@ macro_rules! methods {
             Diagnostic::from_vec(errors)
         }
 
-        fn check_used(self) {
+        pub(crate) fn check_used(self) {
             // Account for the fact this method was called
             ATTRS.with(|state| {
                 state.checks.set(state.checks.get() + 1);
@@ -2953,6 +2953,28 @@ pub fn check_unused_attrs(tokens: &mut TokenStream) {
                 };
             });
         }
+    })
+}
+
+pub fn unused_attrs_diagnostic() -> Result<(), Diagnostic> {
+    ATTRS.with(|state| {
+        assert_eq!(state.parsed.get(), state.checks.get());
+        let errors = state
+            .unused_attrs
+            .borrow()
+            .iter()
+            .filter_map(|UnusedState { error, ident }| {
+                if *error {
+                    Some(Diagnostic::span_error(
+                        ident.span(),
+                        format!("invalid attribute {ident} in this position"),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Diagnostic::from_vec(errors)
     })
 }
 

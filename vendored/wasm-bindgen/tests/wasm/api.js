@@ -1,11 +1,11 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.assert_null = x => {
+export const assert_null = x => {
     assert.strictEqual(x, null);
 };
 
-exports.js_works = () => {
+export const js_works = () => {
     assert.strictEqual(wasm.api_foo(), 'foo');
     assert.strictEqual(wasm.api_bar('a'), 'a');
     assert.strictEqual(wasm.api_baz(), 1);
@@ -43,7 +43,7 @@ exports.js_works = () => {
     });
 };
 
-exports.js_eq_works = () => {
+export const js_eq_works = () => {
     assert.strictEqual(wasm.eq_test('a', 'a'), true);
     assert.strictEqual(wasm.eq_test('a', 'b'), false);
     assert.strictEqual(wasm.eq_test(NaN, NaN), false);
@@ -54,7 +54,7 @@ exports.js_eq_works = () => {
     assert.strictEqual(wasm.eq_test1(x), true);
 };
 
-exports.debug_values = () => ([
+export const debug_values = () => ([
     null,
     undefined,
     0,
@@ -68,8 +68,8 @@ exports.debug_values = () => ([
     new Set(),
 ]);
 
-exports.assert_function_table = (x, i) => {
-    const rawWasm = require('wasm-bindgen-test.js').__wasm;
+export const assert_function_table = (x, i) => {
+    const rawWasm = new Proxy({}, { get: (_t, n) => window[n] }).__wasm;
     assert.ok(x instanceof WebAssembly.Table);
     let entry;
     try {
@@ -83,7 +83,7 @@ exports.assert_function_table = (x, i) => {
     assert.strictEqual(entry, rawWasm.function_table_lookup);
 };
 
-exports.assert_instance = (instance, wasmExports) => {
+export const assert_instance = (instance, wasmExports) => {
     assert.ok(instance instanceof WebAssembly.Instance);
     assert.strictEqual(instance.exports, wasmExports);
 };

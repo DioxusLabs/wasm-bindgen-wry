@@ -1,7 +1,7 @@
 const fs = require('fs');
-const assert = require('assert');
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.assert_comments_exist = function() {
+export const assert_comments_exist = function() {
   const bindings_file = require.resolve('wasm-bindgen-test');
   const contents = fs.readFileSync(bindings_file);
   assert.ok(contents.includes("* annotated function ✔️ \" \\ ' {"));

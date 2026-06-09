@@ -1,2 +1,2 @@
-exports.foo = () => {};
-exports.bar = 3;
+export const foo = () => {};
+export const bar = 3;

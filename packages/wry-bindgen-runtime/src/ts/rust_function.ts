@@ -63,7 +63,8 @@ class RustFunction {
 
   call(...args: any[]): any {
     if (this.disposed) {
-      throw new Error("Rust function has already been dropped");
+      // Match wasm-bindgen's message so callers that assert on it still pass.
+      throw new Error("closure invoked recursively or after being dropped");
     }
 
     this.activeCalls++;

@@ -243,6 +243,14 @@ promising_self!(
     bool, char, f32, f64, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, JsError
 );
 
+impl Promising for alloc::string::String {
+    type Resolution = alloc::string::String;
+}
+
+impl<T: Promising> Promising for alloc::vec::Vec<T> {
+    type Resolution = alloc::vec::Vec<T::Resolution>;
+}
+
 impl<T: Promising> Promising for Option<T> {
     type Resolution = Option<T::Resolution>;
 }

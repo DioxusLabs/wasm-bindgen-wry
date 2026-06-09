@@ -1,7 +1,7 @@
-const wasm = require('wasm-bindgen-test.js');
-const assert = require('assert');
+const wasm = new Proxy({}, { get: (_t, n) => window[n] });
+const assert = new Proxy(function(){}, { get: (_t, n) => globalThis.__wbgAssert[n], apply: (_t, _s, a) => globalThis.__wbgAssert(...a) });
 
-exports.call_throw_one = function() {
+export const call_throw_one = function() {
   try {
     wasm.throw_one();
   } catch (e) {
@@ -9,6 +9,6 @@ exports.call_throw_one = function() {
   }
 };
 
-exports.call_ok = function() {
+export const call_ok = function() {
   wasm.nothrow();
 };

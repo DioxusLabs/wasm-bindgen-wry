@@ -1,21 +1,23 @@
 use std::collections::HashMap;
 
 use dioxus::prelude::*;
+use wasm_bindgen::prelude::*;
 use web_sys::window;
 
 fn main() {
-    wry_launch::run(|| async {
-        window()
-            .unwrap()
-            .document()
-            .unwrap()
-            .body()
-            .unwrap()
-            .set_inner_html(r#"<div id="main"></div>"#);
-        launch(app);
-        std::future::pending::<()>().await;
-    })
-    .unwrap();
+    wry_launch::launch();
+}
+
+#[wasm_bindgen(start)]
+pub fn start() {
+    window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .body()
+        .unwrap()
+        .set_inner_html(r#"<div id="main"></div>"#);
+    launch(app);
 }
 
 const STYLE: &str = include_str!("../assets/todomvc.css");

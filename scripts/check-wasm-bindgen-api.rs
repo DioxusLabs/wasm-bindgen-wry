@@ -56,8 +56,7 @@ const IGNORED_CONSTRUCTIBLE_TYPES: &[&str] = &["JsThreadLocal"];
 // Types still re-exported by `wry-bindgen` but defined in support crates.
 // cargo-semver-checks reports these as missing because it resolves the defining crate
 // rather than the re-exported import path.
-const IGNORED_RELOCATED_STRUCTS: &[&str] =
-    &["wry_bindgen::Clamped", "wry_bindgen::JsThreadLocal"];
+const IGNORED_RELOCATED_STRUCTS: &[&str] = &["wry_bindgen::Clamped", "wry_bindgen::JsThreadLocal"];
 
 #[derive(Debug)]
 struct Error(String);

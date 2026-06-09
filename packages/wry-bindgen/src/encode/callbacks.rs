@@ -3,14 +3,14 @@
 use alloc::boxed::Box;
 use core::marker::PhantomData;
 
-use crate::convert::RefFromBinaryDecode;
+use crate::convert::{ArgAbi, CallScoped};
 use crate::ipc::{DecodeError, DecodedData, EncodedData};
 use crate::value::JsValue;
 use crate::{
     Closure, IntoWasmClosure, IntoWasmClosureRef, IntoWasmClosureRefMut, WasmClosureFnOnce,
     WasmClosureFnOnceAbort,
 };
-use wry_bindgen_core::{CallbackKey, RustCallback};
+use wry_bindgen_core::{CallbackKey, IntoRustCallback};
 
 use super::{BinaryDecode, BinaryEncode, EncodeTypeDef, IntoClosure, RequireFlush, TypeDef};
 
@@ -209,20 +209,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(unused)]
             fn into_scoped_closure_ref<'a>(t: &'a Self) -> crate::ScopedClosure<'a, <dyn Fn($($arg),*) -> R as crate::WasmClosure>::Static> {
                 let t: &(dyn Fn($($arg),*) -> R) = t;
-                let ptr = t as *const dyn Fn($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -243,20 +230,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_scoped_closure_ref<'a>(t: &'a Self) -> crate::ScopedClosure<'a, <dyn Fn($($arg),*) -> R as crate::WasmClosure>::Static> {
-                let ptr = t as *const dyn Fn($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *const dyn Fn($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &dyn Fn($($arg),*) -> R = unsafe { &*ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -278,20 +252,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(unused)]
             fn into_scoped_closure_ref_mut<'a>(t: &'a mut Self) -> crate::ScopedClosure<'a, <dyn FnMut($($arg),*) -> R as crate::WasmClosure>::Static> {
                 let t: &mut dyn FnMut($($arg),*) -> R = t;
-                let ptr = t as *mut dyn FnMut($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn_mut(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *mut dyn FnMut($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &mut dyn FnMut($($arg),*) -> R = unsafe { &mut *ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -312,20 +273,7 @@ macro_rules! impl_fnmut_stub {
             #[allow(non_snake_case)]
             #[allow(unused)]
             fn into_scoped_closure_ref_mut<'a>(t: &'a mut Self) -> crate::ScopedClosure<'a, <dyn FnMut($($arg),*) -> R as crate::WasmClosure>::Static> {
-                let ptr = t as *mut dyn FnMut($($arg),*) -> R;
-                let (data_ptr, vtable_ptr): (usize, usize) = unsafe { core::mem::transmute(ptr) };
-                let callback = RustCallback::new_fn_mut(
-                    move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let ptr: *mut dyn FnMut($($arg),*) -> R = unsafe {
-                            core::mem::transmute((data_ptr, vtable_ptr))
-                        };
-                        let f: &mut dyn FnMut($($arg),*) -> R = unsafe { &mut *ptr };
-                        decode_args!(decoder; [$($arg,)*] => {
-                            let result = f($($arg),*);
-                            result.encode(encoder);
-                        });
-                    },
-                );
+                let callback = IntoRustCallback::into_rust_callback(t);
                 let handle = crate::object_store::insert_object(callback);
                 let value = crate::__rt::wbg_cast::<CallbackKey<fn($($arg),*) -> R>, crate::JsValue>(
                     CallbackKey::rust_owned(handle),
@@ -350,17 +298,61 @@ impl_fnmut_stub!(A1, A2, A3, A4, A5, A6);
 impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7);
 impl_fnmut_stub!(A1, A2, A3, A4, A5, A6, A7, A8);
 
+// `AssertUnwindSafe<F>` is a transparent unwind-safety assertion, so its closure
+// conversions forward to the inner `F`. These explicit impls cover the case
+// where it wraps a closure with arguments (std only implements the `Fn` traits
+// for `AssertUnwindSafe` with zero arguments), which is how upstream tests pass
+// a non-`UnwindSafe` capture through `Closure::borrow`/`wrap`.
+impl<T: ?Sized, F> IntoWasmClosure<T> for core::panic::AssertUnwindSafe<F>
+where
+    F: IntoWasmClosure<T>,
+{
+    fn into_closure(self) -> crate::Closure<T> {
+        F::into_closure(self.0)
+    }
+
+    fn into_closure_box(self: alloc::boxed::Box<Self>) -> crate::Closure<T> {
+        F::into_closure(self.0)
+    }
+}
+
+impl<T: ?Sized, F> IntoWasmClosureRef<T> for core::panic::AssertUnwindSafe<F>
+where
+    F: IntoWasmClosureRef<T>,
+{
+    fn into_scoped_closure_ref<'a>(t: &'a Self) -> crate::ScopedClosure<'a, T::Static>
+    where
+        T: crate::WasmClosure,
+    {
+        F::into_scoped_closure_ref(&t.0)
+    }
+}
+
+impl<T: ?Sized, F> IntoWasmClosureRefMut<T> for core::panic::AssertUnwindSafe<F>
+where
+    F: IntoWasmClosureRefMut<T>,
+{
+    fn into_scoped_closure_ref_mut<'a>(t: &'a mut Self) -> crate::ScopedClosure<'a, T::Static>
+    where
+        T: crate::WasmClosure,
+    {
+        F::into_scoped_closure_ref_mut(&mut t.0)
+    }
+}
+
 /// Marker type for closures that borrow the first argument.
 pub struct BorrowedFirstArg;
 
 /// Macro to implement WasmClosure and IntoClosure for closures that borrow the first argument.
-/// This uses RefFromBinaryDecode for the first arg and BinaryDecode for the rest.
+/// This uses `ArgAbi<CallScoped>` for the first arg and `BinaryDecode` for the rest.
 macro_rules! impl_fnmut_stub_ref {
     ($first:ident $(, $rest:ident)*) => {
         // WasmClosure for dyn FnMut(&First, ...) -> R
         impl<R, $first, $($rest,)*> crate::WryWasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn FnMut(&$first, $($rest),*) -> R
             where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -369,9 +361,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
                 crate::Closure::wrap_encode_decode_mut::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = boxed(&*anchor, $($rest),*);
+                        let result = boxed(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -395,7 +387,9 @@ macro_rules! impl_fnmut_stub_ref {
         // WasmClosure for dyn Fn(&First, ...) -> R (supports reentrant calls)
         impl<R, $first, $($rest,)*> crate::WryWasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn Fn(&$first, $($rest),*) -> R
             where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -404,9 +398,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
                 crate::Closure::wrap_encode_decode::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = boxed(&*anchor, $($rest),*);
+                        let result = boxed(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -428,7 +422,9 @@ macro_rules! impl_fnmut_stub_ref {
         // IntoClosure for F: FnMut(&First, ...) -> R -> Closure<dyn FnMut(&First, ...) -> R>
         impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R), crate::Closure<dyn FnMut(&$first, $($rest),*) -> R>> for F
             where F: FnMut(&$first, $($rest),*) -> R + 'static,
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -437,9 +433,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_closure(mut self) -> crate::Closure<dyn FnMut(&$first, $($rest),*) -> R> {
                 crate::Closure::wrap_encode_decode_mut::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = self(&*anchor, $($rest),*);
+                        let result = self(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -450,7 +446,9 @@ macro_rules! impl_fnmut_stub_ref {
         // IntoClosure for F: Fn(&First, ...) -> R -> Closure<dyn Fn(&First, ...) -> R>
         impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R), crate::Closure<dyn Fn(&$first, $($rest),*) -> R>> for F
             where F: Fn(&$first, $($rest),*) -> R + 'static,
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -459,9 +457,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_closure(self) -> crate::Closure<dyn Fn(&$first, $($rest),*) -> R> {
                 crate::Closure::wrap_encode_decode::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = self(&*anchor, $($rest),*);
+                        let result = self(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -472,7 +470,9 @@ macro_rules! impl_fnmut_stub_ref {
         #[allow(coherence_leak_check)]
         impl<R, F, $first, $($rest,)*> IntoWasmClosure<dyn FnMut(&$first, $($rest),*) -> R> for F
             where F: FnMut(&$first, $($rest),*) -> R + 'static,
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -488,7 +488,9 @@ macro_rules! impl_fnmut_stub_ref {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> IntoWasmClosure<dyn FnMut(&$first, $($rest),*) -> R> for dyn FnMut(&$first, $($rest),*) -> R
             where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -500,7 +502,9 @@ macro_rules! impl_fnmut_stub_ref {
         #[allow(coherence_leak_check)]
         impl<R, F, $first, $($rest,)*> IntoWasmClosure<dyn Fn(&$first, $($rest),*) -> R> for F
             where F: Fn(&$first, $($rest),*) -> R + 'static,
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -516,7 +520,9 @@ macro_rules! impl_fnmut_stub_ref {
         #[allow(coherence_leak_check)]
         impl<R, $first, $($rest,)*> IntoWasmClosure<dyn Fn(&$first, $($rest),*) -> R> for dyn Fn(&$first, $($rest),*) -> R
             where
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -590,13 +596,15 @@ impl_fn_once!(A1, A2, A3, A4, A5, A6, A7);
 impl_fn_once!(A1, A2, A3, A4, A5, A6, A7, A8);
 
 /// Macro to implement WasmClosureFnOnce for FnOnce closures that borrow the first argument.
-/// This uses RefFromBinaryDecode for the first arg and BinaryDecode for the rest.
+/// This uses `ArgAbi<CallScoped>` for the first arg and `BinaryDecode` for the rest.
 macro_rules! impl_fn_once_ref {
     ($first:ident $(, $rest:ident)*) => {
         impl<R, F, $first, $($rest,)*> WasmClosureFnOnce<dyn FnMut(&$first, $($rest),*) -> R, (BorrowedFirstArg, fn(&$first, $($rest),*) -> R), R> for F
         where
             F: FnOnce(&$first, $($rest),*) -> R + 'static,
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {
@@ -607,9 +615,9 @@ macro_rules! impl_fn_once_ref {
                 crate::Closure::wrap_once_encode_decode_mut::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let f = me.take().expect("FnOnce closure called more than once");
-                        let anchor = <$first as RefFromBinaryDecode>::ref_decode(decoder)?;
+                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = f(&*anchor, $($rest),*);
+                        let result = f(&*__guard, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -620,7 +628,9 @@ macro_rules! impl_fn_once_ref {
         impl<R, F, $first, $($rest,)*> WasmClosureFnOnceAbort<dyn FnMut(&$first, $($rest),*) -> R, (BorrowedFirstArg, fn(&$first, $($rest),*) -> R), R> for F
         where
             F: FnOnce(&$first, $($rest),*) -> R + 'static,
-            $first: RefFromBinaryDecode + EncodeTypeDef + 'static,
+            &'static $first: ArgAbi<CallScoped>,
+            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
         {

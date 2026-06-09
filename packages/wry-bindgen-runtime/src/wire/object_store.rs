@@ -1,6 +1,6 @@
 use super::{BinaryDecode, BinaryEncode, DecodeError, DecodedData, EncodedData};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ObjectHandle(u32);
 
 impl ObjectHandle {

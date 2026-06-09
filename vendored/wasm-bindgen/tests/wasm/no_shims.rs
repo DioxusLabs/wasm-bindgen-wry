@@ -12,41 +12,42 @@ use wasm_bindgen_test::*;
         }
     }
 
-    module.exports.trivial = function () {};
+    export const trivial = function () {};
 
-    module.exports.incoming_bool = function () { return true; };
-    module.exports.incoming_u8 = function () { return 255; };
-    module.exports.incoming_i8 = function () { return -127; };
-    module.exports.incoming_u16 = function () { return 65535; };
-    module.exports.incoming_i16 = function () { return 32767; };
-    module.exports.incoming_u32 = function () { return 4294967295; };
-    module.exports.incoming_i32 = function () { return 0; };
-    module.exports.incoming_f32 = function () { return 1.5; };
-    module.exports.incoming_f64 = function () { return Math.PI; };
+    export const incoming_bool = function () { return true; };
+    export const incoming_u8 = function () { return 255; };
+    export const incoming_i8 = function () { return -127; };
+    export const incoming_u16 = function () { return 65535; };
+    export const incoming_i16 = function () { return 32767; };
+    export const incoming_u32 = function () { return 4294967295; };
+    export const incoming_i32 = function () { return 0; };
+    export const incoming_f32 = function () { return 1.5; };
+    export const incoming_f64 = function () { return Math.PI; };
 
-    module.exports.outgoing_u8 = function (k) { assert_eq(k, 255); };
-    module.exports.outgoing_i8 = function (i) { assert_eq(i, -127); };
-    module.exports.outgoing_u16 = function (l) { assert_eq(l, 65535); };
-    module.exports.outgoing_i16 = function (j) { assert_eq(j, 32767); };
-    module.exports.outgoing_i32 = function (x) { assert_eq(x, 0); };
-    module.exports.outgoing_f32 = function (y) { assert_eq(y, 1.5); };
-    module.exports.outgoing_f64 = function (pi) { assert_eq(pi, Math.PI); };
+    export const outgoing_u8 = function (k) { assert_eq(k, 255); };
+    export const outgoing_i8 = function (i) { assert_eq(i, -127); };
+    export const outgoing_u16 = function (l) { assert_eq(l, 65535); };
+    export const outgoing_i16 = function (j) { assert_eq(j, 32767); };
+    export const outgoing_i32 = function (x) { assert_eq(x, 0); };
+    export const outgoing_f32 = function (y) { assert_eq(y, 1.5); };
+    export const outgoing_f64 = function (pi) { assert_eq(pi, Math.PI); };
 
-    module.exports.many = function (x, y, pi) {
+    export const many = function (x, y, pi) {
         assert_eq(x, 0);
         assert_eq(y, 1.5);
         assert_eq(pi, Math.PI);
         return 42;
     };
 
-    module.exports.works_when_externref_support_is_enabled = function (v) {
+    export const works_when_externref_support_is_enabled = function (v) {
         assert_eq(v, 'hello');
         return v;
     };
 
-    module.exports.MyNamespace = {};
-    module.exports.MyNamespace.incoming_namespaced = function () { return 13.37; };
-    module.exports.MyNamespace.outgoing_namespaced = function (w) { assert_eq(13.37, w); };
+    export const MyNamespace = {
+        incoming_namespaced: function () { return 13.37; },
+        outgoing_namespaced: function (w) { assert_eq(13.37, w); },
+    };
 ")]
 extern "C" {
     #[wasm_bindgen(assert_no_shim)]

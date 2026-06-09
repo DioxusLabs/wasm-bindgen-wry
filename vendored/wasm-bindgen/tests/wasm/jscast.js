@@ -22,7 +22,7 @@ class JsCast4 extends JsCast3 {
   }
 }
 
-exports.JsCast1 = JsCast1;
-exports.JsCast2 = JsCast2;
-exports.JsCast3 = JsCast3;
-exports.JsCast4 = JsCast4;
+export { JsCast1 };
+export { JsCast2 };
+export { JsCast3 };
+export { JsCast4 };
