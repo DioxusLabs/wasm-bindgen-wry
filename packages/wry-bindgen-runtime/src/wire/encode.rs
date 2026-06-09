@@ -778,7 +778,7 @@ impl<T: EncodeTypeDef> EncodeTypeDef for Box<[T]> {
 /// export codegen advertises this type, decodes it, mutably borrows `buffer`,
 /// then re-encodes it after the return value.
 pub struct MutSliceArg<T> {
- buffer: Vec<T>,
+    buffer: Vec<T>,
 }
 
 impl<T: EncodeTypeDef> EncodeTypeDef for MutSliceArg<T> {
