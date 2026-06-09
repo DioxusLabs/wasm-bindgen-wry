@@ -9,3 +9,8 @@ fn colon_module_specifier_compiles_as_raw_import() {
 
     let _ = __wry_worker_sys_socket_marker as fn();
 }
+
+#[test]
+fn rust_2015_extern_type_expansion_compiles() {
+    wry_launch_rust2015_extern_type::touch();
+}

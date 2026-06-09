@@ -17,10 +17,7 @@ use std::process;
 
 const LOCAL_MANIFESTS: &[(&str, &str)] = &[
     ("packages/wry-bindgen/Cargo.toml", "wry-bindgen"),
-    (
-        "packages/wry-bindgen-macro/Cargo.toml",
-        "wry-bindgen-macro",
-    ),
+    ("packages/wry-bindgen-macro/Cargo.toml", "wry-bindgen-macro"),
     (
         "packages/wry-bindgen-macro-support/Cargo.toml",
         "wry-bindgen-macro-support",
@@ -47,10 +44,7 @@ const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
         "wasm-bindgen-macro-support",
     ),
     ("vendored/wasm-bindgen/crates/js-sys/Cargo.toml", "js-sys"),
-    (
-        "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
-        "web-sys",
-    ),
+    ("vendored/wasm-bindgen/crates/web-sys/Cargo.toml", "web-sys"),
     (
         "vendored/wasm-bindgen/crates/futures/Cargo.toml",
         "wasm-bindgen-futures",

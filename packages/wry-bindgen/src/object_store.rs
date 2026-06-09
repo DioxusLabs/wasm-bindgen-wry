@@ -60,12 +60,6 @@ pub fn checkout_object_mut<T: 'static>(
     CheckoutGuard::open(handle)
 }
 
-pub fn checkout_object<T: 'static>(
-    handle: ObjectHandle,
-) -> impl core::ops::DerefMut<Target = T> + 'static {
-    checkout_object_mut(handle)
-}
-
 enum SharedCheckout<T: 'static> {
     Owned(ObjectRef<T>),
     Ancestor(ParentRefBorrow<T>),

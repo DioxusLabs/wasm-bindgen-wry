@@ -38,10 +38,12 @@ fn arithmetic() {
     assert_eq!(int(42).checked_div(&int(6)), 7);
     // Note that this doesn't throw for regular numbers, since they just give
     // `NaN` for invalid results.
-    assert!(JsValue::bigint_from_str("0")
-        .checked_div(&JsValue::bigint_from_str("0"))
-        .dyn_into::<RangeError>()
-        .is_ok());
+    assert!(
+        JsValue::bigint_from_str("0")
+            .checked_div(&JsValue::bigint_from_str("0"))
+            .dyn_into::<RangeError>()
+            .is_ok()
+    );
     assert_eq!(int(12) * int(34), 408);
     assert_eq!(int(17) % int(10), 7);
     assert_eq!(int(2).pow(&int(8)), 256)

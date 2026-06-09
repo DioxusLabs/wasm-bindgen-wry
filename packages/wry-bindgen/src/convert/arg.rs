@@ -5,7 +5,7 @@
 //! `wry_bindgen::convert::{ArgAbi, CallScoped, Anchored}` paths intact and adds
 //! the JS-handle borrow cases that require `wry-bindgen`'s `JsValue` anchors.
 
-use core::ops::{AsyncFnOnce, DerefMut};
+use core::ops::{AsyncFnOnce, Deref, DerefMut};
 
 use crate::JsValue;
 use crate::encode::BinaryDecode;
@@ -14,6 +14,15 @@ use crate::ipc::{DecodeError, DecodedData};
 pub use crate::encode::{Anchored, ArgAbi, BorrowScope, CallScoped};
 
 use super::{JsCastAnchor, OwnedArgAnchor, RefArg, RefMutArg};
+
+#[doc(hidden)]
+pub fn __wry_project_ref_async<G, R, F>(guard: G, with: F) -> impl core::future::Future<Output = R>
+where
+    G: Deref,
+    F: for<'a> AsyncFnOnce(&'a G::Target) -> R,
+{
+    async move { with(&*guard).await }
+}
 
 // ---------------------------------------------------------------------------
 // JS-handle borrows. A shared `&JsValue` is the one shape that differs by scope:

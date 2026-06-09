@@ -287,7 +287,7 @@ pub(super) fn generate_type(
             where
                 __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
             {
-                async move { with(&*guard).await }
+                #krate::convert::__wry_project_ref_async(guard, with)
             }
         }
 
@@ -312,7 +312,7 @@ pub(super) fn generate_type(
             where
                 __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
             {
-                async move { with(&*guard).await }
+                #krate::convert::__wry_project_ref_async(guard, with)
             }
         }
     };

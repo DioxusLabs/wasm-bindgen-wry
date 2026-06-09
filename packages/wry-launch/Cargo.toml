@@ -37,6 +37,7 @@ paste = "1.0.15"
 wasm-bindgen-test = { path = "../wasm-bindgen-test" }
 wasm-bindgen-test-crate-a = { path = "../wasm-bindgen/tests/crates/a" }
 wasm-bindgen-test-crate-b = { path = "../wasm-bindgen/tests/crates/b" }
+wry-launch-rust2015-extern-type = { path = "tests/rust2015-extern-type" }
 
 [[test]]
 name = "main_thread_tests"

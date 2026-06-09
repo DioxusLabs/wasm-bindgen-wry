@@ -515,7 +515,10 @@ fn trim_web_sys_features_to_published(staging_dir: &Path) -> Result<()> {
     let published_features = published_crate_features(PUBLISHED_WEB_SYS_PACKAGE)?;
     let text = fs::read_to_string(&manifest)?;
     let features = parse_features(&text, &manifest)?;
-    let local_names: BTreeSet<_> = features.iter().map(|feature| feature.name.as_str()).collect();
+    let local_names: BTreeSet<_> = features
+        .iter()
+        .map(|feature| feature.name.as_str())
+        .collect();
 
     let missing: Vec<_> = published_features
         .iter()
@@ -590,8 +593,11 @@ fn published_crate_features(package: &str) -> Result<BTreeSet<String>> {
         )));
     }
 
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|error| Error::new(format!("`cargo info {package}` emitted invalid UTF-8: {error}")))?;
+    let stdout = String::from_utf8(output.stdout).map_err(|error| {
+        Error::new(format!(
+            "`cargo info {package}` emitted invalid UTF-8: {error}"
+        ))
+    })?;
     parse_cargo_info_features(&stdout, package)
 }
 
@@ -699,7 +705,10 @@ fn retained_web_sys_features(
         .iter()
         .map(|feature| (feature.name.as_str(), feature.dependencies.as_slice()))
         .collect();
-    let local_names: BTreeSet<_> = features.iter().map(|feature| feature.name.as_str()).collect();
+    let local_names: BTreeSet<_> = features
+        .iter()
+        .map(|feature| feature.name.as_str())
+        .collect();
     let mut retained = published_features.clone();
 
     let mut changed = true;
@@ -710,7 +719,8 @@ fn retained_web_sys_features(
                 continue;
             };
             for dependency in *dependencies {
-                if local_names.contains(dependency.as_str()) && retained.insert(dependency.clone()) {
+                if local_names.contains(dependency.as_str()) && retained.insert(dependency.clone())
+                {
                     changed = true;
                 }
             }
@@ -771,7 +781,11 @@ fn remove_local_vendored_workspace_roots(staging_dir: &Path) -> Result<()> {
     for relative in ["vendored/wasm-bindgen/crates/macro-support/Cargo.toml"] {
         remove_manifest_sections(
             &staging_dir.join(relative),
-            &["workspace", "workspace.lints.rust", "workspace.lints.clippy"],
+            &[
+                "workspace",
+                "workspace.lints.rust",
+                "workspace.lints.clippy",
+            ],
         )?;
     }
     Ok(())
@@ -1009,12 +1023,14 @@ fn ensure_patch_crates_io_entry(
 ) -> Result<()> {
     let text = fs::read_to_string(path)?;
     let mut lines = Lines::from(&text);
-    let (start, end) = lines.find_section_bounds("patch.crates-io").ok_or_else(|| {
-        Error::new(format!(
-            "{} is missing a [patch.crates-io] section",
-            path.display()
-        ))
-    })?;
+    let (start, end) = lines
+        .find_section_bounds("patch.crates-io")
+        .ok_or_else(|| {
+            Error::new(format!(
+                "{} is missing a [patch.crates-io] section",
+                path.display()
+            ))
+        })?;
 
     for index in start..end {
         let line = lines.body(index).to_string();
