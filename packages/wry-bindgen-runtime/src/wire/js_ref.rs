@@ -60,13 +60,6 @@ impl JsRef {
         crate::batch::dispose_js_rust_function(self);
     }
 
-    /// Mark the JS wrapper for the Rust callback behind this reference as
-    /// unusable.
-    #[inline]
-    pub fn invalidate_js_rust_function(self) {
-        crate::batch::dispose_js_rust_function(self);
-    }
-
     #[inline]
     pub(crate) const fn from_raw(raw: u64) -> Self {
         Self(raw)

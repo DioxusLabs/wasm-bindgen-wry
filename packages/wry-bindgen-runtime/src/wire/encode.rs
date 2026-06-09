@@ -778,7 +778,7 @@ impl<T: EncodeTypeDef> EncodeTypeDef for Box<[T]> {
 /// export codegen advertises this type, decodes it, mutably borrows `buffer`,
 /// then re-encodes it after the return value.
 pub struct MutSliceArg<T> {
-    pub buffer: Vec<T>,
+ buffer: Vec<T>,
 }
 
 impl<T: EncodeTypeDef> EncodeTypeDef for MutSliceArg<T> {
@@ -796,13 +796,13 @@ impl<T: BinaryDecode> BinaryDecode for MutSliceArg<T> {
 }
 
 impl<T> MutSliceArg<T> {
-    pub fn as_mut_slice(&mut self) -> &mut [T] {
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
         self.buffer.as_mut_slice()
     }
 
     /// Append the (possibly mutated) elements to the export response so JS can
     /// copy them back into the caller's array.
-    pub fn write_back(self, encoder: &mut EncodedData)
+    pub(crate) fn write_back(self, encoder: &mut EncodedData)
     where
         T: BinaryEncode,
     {
