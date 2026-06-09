@@ -44,6 +44,7 @@ const LOCAL_CRATES: &[&str] = &[
     "wry-bindgen-macro-support",
     "wry-bindgen-runtime",
 ];
+const WRY_RUNTIME_CORE_CRATES: &[&str] = &["wry-bindgen-core", "wry-bindgen-runtime"];
 const UPSTREAM_PACKAGE_NAMES: &[&str] = &["wasm-bindgen", "not-wasm-bindgen"];
 const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
     (
@@ -115,6 +116,7 @@ fn run() -> Result<()> {
 
     let base_version = read_package_version(&upstream_manifest, Some(UPSTREAM_PACKAGE_NAMES))?;
     let version = target_version(&base_version, args.suffix.as_deref())?;
+    let local_versions = read_local_versions(&repo_root, &version, args.suffix.as_deref())?;
     let patched_upstream_versions =
         read_patched_upstream_versions(&repo_root, args.suffix.as_deref())?;
     let mut changes = Vec::new();
@@ -122,7 +124,10 @@ fn run() -> Result<()> {
     for (relative_path, crate_name) in LOCAL_MANIFESTS {
         let path = repo_root.join(relative_path);
         let current = fs::read_to_string(&path)?;
-        let updated = update_manifest_text(&path, &current, crate_name, &version)?;
+        let crate_version = dependency_version(&local_versions, crate_name)
+            .ok_or_else(|| Error::new(format!("missing local version for crate `{crate_name}`")))?;
+        let updated =
+            update_manifest_text(&path, &current, crate_name, crate_version, &local_versions)?;
         if updated != current {
             changes.push((path, updated));
         }
@@ -157,7 +162,7 @@ fn run() -> Result<()> {
 
     let lockfile = repo_root.join("Cargo.lock");
     let current_lock = fs::read_to_string(&lockfile)?;
-    let updated_lock = update_lock_text(&lockfile, &current_lock, &version)?;
+    let updated_lock = update_lock_text(&lockfile, &current_lock, &local_versions)?;
     if updated_lock != current_lock {
         changes.push((lockfile, updated_lock));
     }
@@ -217,6 +222,52 @@ fn read_patched_upstream_versions(
         versions.push((*relative_path, *crate_name, version));
     }
     Ok(versions)
+}
+
+fn read_local_versions(
+    repo_root: &Path,
+    bindgen_version: &str,
+    suffix: Option<&str>,
+) -> Result<Vec<(&'static str, String)>> {
+    let mut versions = Vec::new();
+    for crate_name in LOCAL_CRATES {
+        let version = if WRY_RUNTIME_CORE_CRATES.contains(crate_name) {
+            let relative_path = local_manifest_path(crate_name).ok_or_else(|| {
+                Error::new(format!("missing local manifest path for `{crate_name}`"))
+            })?;
+            let current =
+                read_package_version(&repo_root.join(relative_path), Some(&[*crate_name]))?;
+            target_package_version(&current, suffix)?
+        } else {
+            bindgen_version.to_string()
+        };
+        versions.push((*crate_name, version));
+    }
+    Ok(versions)
+}
+
+#[cfg(test)]
+fn local_versions(
+    bindgen_version: &str,
+    runtime_core_version: &str,
+) -> Vec<(&'static str, String)> {
+    LOCAL_CRATES
+        .iter()
+        .map(|crate_name| {
+            let version = if WRY_RUNTIME_CORE_CRATES.contains(crate_name) {
+                runtime_core_version
+            } else {
+                bindgen_version
+            };
+            (*crate_name, version.to_string())
+        })
+        .collect()
+}
+
+fn local_manifest_path(crate_name: &str) -> Option<&'static str> {
+    LOCAL_MANIFESTS
+        .iter()
+        .find_map(|(path, name)| (*name == crate_name).then_some(*path))
 }
 
 fn patched_upstream_package_names(crate_name: &str) -> &'static [&'static str] {
@@ -440,6 +491,7 @@ fn update_manifest_text(
     text: &str,
     crate_name: &str,
     target_version: &str,
+    dependency_versions: &[(&str, String)],
 ) -> Result<String> {
     let mut lines = update_package_version_lines(path, text, &[crate_name], target_version)?;
 
@@ -458,9 +510,12 @@ fn update_manifest_text(
         if inline_table_value(table_body, "version").is_none() {
             continue;
         }
+        let Some(version) = dependency_version(dependency_versions, dependency_name) else {
+            continue;
+        };
 
         let updated_table =
-            replace_inline_table_value(table_body, "version", &format!("={target_version}"));
+            replace_inline_table_value(table_body, "version", &format!("={version}"));
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
     }
 
@@ -537,7 +592,7 @@ fn update_dependency_versions_text(text: &str, dependency_versions: &[(&str, Str
     lines.into_string()
 }
 
-fn update_lock_text(path: &Path, text: &str, target_version: &str) -> Result<String> {
+fn update_lock_text(path: &Path, text: &str, local_versions: &[(&str, String)]) -> Result<String> {
     let mut lines = Lines::from(text);
     let mut found = BTreeSet::new();
     let mut index = 0;
@@ -563,7 +618,9 @@ fn update_lock_text(path: &Path, text: &str, target_version: &str) -> Result<Str
         }
 
         found.insert(name.to_string());
-        replace_package_version(&mut lines, path, start, end, name, target_version)?;
+        let version = dependency_version(local_versions, name)
+            .ok_or_else(|| Error::new(format!("missing local version for package `{name}`")))?;
+        replace_package_version(&mut lines, path, start, end, name, version)?;
     }
 
     let missing: Vec<_> = LOCAL_CRATES
@@ -918,6 +975,28 @@ mod tests {
     }
 
     #[test]
+    fn local_versions_keep_runtime_core_on_separate_version_line() {
+        let versions = local_versions("0.2.122-alpha.5", "0.2.0-alpha.5");
+
+        assert_eq!(
+            dependency_version(&versions, "wry-bindgen"),
+            Some("0.2.122-alpha.5")
+        );
+        assert_eq!(
+            dependency_version(&versions, "wasm-bindgen"),
+            Some("0.2.122-alpha.5")
+        );
+        assert_eq!(
+            dependency_version(&versions, "wry-bindgen-core"),
+            Some("0.2.0-alpha.5")
+        );
+        assert_eq!(
+            dependency_version(&versions, "wry-bindgen-runtime"),
+            Some("0.2.0-alpha.5")
+        );
+    }
+
+    #[test]
     fn manifest_update_changes_package_and_path_dependency_versions() {
         let input = r#"[package]
 name = "wry-bindgen"
@@ -927,12 +1006,55 @@ version = "0.2.106-alpha.1"
 wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.1" }
 serde = "1"
 "#;
-        let output =
-            update_manifest_text(Path::new("Cargo.toml"), input, "wry-bindgen", "0.2.122").unwrap();
+        let versions = vec![
+            ("wry-bindgen".to_string(), "0.2.122".to_string()),
+            ("wry-bindgen-macro".to_string(), "0.2.122".to_string()),
+        ];
+        let versions = versions
+            .iter()
+            .map(|(name, version)| (name.as_str(), version.clone()))
+            .collect::<Vec<_>>();
+        let output = update_manifest_text(
+            Path::new("Cargo.toml"),
+            input,
+            "wry-bindgen",
+            "0.2.122",
+            &versions,
+        )
+        .unwrap();
 
         assert!(output.contains("version = \"0.2.122\""));
         assert!(output.contains("version = \"=0.2.122\""));
         assert!(output.contains("serde = \"1\""));
+    }
+
+    #[test]
+    fn manifest_update_uses_dependency_specific_local_versions() {
+        let input = r#"[package]
+name = "wry-bindgen"
+version = "0.2.106-alpha.1"
+
+[dependencies]
+wry-bindgen-core = { path = "../wry-bindgen-core", version = "=0.1.0" }
+wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.1" }
+"#;
+        let versions = local_versions("0.2.122-alpha.5", "0.2.0-alpha.5");
+        let output = update_manifest_text(
+            Path::new("Cargo.toml"),
+            input,
+            "wry-bindgen",
+            "0.2.122-alpha.5",
+            &versions,
+        )
+        .unwrap();
+
+        assert!(output.contains("version = \"0.2.122-alpha.5\""));
+        assert!(output.contains(
+            "wry-bindgen-core = { path = \"../wry-bindgen-core\", version = \"=0.2.0-alpha.5\" }"
+        ));
+        assert!(output.contains(
+            "wry-bindgen-macro = { path = \"../wry-bindgen-macro\", version = \"=0.2.122-alpha.5\" }"
+        ));
     }
 
     #[test]
@@ -1026,9 +1148,11 @@ version = "0.2.106-alpha.1"
 name = "wry-bindgen-runtime"
 version = "0.1.0"
 "#;
-        let output = update_lock_text(Path::new("Cargo.lock"), input, "0.2.122-alpha.1").unwrap();
+        let versions = local_versions("0.2.122-alpha.1", "0.2.0-alpha.1");
+        let output = update_lock_text(Path::new("Cargo.lock"), input, &versions).unwrap();
 
         assert!(output.contains("version = \"0.2.122-alpha.1\""));
+        assert!(output.contains("version = \"0.2.0-alpha.1\""));
         assert!(
             output.contains("source = \"registry+https://github.com/rust-lang/crates.io-index\"")
         );
