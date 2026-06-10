@@ -1,7 +1,7 @@
-From af371c55e16f2d819d86af25c3df059147d83952 Mon Sep 17 00:00:00 2001
+From d369601603e74a05d4c42e9c92ba24cd4059a234 Mon Sep 17 00:00:00 2001
 From: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
 Date: Wed, 10 Jun 2026 21:39:20 +0000
-Subject: [PATCH 12/12] Revert nullable null/undefined distinction for wry
+Subject: [PATCH 10/10] Revert nullable null/undefined distinction for wry
  runtime
 
 The wry native runtime treats null and undefined identically as empty.

@@ -55,6 +55,17 @@ impl<T> LazyCell<T> {
     }
 }
 
+impl<T> core::ops::Deref for LazyCell<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        // SAFETY: LazyCell is only constructed in `static` position by generated
+        // code, so `self` is always `&'static Self`.
+        let static_self: &'static Self = unsafe { &*(self as *const Self) };
+        Self::force(static_self)
+    }
+}
+
 /// Backwards-compatible name used by generated `thread_local_v2` bindings.
 pub struct JsThreadLocal<T: 'static> {
     inner: LazyCell<T>,

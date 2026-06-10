@@ -1,7 +1,7 @@
-From b503cdccd8d14b99b570ca477ccea87e63df3c64 Mon Sep 17 00:00:00 2001
+From 73478be54897980c701c2d100c1d154543c0ae91 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Mon, 8 Jun 2026 09:54:50 -0500
-Subject: [PATCH 07/12] Exclude unsupported wry upstream test signatures
+Subject: [PATCH 06/10] Exclude unsupported wry upstream test signatures
 
 Carries the full remaining tests/wasm delta on top of the ESM
 conversion patch: signature exclusions for wry, the rest of the
