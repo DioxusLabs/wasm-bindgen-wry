@@ -1,7 +1,7 @@
 From a0e5510a1ec4b739bc6ed334bcd4ce3dc7ed060c Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 10 Jun 2026 14:04:55 -0500
-Subject: [PATCH 09/11] Point web-sys and futures at the js-sys shim
+Subject: [PATCH 09/12] Point web-sys and futures at the js-sys shim
 
 The wry sys crates re-export `pub use js_sys;` at their root (upstream
 behavior). When that re-export resolves to js-sys-wry while consumers'

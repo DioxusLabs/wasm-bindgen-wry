@@ -1,7 +1,7 @@
 From f919888b059d7fb77a73144ca1e5e08bda600d02 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Fri, 5 Jun 2026 13:00:00 -0500
-Subject: [PATCH 06/11] Adapt tests/wasm companion JS to ESM for wry-bindgen
+Subject: [PATCH 06/12] Adapt tests/wasm companion JS to ESM for wry-bindgen
 
 wry-bindgen loads `module` snippets as native ES modules, so the upstream
 CommonJS companions are rewritten in place:

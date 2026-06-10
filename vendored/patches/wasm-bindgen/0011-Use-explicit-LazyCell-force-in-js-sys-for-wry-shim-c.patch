@@ -1,7 +1,7 @@
 From f71666f95d6656949a8cfd73da855e25e74c096f Mon Sep 17 00:00:00 2001
 From: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
 Date: Wed, 10 Jun 2026 21:27:34 +0000
-Subject: [PATCH 11/11] Use explicit LazyCell::force in js-sys for wry shim
+Subject: [PATCH 11/12] Use explicit LazyCell::force in js-sys for wry shim
  compat
 
 Upstream 0.2.123 switched js-sys from LazyCell::force() to relying on

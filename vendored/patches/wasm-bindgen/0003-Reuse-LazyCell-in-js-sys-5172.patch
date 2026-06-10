@@ -1,7 +1,7 @@
 From aa7fc36a46ac680b138de438f97f18b37e3a4750 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 10 Jun 2026 10:14:27 -0500
-Subject: [PATCH 03/11] Reuse LazyCell in js-sys (#5172)
+Subject: [PATCH 03/12] Reuse LazyCell in js-sys (#5172)
 
 ---
  crates/test/src/rt/criterion/baseline.rs        | 10 ++++++----

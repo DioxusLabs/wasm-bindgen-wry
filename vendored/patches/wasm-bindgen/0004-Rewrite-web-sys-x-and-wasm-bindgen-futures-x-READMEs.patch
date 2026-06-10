@@ -1,7 +1,7 @@
 From e7e1e66b212e1ea63fdadcf92dfe03e23eeb13e7 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 27 May 2026 15:41:47 -0500
-Subject: [PATCH 04/11] Rewrite web-sys-x and wasm-bindgen-futures-x READMEs
+Subject: [PATCH 04/12] Rewrite web-sys-x and wasm-bindgen-futures-x READMEs
 
 ---
  crates/futures/README.md | 103 +++++++++++++++++++++++++++++++++++
