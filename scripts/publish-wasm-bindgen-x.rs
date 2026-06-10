@@ -204,7 +204,7 @@ fn run() -> Result<()> {
 
     prepare_staging(&repo_root, &staging_dir)?;
 
-    let publish_crates = selected_publish_crates(&args)?;
+    let publish_crates = selected_publish_crates(&args, &staging_dir)?;
     println!("prepared publish staging tree: {}", staging_dir.display());
     println!("renamed crates.io packages:");
     for krate in RENAMED_CRATES {
@@ -361,7 +361,7 @@ fn repo_root_from_source_env() -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn selected_publish_crates(args: &Args) -> Result<Vec<PublishCrate>> {
+fn selected_publish_crates(args: &Args, staging_dir: &Path) -> Result<Vec<PublishCrate>> {
     let all = publish_crates();
     if args.packages.is_empty() {
         return Ok(all);
@@ -399,7 +399,7 @@ fn selected_publish_crates(args: &Args) -> Result<Vec<PublishCrate>> {
         )));
     }
 
-    Ok(selected)
+    include_publish_dependencies(staging_dir, &selected)
 }
 
 fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
@@ -487,6 +487,86 @@ fn publish_crates() -> Vec<PublishCrate> {
             publish_name: "wasm-bindgen-futures-x",
         },
     ]
+}
+
+fn include_publish_dependencies(
+    staging_dir: &Path,
+    selected: &[PublishCrate],
+) -> Result<Vec<PublishCrate>> {
+    let all = publish_crates();
+    let mut included: BTreeSet<&'static str> =
+        selected.iter().map(|krate| krate.manifest).collect();
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let current = included.clone();
+
+        for krate in all.iter().filter(|krate| current.contains(krate.manifest)) {
+            for dependency in publish_dependencies(&staging_dir.join(krate.manifest))? {
+                let Some(dependency_crate) = all
+                    .iter()
+                    .find(|candidate| candidate.publish_name == dependency)
+                else {
+                    continue;
+                };
+                if included.insert(dependency_crate.manifest) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    Ok(all
+        .into_iter()
+        .filter(|krate| included.contains(krate.manifest))
+        .collect())
+}
+
+fn publish_dependencies(path: &Path) -> Result<BTreeSet<String>> {
+    let text = fs::read_to_string(path)?;
+    let lines = Lines::from(&text);
+    let publish_names: BTreeSet<_> = publish_crates()
+        .into_iter()
+        .map(|krate| krate.publish_name)
+        .collect();
+    let mut dependencies = BTreeSet::new();
+    let mut current_section = None;
+
+    for index in 0..lines.len() {
+        if let Some(section) = section_name(lines.body(index)) {
+            current_section = Some(section.to_string());
+            continue;
+        }
+
+        if !current_section
+            .as_deref()
+            .is_some_and(is_publish_dependency_section)
+        {
+            continue;
+        }
+
+        let Some((_, key, table_body, _)) = split_inline_table(lines.body(index)) else {
+            continue;
+        };
+        let package = inline_table_value(table_body, "package").unwrap_or(key);
+        if publish_names.contains(package) {
+            dependencies.insert(package.to_string());
+        }
+    }
+
+    Ok(dependencies)
+}
+
+fn is_publish_dependency_section(section: &str) -> bool {
+    if section == "dev-dependencies" || section.ends_with(".dev-dependencies") {
+        return false;
+    }
+
+    section == "dependencies"
+        || section == "build-dependencies"
+        || section.ends_with(".dependencies")
+        || section.ends_with(".build-dependencies")
 }
 
 fn prepare_staging(repo_root: &Path, staging_dir: &Path) -> Result<()> {
@@ -802,7 +882,7 @@ fn shim_feature_dependencies(feature: &Feature, upstream_dep: &str, wry_dep: &st
 
 fn published_crate_features(package: &str) -> Result<BTreeSet<String>> {
     let output = Command::new("cargo")
-        .args(["info", package, "--verbose", "--color", "never"])
+        .args(cargo_info_registry_args(package, true))
         .output()
         .map_err(|error| Error::new(format!("failed to run `cargo info {package}`: {error}")))?;
     if !output.status.success() {
@@ -1471,8 +1551,9 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
 }
 
 fn published_crate_version_exists(package: &str, version: &str) -> Result<bool> {
+    let package_spec = format!("{package}@{version}");
     let output = Command::new("cargo")
-        .args(["info", &format!("{package}@{version}"), "--color", "never"])
+        .args(cargo_info_registry_args(&package_spec, false))
         .output()
         .map_err(|error| {
             Error::new(format!(
@@ -1480,6 +1561,15 @@ fn published_crate_version_exists(package: &str, version: &str) -> Result<bool> 
             ))
         })?;
     Ok(output.status.success())
+}
+
+fn cargo_info_registry_args(package: &str, verbose: bool) -> Vec<&str> {
+    let mut args = vec!["info", "--registry", "crates-io", package];
+    if verbose {
+        args.push("--verbose");
+    }
+    args.extend(["--color", "never"]);
+    args
 }
 
 fn run_workspace_dry_run(
@@ -2153,5 +2243,124 @@ web-sys = { path = \"vendored/wasm-bindgen/crates/web-sys\", package = \"web-sys
         let _ = fs::remove_file(&path);
         assert!(output.contains(r#"package = "web-sys-x""#));
         assert!(!output.contains(r#"package = "web-sys""#));
+    }
+
+    #[test]
+    fn selected_package_includes_publish_dependency_closure() {
+        let staging_dir = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-dependency-closure-test-{}",
+            process::id()
+        ));
+
+        write_test_manifest(
+            &staging_dir.join("packages/wasm-bindgen-macro/Cargo.toml"),
+            "\
+[package]
+name = \"wasm-bindgen-macro-x\"
+
+[dependencies]
+wry-bindgen-macro-support = { path = \"../wry-bindgen-macro-support\", version = \"=0.2.122-alpha.8\" }
+",
+        );
+        write_test_manifest(
+            &staging_dir.join("packages/wry-bindgen-macro-support/Cargo.toml"),
+            "\
+[package]
+name = \"wry-bindgen-macro-support\"
+
+[dependencies]
+wasm-bindgen-macro-support = { path = \"../../vendored/wasm-bindgen/crates/macro-support\", version = \"=0.2.122-alpha.8\", package = \"wasm-bindgen-macro-support-x\" }
+",
+        );
+        write_test_manifest(
+            &staging_dir.join("vendored/wasm-bindgen/crates/macro-support/Cargo.toml"),
+            "\
+[package]
+name = \"wasm-bindgen-macro-support-x\"
+
+[dependencies]
+wasm-bindgen-shared = { path = \"../shared\", version = \"=0.2.122-alpha.8\", package = \"wasm-bindgen-shared-x\" }
+",
+        );
+        write_test_manifest(
+            &staging_dir.join("vendored/wasm-bindgen/crates/shared/Cargo.toml"),
+            "\
+[package]
+name = \"wasm-bindgen-shared-x\"
+",
+        );
+
+        let selected = [PublishCrate {
+            manifest: "packages/wasm-bindgen-macro/Cargo.toml",
+            publish_name: "wasm-bindgen-macro-x",
+        }];
+        let packages = include_publish_dependencies(&staging_dir, &selected).unwrap();
+        let package_names = packages
+            .iter()
+            .map(|krate| krate.publish_name)
+            .collect::<Vec<_>>();
+
+        let _ = fs::remove_dir_all(&staging_dir);
+        assert_eq!(
+            package_names,
+            vec![
+                "wasm-bindgen-shared-x",
+                "wasm-bindgen-macro-support-x",
+                "wry-bindgen-macro-support",
+                "wasm-bindgen-macro-x",
+            ]
+        );
+    }
+
+    #[test]
+    fn publish_dependencies_ignore_dev_dependencies() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-dev-dependency-ignore-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"example\"
+
+[dev-dependencies]
+wasm-bindgen = { path = \"../wasm-bindgen\", version = \"=0.2.122-alpha.8\", package = \"wasm-bindgen-x\" }
+";
+        fs::write(&path, input).unwrap();
+
+        let dependencies = publish_dependencies(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(dependencies.is_empty());
+    }
+
+    #[test]
+    fn cargo_info_checks_use_crates_io_registry() {
+        assert_eq!(
+            cargo_info_registry_args("wry-bindgen@0.2.122-alpha.8", false),
+            vec![
+                "info",
+                "--registry",
+                "crates-io",
+                "wry-bindgen@0.2.122-alpha.8",
+                "--color",
+                "never",
+            ]
+        );
+        assert_eq!(
+            cargo_info_registry_args("web-sys-x", true),
+            vec![
+                "info",
+                "--registry",
+                "crates-io",
+                "web-sys-x",
+                "--verbose",
+                "--color",
+                "never",
+            ]
+        );
+    }
+
+    fn write_test_manifest(path: &Path, text: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
     }
 }
