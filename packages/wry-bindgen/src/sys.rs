@@ -135,7 +135,7 @@ impl<T: JsGeneric> JsOption<T> {
 
     #[inline]
     pub fn is_empty(&self) -> bool {
-        AsRef::<JsValue>::as_ref(self).is_null_or_undefined()
+        AsRef::<JsValue>::as_ref(self).is_undefined()
     }
 
     #[inline]
@@ -197,7 +197,7 @@ impl<T: JsGeneric + fmt::Debug> fmt::Debug for JsOption<T> {
         write!(f, "{}?(", core::any::type_name::<T>())?;
         match self.as_option() {
             Some(value) => write!(f, "{value:?}")?,
-            None => f.write_str("null")?,
+            None => f.write_str("undefined")?,
         }
         f.write_str(")")
     }
@@ -208,7 +208,7 @@ impl<T: JsGeneric + fmt::Display> fmt::Display for JsOption<T> {
         write!(f, "{}?(", core::any::type_name::<T>())?;
         match self.as_option() {
             Some(value) => write!(f, "{value}")?,
-            None => f.write_str("null")?,
+            None => f.write_str("undefined")?,
         }
         f.write_str(")")
     }

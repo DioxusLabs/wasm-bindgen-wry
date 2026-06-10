@@ -1,7 +1,7 @@
 From 8e7e136bfaee01df6bf6b5166ee8b1f1b051e23e Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 10 Jun 2026 14:12:17 -0500
-Subject: [PATCH 09/10] Point wasm-bindgen-test at the shim sys crates
+Subject: [PATCH 9/9] Point wasm-bindgen-test at the shim sys crates
 
 wasm-bindgen-test was the last vendored crate depending on the -wry sys
 crates by name. Routing js-sys, wasm-bindgen-futures, and the web-sys

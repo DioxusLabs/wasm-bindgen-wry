@@ -1,7 +1,7 @@
 From 785d3bbc8163d31812b32781ee588668908cff30 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Fri, 29 May 2026 10:56:07 -0500
-Subject: [PATCH 01/10] Prepare root workspace for wry patching
+Subject: [PATCH 1/9] Prepare root workspace for wry patching
 
 ---
  Cargo.toml              | 85 +++++++++--------------------------------

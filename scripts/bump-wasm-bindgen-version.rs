@@ -593,8 +593,14 @@ fn update_manifest_text(
             continue;
         };
 
-        let updated_table =
-            replace_inline_table_value(table_body, "version", &format!("={version}"));
+        // WRY_RUNTIME_CORE_CRATES versions are independent of the wasm-bindgen
+        // release and should not be exact-pinned.
+        let version_str = if WRY_RUNTIME_CORE_CRATES.contains(&dependency_name) {
+            version.to_string()
+        } else {
+            format!("={version}")
+        };
+        let updated_table = replace_inline_table_value(table_body, "version", &version_str);
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
     }
 
@@ -1168,7 +1174,7 @@ wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.106-alpha.1
 
         assert!(output.contains("version = \"0.2.122-alpha.5\""));
         assert!(output.contains(
-            "wry-bindgen-core = { path = \"../wry-bindgen-core\", version = \"=0.2.0-alpha.5\" }"
+            "wry-bindgen-core = { path = \"../wry-bindgen-core\", version = \"0.2.0-alpha.5\" }"
         ));
         assert!(output.contains(
             "wry-bindgen-macro = { path = \"../wry-bindgen-macro\", version = \"=0.2.122-alpha.5\" }"

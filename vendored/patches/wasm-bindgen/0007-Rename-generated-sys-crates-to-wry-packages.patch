@@ -1,7 +1,7 @@
 From a53975f1c59abbe1c7c43a7536ac8c07409f0659 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 10 Jun 2026 00:00:00 -0500
-Subject: [PATCH 07/10] Rename generated sys crates to wry packages
+Subject: [PATCH 7/9] Rename generated sys crates to wry packages
 
 ---
  crates/futures/Cargo.toml          | 7 +++++--

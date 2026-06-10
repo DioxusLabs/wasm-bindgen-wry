@@ -62,9 +62,9 @@ fn test_from_option_none() {
 
 #[wasm_bindgen_test]
 fn test_is_empty_null() {
-    // wry runtime: null and undefined are both treated as empty.
+    // Strict semantics: `null` is a present value, not empty.
     let val = return_null();
-    assert!(val.is_empty());
+    assert!(!val.is_empty());
 }
 
 #[wasm_bindgen_test]
@@ -162,9 +162,9 @@ fn test_unwrap_or_else() {
 
 #[wasm_bindgen_test]
 fn test_import_null() {
-    // wry runtime: null and undefined are both treated as empty.
+    // Strict semantics: JS `null` is a present value, not empty.
     let val = return_null();
-    assert!(val.is_empty());
+    assert!(!val.is_empty());
 }
 
 #[wasm_bindgen_test]
@@ -237,7 +237,7 @@ fn test_debug_null() {
     let val: JsOption<Number> = JsOption::new();
     let debug_str = format!("{:?}", val);
     assert!(debug_str.contains("Number"));
-    assert!(debug_str.contains("null"));
+    assert!(debug_str.contains("undefined"));
 }
 
 #[wasm_bindgen_test]

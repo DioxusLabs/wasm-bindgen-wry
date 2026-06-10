@@ -1,7 +1,7 @@
 From a597b2043b37660974d3551d168f7260769c3d48 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Sat, 6 Jun 2026 12:00:00 -0500
-Subject: [PATCH 04/10] Expose macro-support parser api
+Subject: [PATCH 4/9] Expose macro-support parser api
 
 ---
  crates/macro-support/Cargo.toml    |  23 ++-
