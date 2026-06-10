@@ -63,7 +63,7 @@ jobs:
         with:
           toolchain: "1.88"
           components: rustfmt
-      - run: ./scripts/cargo-fmt-workspace.sh -- --check
+      - run: cargo fmt --all -- --check
 
   check:
     if: github.event.pull_request.draft == false
@@ -98,7 +98,14 @@ jobs:
           cache-all-crates: "true"
       # The wasm-bindgen shim must still compile for the browser target, where it
       # delegates to the real upstream wasm-bindgen instead of wry-bindgen.
-      - run: cargo check --manifest-path packages/wasm-bindgen/Cargo.toml --target wasm32-unknown-unknown --all-features
+      - run: cargo check --manifest-path packages/wasm-bindgen/Cargo.toml --target wasm32-unknown-unknown
+      # The vendored patched crates must also compile for plain wasm32, where
+      # they build against upstream's runtime API instead of the wry backend.
+      - run: |
+          cargo check --manifest-path vendored/wasm-bindgen/crates/js-sys/Cargo.toml --target wasm32-unknown-unknown
+          cargo check --manifest-path vendored/wasm-bindgen/crates/futures/Cargo.toml --target wasm32-unknown-unknown
+          cargo check --manifest-path vendored/wasm-bindgen/crates/web-sys/Cargo.toml --features console,Window --target wasm32-unknown-unknown
+          cargo check --manifest-path vendored/wasm-bindgen/crates/test/Cargo.toml --target wasm32-unknown-unknown
 
   clippy:
     if: github.event.pull_request.draft == false

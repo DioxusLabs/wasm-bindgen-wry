@@ -16,9 +16,7 @@ static SEED_RAND: LazyCell<RefCell<Rand64>> = LazyCell::new(|| {
 });
 
 pub fn new_rng() -> Rng {
-    SEED_RAND.with(|seed_rand| {
-        let mut r = seed_rand.borrow_mut();
-        let seed = ((r.rand_u64() as u128) << 64) | (r.rand_u64() as u128);
-        Rand64::new(seed)
-    })
+    let mut r = LazyCell::force(&SEED_RAND).borrow_mut();
+    let seed = ((r.rand_u64() as u128) << 64) | (r.rand_u64() as u128);
+    Rand64::new(seed)
 }

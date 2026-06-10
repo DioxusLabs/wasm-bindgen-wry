@@ -1,3 +1,9 @@
+From 0000000000000000000000000000000000000005 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Sat, 6 Jun 2026 12:00:00 -0500
+Subject: [PATCH] Expose macro-support parser api
+
+---
 diff --git a/crates/macro-support/Cargo.toml b/crates/macro-support/Cargo.toml
 index e3f968019..bea458827 100644
 --- a/crates/macro-support/Cargo.toml

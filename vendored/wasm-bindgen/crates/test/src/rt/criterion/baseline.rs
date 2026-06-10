@@ -26,12 +26,14 @@ pub(crate) struct BenchmarkBaseline {
 
 /// Write the corresponding benchmark ID and corresponding data into the table.
 pub(crate) fn write(id: &str, baseline: BenchmarkBaseline) {
-    BASELINE.with(|baselines| baselines.borrow_mut().insert(id.into(), baseline));
+    LazyCell::force(&BASELINE)
+        .borrow_mut()
+        .insert(id.into(), baseline);
 }
 
 /// Read the data corresponding to the benchmark ID from the table.
 pub(crate) fn read(id: &str) -> Option<BenchmarkBaseline> {
-    BASELINE.with(|baselines| baselines.borrow().get(id).cloned())
+    LazyCell::force(&BASELINE).borrow().get(id).cloned()
 }
 
 /// Used to write previous benchmark data before the benchmark, for later comparison.
@@ -39,7 +41,7 @@ pub(crate) fn read(id: &str) -> Option<BenchmarkBaseline> {
 pub fn __wbgbench_import(baseline: Vec<u8>) {
     match serde_json::from_slice(&baseline) {
         Ok(prev) => {
-            BASELINE.with(|baselines| *baselines.borrow_mut() = prev);
+            *LazyCell::force(&BASELINE).borrow_mut() = prev;
         }
         Err(e) => {
             console_log!("Failed to import previous benchmark {e:?}");
@@ -50,11 +52,9 @@ pub fn __wbgbench_import(baseline: Vec<u8>) {
 /// Used to read benchmark data, and then the runner stores it on the local disk.
 #[wasm_bindgen]
 pub fn __wbgbench_dump() -> Option<Vec<u8>> {
-    BASELINE.with(|baseline| {
-        let baseline = baseline.borrow();
-        if baseline.is_empty() {
-            return None;
-        }
-        serde_json::to_vec(&*baseline).ok()
-    })
+    let baseline = LazyCell::force(&BASELINE).borrow();
+    if baseline.is_empty() {
+        return None;
+    }
+    serde_json::to_vec(&*baseline).ok()
 }
