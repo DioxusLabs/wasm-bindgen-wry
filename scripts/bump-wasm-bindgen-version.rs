@@ -69,11 +69,11 @@ const SYS_SHIM_MANIFESTS: &[(&str, &str, &str)] = &[
 ];
 const SYS_LOCK_PACKAGES: &[(&str, &str)] = &[
     ("js-sys-wry", "js-sys"),
-    ("js-sys-x", "js-sys"),
+    ("js-sys", "js-sys"),
     ("web-sys-wry", "web-sys"),
-    ("web-sys-x", "web-sys"),
+    ("web-sys", "web-sys"),
     ("wasm-bindgen-futures-wry", "wasm-bindgen-futures"),
-    ("wasm-bindgen-futures-x", "wasm-bindgen-futures"),
+    ("wasm-bindgen-futures", "wasm-bindgen-futures"),
 ];
 const WASM_BINDGEN_MACRO_SUPPORT_PACKAGE_NAMES: &[&str] =
     &["wasm-bindgen-macro-support", "wasm-bindgen-macro-support-x"];
@@ -176,12 +176,22 @@ fn run() -> Result<()> {
                 ))
             })?;
         let current = fs::read_to_string(&path)?;
+        let dependency_versions = local_versions
+            .iter()
+            .map(|(name, version)| (*name, version.clone()))
+            .chain(
+                patched_upstream_versions
+                    .iter()
+                    .map(|(_, name, version)| (*name, version.clone())),
+            )
+            .collect::<Vec<_>>();
         let updated = update_sys_shim_manifest_text(
             &path,
             &current,
             patched_upstream_package_names(crate_name),
             wry_package_name,
             version,
+            &dependency_versions,
         )?;
         if updated != current {
             changes.push((path, updated));
@@ -190,7 +200,11 @@ fn run() -> Result<()> {
 
     for relative_path in PINNED_UPSTREAM_DEPENDENCY_MANIFESTS {
         let path = repo_root.join(relative_path);
-        let current = fs::read_to_string(&path)?;
+        let current = changes
+            .iter()
+            .rev()
+            .find_map(|(changed_path, updated)| (changed_path == &path).then_some(updated.clone()))
+            .unwrap_or_else(|| fs::read_to_string(&path).expect("manifest was already readable"));
         let dependency_versions = patched_upstream_versions
             .iter()
             .flat_map(|(_, crate_name, version)| {
@@ -593,23 +607,32 @@ fn update_sys_shim_manifest_text(
     expected_names: &[&str],
     wry_package_name: &str,
     target_version: &str,
+    dependency_versions: &[(&str, String)],
 ) -> Result<String> {
     let mut lines = update_package_version_lines(path, text, expected_names, target_version)?;
 
     for index in 0..lines.len() {
         let line = lines.body(index).to_string();
-        let Some((prefix, _key, table_body, suffix)) = split_inline_table(&line) else {
+        let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
             continue;
         };
-        if inline_table_value(table_body, "package") != Some(wry_package_name) {
-            continue;
-        }
         if inline_table_value(table_body, "version").is_none() {
             continue;
         }
 
-        let updated_table =
-            replace_inline_table_value(table_body, "version", &format!("={target_version}"));
+        let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
+        let version = if dependency_name == wry_package_name {
+            Some(target_version)
+        } else if inline_table_value(table_body, "path").is_some() {
+            dependency_version(dependency_versions, dependency_name)
+        } else {
+            None
+        };
+        let Some(version) = version else {
+            continue;
+        };
+
+        let updated_table = replace_inline_table_value(table_body, "version", &format!("={version}"));
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
     }
 

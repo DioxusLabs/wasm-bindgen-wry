@@ -19,6 +19,7 @@ const MARKER_FILE: &str = ".publish-wasm-bindgen-x-staging";
 const WEB_SYS_MANIFEST: &str = "vendored/wasm-bindgen/crates/web-sys/Cargo.toml";
 const PUBLISHED_WEB_SYS_PACKAGE: &str = "web-sys-x";
 const CRATES_IO_FEATURE_LIMIT: usize = 300;
+const WEB_SYS_SHIM_FEATURES: &[&str] = &["unstable_force_wry_backend"];
 
 const COPY_ENTRIES: &[&str] = &[
     "Cargo.toml",
@@ -564,6 +565,7 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
         let shim_manifest = staging_dir.join(krate.source_manifest());
         rename_package(&shim_manifest, krate.source_name, krate.shim_publish_name)?;
         rewrite_sys_shim_upstream_dependency(&shim_manifest, krate.source_name)?;
+        rewrite_path_dependency_packages(&shim_manifest, &versions)?;
     }
 
     for krate in publish_crates().into_iter().filter(|krate| {
@@ -918,6 +920,9 @@ fn retained_web_sys_features(
         .map(|feature| feature.name.as_str())
         .collect();
     let mut retained = published_features.clone();
+    for feature in WEB_SYS_SHIM_FEATURES {
+        retained.insert((*feature).to_string());
+    }
 
     let mut changed = true;
     while changed {
@@ -1213,7 +1218,16 @@ fn rewrite_dependency_packages(
             if inline_table_value(table_body, "path").is_some()
                 && renamed_package_name(dependency_name).is_some()
             {
-                let updated_table = remove_inline_table_value(table_body, "path");
+                let mut updated_table = remove_inline_table_value(table_body, "path");
+                if let Some(version) = inline_table_value(&updated_table, "version") {
+                    let version = version.trim_start_matches('=');
+                    let stable_version = version.split_once('-').map_or(version, |(base, _)| base);
+                    updated_table = replace_inline_table_value(
+                        &updated_table,
+                        "version",
+                        &format!("={stable_version}"),
+                    );
+                }
                 lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
                 changed = true;
             }
@@ -1254,6 +1268,41 @@ fn rewrite_dependency_packages(
             updated_table =
                 upsert_inline_table_value(&updated_table, "version", &format!("={version}"));
         }
+        lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+        changed = true;
+    }
+
+    if changed {
+        fs::write(path, lines.into_string())?;
+    }
+    Ok(())
+}
+
+fn rewrite_path_dependency_packages(path: &Path, versions: &BTreeMap<String, String>) -> Result<()> {
+    let text = fs::read_to_string(path)?;
+    let mut lines = Lines::from(&text);
+    let mut changed = false;
+
+    for index in 0..lines.len() {
+        let line = lines.body(index).to_string();
+        let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
+            continue;
+        };
+        if inline_table_value(table_body, "path").is_none() {
+            continue;
+        }
+
+        let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
+        let Some(publish_name) = renamed_package_name(dependency_name) else {
+            continue;
+        };
+
+        let version = versions
+            .get(publish_name)
+            .ok_or_else(|| Error::new(format!("missing package version for `{publish_name}`")))?;
+        let mut updated_table = upsert_inline_table_value(table_body, "package", publish_name);
+        updated_table =
+            upsert_inline_table_value(&updated_table, "version", &format!("={version}"));
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
         changed = true;
     }
