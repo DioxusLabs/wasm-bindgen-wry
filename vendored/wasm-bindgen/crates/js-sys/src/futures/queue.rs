@@ -118,22 +118,6 @@ impl Queue {
         #[cfg_attr(target_feature = "atomics", thread_local)]
         static QUEUE: LazyCell<Queue> = LazyCell::new(Queue::new);
 
-        #[cfg(target_arch = "wasm32")]
-        fn with_queue<R>(
-            queue: &'static LazyCell<Queue>,
-            f: impl FnOnce(&Queue) -> R,
-        ) -> R {
-            f(LazyCell::force(queue))
-        }
-
-        #[cfg(not(target_arch = "wasm32"))]
-        fn with_queue<R>(
-            queue: &'static LazyCell<Queue>,
-            f: impl FnOnce(&Queue) -> R,
-        ) -> R {
-            queue.with(f)
-        }
-
-        with_queue(&QUEUE, f)
+        f(LazyCell::force(&QUEUE))
     }
 }

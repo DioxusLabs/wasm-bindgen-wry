@@ -1,7 +1,6 @@
 //! Lazily-initialized, cached runtime-local JavaScript values.
 
 use alloc::boxed::Box;
-use core::mem::ManuallyDrop;
 
 use crate::runtime::with_backend;
 
@@ -34,11 +33,8 @@ impl<T> LazyCell<T> {
         Self { init }
     }
 
-    /// Run a closure with access to the cached value.
-    pub fn with<F, R>(&'static self, f: F) -> R
-    where
-        F: FnOnce(&T) -> R,
-    {
+    /// Return the cached value, initializing it if needed.
+    pub fn force(&'static self) -> &'static T {
         let init = self.init;
         // Take the value out of the runtime, initializing it if it isn't there
         // yet. We initialize outside the runtime borrow because init() may
@@ -48,22 +44,36 @@ impl<T> LazyCell<T> {
         // 1. The destructor only has an effect when the webview still exists and it should now be gone
         // 2. It would rely on the thread local being dropped before the runtime is dropped, which relies on the drop order of
         // different thread locals
-        let value: ManuallyDrop<T> =
-            match with_backend(|runtime| runtime.take_thread_local_box(self)) {
-                Some(value) => *value.downcast::<ManuallyDrop<T>>().expect("type mismatch"),
-                None => ManuallyDrop::new(init()),
-            };
-        // We can't hold the runtime borrow while calling f, so we have to
-        // move the value out temporarily and put it back afterwards. The f
-        // closure could re-enter the runtime to access other thread locals.
-        let result = f(&value);
-        // Put it back
+        let value = match with_backend(|runtime| runtime.take_thread_local_box(self)) {
+            Some(value) => *value.downcast::<&'static T>().expect("type mismatch"),
+            None => Box::leak(Box::new(init())) as &'static T,
+        };
         with_backend(|runtime| {
             runtime.insert_thread_local_box(self, Box::new(value));
         });
-        result
+        value
     }
 }
 
 /// Backwards-compatible name used by generated `thread_local_v2` bindings.
-pub type JsThreadLocal<T> = LazyCell<T>;
+pub struct JsThreadLocal<T: 'static> {
+    inner: LazyCell<T>,
+}
+
+impl<T> JsThreadLocal<T> {
+    /// Create a new `JsThreadLocal`.
+    #[doc(hidden)]
+    pub const fn new(init: fn() -> T) -> Self {
+        Self {
+            inner: LazyCell::new(init),
+        }
+    }
+
+    /// Run a closure with access to the cached value.
+    pub fn with<F, R>(&'static self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R,
+    {
+        f(LazyCell::force(&self.inner))
+    }
+}
