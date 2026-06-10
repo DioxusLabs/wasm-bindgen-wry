@@ -560,6 +560,11 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
         ensure_package_is(&manifest, krate.wry_publish_name)?;
         ensure_lib_name(&manifest, krate.lib_name)?;
         rewrite_wry_sys_dependency_packages(&manifest, &versions)?;
+
+        rewrite_sys_shim_upstream_dependency(
+            &staging_dir.join(krate.source_manifest()),
+            krate.source_name,
+        )?;
     }
 
     for krate in publish_crates().into_iter().filter(|krate| {
@@ -712,6 +717,52 @@ fn rewrite_wry_sys_dependency_packages(
             Error::new(format!("missing package version for `{publish_name}`"))
         })?;
         updated_table = upsert_inline_table_value(&updated_table, "version", &format!("={version}"));
+        lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+        changed = true;
+    }
+
+    if changed {
+        fs::write(path, lines.into_string())?;
+    }
+    Ok(())
+}
+
+fn rewrite_sys_shim_upstream_dependency(path: &Path, source_name: &str) -> Result<()> {
+    let package_version = read_package_version(path)?;
+    let upstream_version = package_version
+        .split_once('-')
+        .map_or(package_version.as_str(), |(base, _)| base);
+    let text = fs::read_to_string(path)?;
+    let mut lines = Lines::from(&text);
+    let mut changed = false;
+    let mut current_section = None;
+
+    for index in 0..lines.len() {
+        if let Some(section) = section_name(lines.body(index)) {
+            current_section = Some(section.to_string());
+            continue;
+        }
+
+        let in_wasm_dependencies = current_section
+            .as_deref()
+            .is_some_and(|section| section.ends_with(r#"cfg(target_arch = "wasm32")'.dependencies"#));
+        if !in_wasm_dependencies {
+            continue;
+        }
+
+        let line = lines.body(index).to_string();
+        let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
+            continue;
+        };
+        let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
+        if dependency_name != source_name || inline_table_value(table_body, "git").is_none() {
+            continue;
+        }
+
+        let updated_table = remove_inline_table_value(table_body, "git");
+        let updated_table = remove_inline_table_value(&updated_table, "tag");
+        let updated_table =
+            upsert_inline_table_value(&updated_table, "version", &format!("={upstream_version}"));
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
         changed = true;
     }
