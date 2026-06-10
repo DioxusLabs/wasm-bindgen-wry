@@ -20,7 +20,6 @@ const WEB_SYS_MANIFEST: &str = "vendored/wasm-bindgen/crates/web-sys/Cargo.toml"
 const PUBLISHED_WEB_SYS_PACKAGE: &str = "web-sys-x";
 const CRATES_IO_FEATURE_LIMIT: usize = 300;
 const WEB_SYS_SHIM_FEATURES: &[&str] = &["unstable_force_wry_backend"];
-
 const COPY_ENTRIES: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
@@ -45,6 +44,12 @@ const COPY_ENTRIES: &[&str] = &[
 ];
 
 const RENAMED_CRATES: &[RenamedCrate] = &[
+    RenamedCrate {
+        manifest: "vendored/wasm-bindgen/crates/shared/Cargo.toml",
+        source_name: "wasm-bindgen-shared",
+        publish_name: "wasm-bindgen-shared-x",
+        lib_name: "wasm_bindgen_shared",
+    },
     RenamedCrate {
         manifest: "packages/wasm-bindgen/Cargo.toml",
         source_name: "wasm-bindgen",
@@ -421,6 +426,10 @@ fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
 
 fn publish_crates() -> Vec<PublishCrate> {
     vec![
+        PublishCrate {
+            manifest: "vendored/wasm-bindgen/crates/shared/Cargo.toml",
+            publish_name: "wasm-bindgen-shared-x",
+        },
         PublishCrate {
             manifest: "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
             publish_name: "wasm-bindgen-macro-support-x",
@@ -992,7 +1001,10 @@ fn merge_vendored_workspace_lints(staging_dir: &Path) -> Result<()> {
 }
 
 fn remove_local_vendored_workspace_roots(staging_dir: &Path) -> Result<()> {
-    for relative in ["vendored/wasm-bindgen/crates/macro-support/Cargo.toml"] {
+    for relative in [
+        "vendored/wasm-bindgen/crates/shared/Cargo.toml",
+        "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
+    ] {
         remove_manifest_sections(
             &staging_dir.join(relative),
             &[
@@ -1062,12 +1074,12 @@ fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
             "    \"packages/js-sys-x\",",
             "    \"packages/web-sys-x\",",
             "    \"packages/wasm-bindgen-futures-x\",",
+            "    \"vendored/wasm-bindgen/crates/shared\",",
             "    \"vendored/wasm-bindgen/crates/macro-support\",",
             "    \"vendored/wasm-bindgen/crates/js-sys\",",
             "    \"vendored/wasm-bindgen/crates/web-sys\",",
             "    \"vendored/wasm-bindgen/crates/futures\",",
             "]",
-            "exclude = [\"vendored/wasm-bindgen/crates/shared\"]",
             "resolver = \"2\"",
         ],
     );
@@ -1927,6 +1939,32 @@ web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=
     }
 
     #[test]
+    fn rewrite_dependency_packages_renames_wasm_bindgen_shared() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-shared-dep-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"wasm-bindgen-macro-support-x\"
+version = \"0.2.122-alpha.7\"
+
+[dependencies]
+wasm-bindgen-shared = { path = \"../shared\", version = \"=0.2.122\" }
+";
+        fs::write(&path, input).unwrap();
+
+        let mut versions = BTreeMap::new();
+        versions.insert("wasm-bindgen-shared-x".to_string(), "0.2.122".to_string());
+        rewrite_dependency_packages(&path, &versions, true).unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains("package = \"wasm-bindgen-shared-x\""));
+        assert!(output.contains("version = \"=0.2.122\""));
+    }
+
+    #[test]
     fn ensure_lib_name_inserts_name_in_existing_lib_section() {
         let input = "[package]\nname = \"js-sys-x\"\n\n[lib]\ntest = false\n";
         let mut lines = Lines::from(input);
@@ -1939,6 +1977,10 @@ web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=
 
     #[test]
     fn renamed_package_map_contains_expected_crates() {
+        assert_eq!(
+            renamed_package_name("wasm-bindgen-shared"),
+            Some("wasm-bindgen-shared-x")
+        );
         assert_eq!(renamed_package_name("wasm-bindgen"), Some("wasm-bindgen-x"));
         assert_eq!(
             renamed_package_name("wasm-bindgen-macro-support"),
