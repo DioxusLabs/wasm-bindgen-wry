@@ -1,7 +1,7 @@
-From 5fcc4a72bed97930cf2fe5f0b971e5d7f2b45c30 Mon Sep 17 00:00:00 2001
+From ccbc949f6728c65845f5f2c4ee254591f7cdeb3f Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 10 Jun 2026 14:12:17 -0500
-Subject: [PATCH] Point wasm-bindgen-test at the shim sys crates
+Subject: [PATCH 10/10] Point wasm-bindgen-test at the shim sys crates
 
 wasm-bindgen-test was the last vendored crate depending on the -wry sys
 crates by name. Routing js-sys, wasm-bindgen-futures, and the web-sys
@@ -14,20 +14,20 @@ the wry backend.
  1 file changed, 3 insertions(+), 3 deletions(-)
 
 diff --git a/crates/test/Cargo.toml b/crates/test/Cargo.toml
-index 7443e3a..fd38028 100644
+index 682a718ee..82dac7b85 100644
 --- a/crates/test/Cargo.toml
 +++ b/crates/test/Cargo.toml
 @@ -15,9 +15,9 @@ std = ["wasm-bindgen/std", "js-sys/std", "wasm-bindgen-futures/std"]
  
  [dependencies]
  gg-alloc = { version = "1.0", optional = true }
--js-sys = { path = '../js-sys', package = "js-sys-wry", version = '=0.3.99', default-features = false }
+-js-sys = { path = '../js-sys', package = "js-sys-wry", version = '=0.3.100', default-features = false }
 +js-sys = { path = "../../../../packages/js-sys-x", package = "js-sys", default-features = false }
  wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
--wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry", version = '=0.4.72', default-features = false }
+-wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry", version = '=0.4.73', default-features = false }
 +wasm-bindgen-futures = { path = "../../../../packages/wasm-bindgen-futures-x", package = "wasm-bindgen-futures", default-features = false }
- wasm-bindgen-test-macro = { path = '../test-macro', version = '=0.3.72' }
- wasm-bindgen-test-shared = { path = "../test-shared", version = "=0.2.122" }
+ wasm-bindgen-test-macro = { path = '../test-macro', version = '=0.3.73' }
+ wasm-bindgen-test-shared = { path = "../test-shared", version = "=0.2.123" }
  
 @@ -36,7 +36,7 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
  minicov = "0.3.8"
@@ -39,5 +39,5 @@ index 7443e3a..fd38028 100644
    "BlobPropertyBag",
    "ErrorEvent",
 -- 
-2.49.0
+2.34.1
 

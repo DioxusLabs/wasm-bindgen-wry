@@ -2963,7 +2963,7 @@ checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
 name = "js-sys"
-version = "0.3.99"
+version = "0.3.100"
 dependencies = [
  "js-sys 0.3.99 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
  "js-sys-wry",
@@ -2984,7 +2984,7 @@ dependencies = [
 
 [[package]]
 name = "js-sys-wry"
-version = "0.3.99"
+version = "0.3.100"
 dependencies = [
  "cfg-if",
  "futures-core",
@@ -6139,7 +6139,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen"
-version = "0.2.122"
+version = "0.2.123"
 dependencies = [
  "wasm-bindgen 0.2.122 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
  "wasm-bindgen-macro 0.2.122",
@@ -6162,7 +6162,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures"
-version = "0.4.72"
+version = "0.4.73"
 dependencies = [
  "js-sys 0.3.99",
  "wasm-bindgen 0.2.122",
@@ -6181,7 +6181,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-futures-wry"
-version = "0.4.72"
+version = "0.4.73"
 dependencies = [
  "js-sys 0.3.99",
  "wasm-bindgen 0.2.122",
@@ -6189,7 +6189,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro"
-version = "0.2.122"
+version = "0.2.123"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6208,7 +6208,7 @@ dependencies = [
 
 [[package]]
 name = "wasm-bindgen-macro-support"
-version = "0.2.122"
+version = "0.2.123"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6358,7 +6358,7 @@ dependencies = [
 
 [[package]]
 name = "web-sys"
-version = "0.3.99"
+version = "0.3.100"
 dependencies = [
  "js-sys 0.3.99",
  "wasm-bindgen 0.2.122",
@@ -6377,7 +6377,7 @@ dependencies = [
 
 [[package]]
 name = "web-sys-wry"
-version = "0.3.99"
+version = "0.3.100"
 dependencies = [
  "js-sys 0.3.99",
  "wasm-bindgen 0.2.122",
@@ -7051,7 +7051,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen"
-version = "0.2.122"
+version = "0.2.123"
 dependencies = [
  "cfg-if",
  "inventory",
@@ -7073,7 +7073,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen-macro"
-version = "0.2.122"
+version = "0.2.123"
 dependencies = [
  "quote",
  "wry-bindgen-macro-support",
@@ -7081,7 +7081,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen-macro-support"
-version = "0.2.122"
+version = "0.2.123"
 dependencies = [
  "proc-macro2",
  "quote",

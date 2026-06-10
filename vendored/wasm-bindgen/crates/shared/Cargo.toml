@@ -12,7 +12,7 @@ license = "MIT OR Apache-2.0"
 name = "wasm-bindgen-shared"
 repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared"
 rust-version = "1.77"
-version = "0.2.122"
+version = "0.2.123"
 
 [lints]
 workspace = true

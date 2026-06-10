@@ -1,7 +1,7 @@
-From db8e6c7c240dcbee86350e58d80ec5eac3fe3be4 Mon Sep 17 00:00:00 2001
+From 0fa1528b13a9427ed61fa051908abcf39afbc862 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Wed, 10 Jun 2026 14:04:55 -0500
-Subject: [PATCH] Point web-sys and futures at the js-sys shim
+Subject: [PATCH 09/10] Point web-sys and futures at the js-sys shim
 
 The wry sys crates re-export `pub use js_sys;` at their root (upstream
 behavior). When that re-export resolves to js-sys-wry while consumers'
@@ -17,7 +17,7 @@ are built.
  2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
-index 2cd2cad..c213214 100644
+index 2afd9f094..acdd08796 100644
 --- a/crates/futures/Cargo.toml
 +++ b/crates/futures/Cargo.toml
 @@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
@@ -30,7 +30,7 @@ index 2cd2cad..c213214 100644
  
  [features]
 diff --git a/crates/web-sys/Cargo.toml b/crates/web-sys/Cargo.toml
-index e76771d..df634d7 100644
+index 844bc7bb3..63e92b2ea 100644
 --- a/crates/web-sys/Cargo.toml
 +++ b/crates/web-sys/Cargo.toml
 @@ -24,7 +24,7 @@ doctest = false
@@ -43,5 +43,5 @@ index e76771d..df634d7 100644
  
  [lints.rust]
 -- 
-2.49.0
+2.34.1
 

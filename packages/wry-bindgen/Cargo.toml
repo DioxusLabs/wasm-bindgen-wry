@@ -1,6 +1,6 @@
 [package]
 name = "wry-bindgen"
-version = "0.2.122"
+version = "0.2.123"
 edition = "2024"
 description = "Native desktop implementation of wasm-bindgen APIs using wry"
 license = "MIT OR Apache-2.0"
@@ -25,8 +25,8 @@ xxx_debug_only_print_generated_code = []
 
 [dependencies]
 inventory = "0.3.21"
-wry-bindgen-core = { path = "../wry-bindgen-core", version = "0.1.0" }
-wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.122" }
+wry-bindgen-core = { path = "../wry-bindgen-core", version = "=0.1.0" }
+wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.123" }
 # We use this instead of std because wasm bindgen supports no_std environments
 cfg-if = "1.0.0"
 ouroboros = { version = "0.18.5", default-features = false }

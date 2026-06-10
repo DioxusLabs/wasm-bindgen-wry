@@ -1,6 +1,6 @@
 [package]
 name = "web-sys"
-version = "0.3.99"
+version = "0.3.100"
 edition = "2021"
 description = "Target-switching shim for web-sys and web-sys-wry"
 license = "MIT OR Apache-2.0"
@@ -14,15 +14,15 @@ doctest = false
 test = false
 
 [dependencies]
-js-sys = { path = "../js-sys-x", version = "=0.3.99", default-features = false }
-wasm-bindgen = { path = "../wasm-bindgen", version = "=0.2.122", default-features = false }
+js-sys = { path = "../js-sys-x", version = "=0.3.100", default-features = false }
+wasm-bindgen = { path = "../wasm-bindgen", version = "=0.2.123", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys-upstream = { package = "web-sys", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122", default-features = false }
-web-sys-wry = { package = "web-sys-wry", path = "../../vendored/wasm-bindgen/crates/web-sys", version = "=0.3.99", default-features = false, optional = true }
+web-sys-wry = { package = "web-sys-wry", path = "../../vendored/wasm-bindgen/crates/web-sys", version = "=0.3.100", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-web-sys-wry = { package = "web-sys-wry", path = "../../vendored/wasm-bindgen/crates/web-sys", version = "=0.3.99", default-features = false }
+web-sys-wry = { package = "web-sys-wry", path = "../../vendored/wasm-bindgen/crates/web-sys", version = "=0.3.100", default-features = false }
 
 [features]
 default = ["std"]

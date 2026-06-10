@@ -1,15 +1,22 @@
-From 0000000000000000000000000000000000000005 Mon Sep 17 00:00:00 2001
+From 3b819aa18b34f59bd4b6a352ed70f6fd9354feae Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Sat, 6 Jun 2026 12:00:00 -0500
-Subject: [PATCH] Expose macro-support parser api
+Subject: [PATCH 05/10] Expose macro-support parser api
 
 ---
+ crates/macro-support/Cargo.toml    |  23 ++-
+ crates/macro-support/src/ast.rs    |   4 +-
+ crates/macro-support/src/lib.rs    | 274 ++++++++++++++++++++++++++++-
+ crates/macro-support/src/parser.rs |  26 ++-
+ crates/shared/Cargo.toml           |  19 ++
+ 5 files changed, 337 insertions(+), 9 deletions(-)
+
 diff --git a/crates/macro-support/Cargo.toml b/crates/macro-support/Cargo.toml
-index e3f968019..bea458827 100644
+index 83994e99d..c172f5e13 100644
 --- a/crates/macro-support/Cargo.toml
 +++ b/crates/macro-support/Cargo.toml
 @@ -12,11 +12,13 @@ rust-version = "1.77"
- version = "0.2.122"
+ version = "0.2.123"
  
  [features]
 +default = ["expand"]
@@ -23,7 +30,7 @@ index e3f968019..bea458827 100644
  proc-macro2 = "1.0"
  quote = '1.0'
  syn = { version = '2.0', features = ['visit', 'visit-mut', 'full', 'extra-traits'] }
-@@ -24,3 +26,22 @@ wasm-bindgen-shared = { path = "../shared", version = "=0.2.122" }
+@@ -24,3 +26,22 @@ wasm-bindgen-shared = { path = "../shared", version = "=0.2.123" }
  
  [lints]
  workspace = true
@@ -47,10 +54,10 @@ index e3f968019..bea458827 100644
 +type_complexity = "allow"
 +uninlined_format_args = "warn"
 diff --git a/crates/macro-support/src/ast.rs b/crates/macro-support/src/ast.rs
-index e4a8ebff9..54df91a7c 100644
+index d89494148..9859ebcad 100644
 --- a/crates/macro-support/src/ast.rs
 +++ b/crates/macro-support/src/ast.rs
-@@ -632,7 +632,7 @@ pub enum LitOrExpr {
+@@ -638,7 +638,7 @@ pub enum LitOrExpr {
  impl Export {
      /// Mangles a rust -> javascript export, so that the created Ident will be unique over function
      /// name and class name, if the function belongs to a javascript class.
@@ -59,7 +66,7 @@ index e4a8ebff9..54df91a7c 100644
          let mut generated_name = String::from("__wasm_bindgen_generated");
          if let Some(class) = &self.js_class {
              generated_name.push('_');
-@@ -654,7 +654,7 @@ impl Export {
+@@ -660,7 +660,7 @@ impl Export {
      /// This is the name of the shim function that gets exported and takes the raw
      /// ABI form of its arguments and converts them back into their normal,
      /// "high level" form before calling the actual function.
@@ -441,7 +448,7 @@ index 5cdd603f7..4807620b3 100644
      let mut operation_kind = ast::OperationKind::Regular;
      if opts.this().is_some() {
 diff --git a/crates/shared/Cargo.toml b/crates/shared/Cargo.toml
-index c57d1bdff..4545636ae 100644
+index 17840f103..ff9937c16 100644
 --- a/crates/shared/Cargo.toml
 +++ b/crates/shared/Cargo.toml
 @@ -19,3 +19,22 @@ workspace = true
@@ -467,3 +474,6 @@ index c57d1bdff..4545636ae 100644
 +too_many_arguments = "allow"
 +type_complexity = "allow"
 +uninlined_format_args = "warn"
+-- 
+2.34.1
+

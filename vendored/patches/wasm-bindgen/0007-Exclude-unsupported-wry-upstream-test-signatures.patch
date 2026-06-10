@@ -1,7 +1,7 @@
-From b557e6ded2f405f76a3cbbf1356f8ee31aa32d69 Mon Sep 17 00:00:00 2001
+From 46c5c3207b895bb7fbab4f22d58c3e09ce1ff54a Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Mon, 8 Jun 2026 09:54:50 -0500
-Subject: [PATCH] Exclude unsupported wry upstream test signatures
+Subject: [PATCH 07/10] Exclude unsupported wry upstream test signatures
 
 Carries the full remaining tests/wasm delta on top of the ESM
 conversion patch: signature exclusions for wry, the rest of the
@@ -57,7 +57,7 @@ of the suite.
  46 files changed, 778 insertions(+), 749 deletions(-)
 
 diff --git a/tests/wasm/api.js b/tests/wasm/api.js
-index 60e7eec..ed5e325 100644
+index 60e7eecd8..ed5e32571 100644
 --- a/tests/wasm/api.js
 +++ b/tests/wasm/api.js
 @@ -1,11 +1,11 @@
@@ -115,7 +115,7 @@ index 60e7eec..ed5e325 100644
      assert.strictEqual(instance.exports, wasmExports);
  };
 diff --git a/tests/wasm/arg_names.js b/tests/wasm/arg_names.js
-index 255604b..8439c61 100644
+index 255604b3e..8439c61d7 100644
 --- a/tests/wasm/arg_names.js
 +++ b/tests/wasm/arg_names.js
 @@ -1,5 +1,5 @@
@@ -135,7 +135,7 @@ index 255604b..8439c61 100644
      assert.deepEqual(getArgNames(wasm.fn_with_many_args), ['_a', '_b', '_c', '_d']);
  };
 diff --git a/tests/wasm/async_vecs.js b/tests/wasm/async_vecs.js
-index 5ff6550..32e678a 100644
+index 5ff655080..32e678a31 100644
 --- a/tests/wasm/async_vecs.js
 +++ b/tests/wasm/async_vecs.js
 @@ -1,7 +1,7 @@
@@ -165,7 +165,7 @@ index 5ff6550..32e678a 100644
 +    // assert.strictEqual(numberVec.byteLength, numberVec.buffer.byteLength);
  };
 diff --git a/tests/wasm/bigint.js b/tests/wasm/bigint.js
-index 3971d22..df630e4 100644
+index 3971d2279..df630e4f5 100644
 --- a/tests/wasm/bigint.js
 +++ b/tests/wasm/bigint.js
 @@ -1,10 +1,10 @@
@@ -185,7 +185,7 @@ index 3971d22..df630e4 100644
      assert.strictEqual(wasm.one(), BigInt('1'));
      assert.strictEqual(wasm.neg_one(), BigInt('-1'));
 diff --git a/tests/wasm/char.js b/tests/wasm/char.js
-index b1ee622..fce01a2 100644
+index b1ee62280..fce01a217 100644
 --- a/tests/wasm/char.js
 +++ b/tests/wasm/char.js
 @@ -1,9 +1,9 @@
@@ -203,7 +203,7 @@ index b1ee622..fce01a2 100644
      assert.strictEqual(wasm.face(), '😀');
      assert.strictEqual(wasm.rust_identity(''), '\u0000');
 diff --git a/tests/wasm/classes.js b/tests/wasm/classes.js
-index c7b0297..0bd8c71 100644
+index c7b0297be..0bd8c7151 100644
 --- a/tests/wasm/classes.js
 +++ b/tests/wasm/classes.js
 @@ -1,7 +1,7 @@
@@ -475,7 +475,7 @@ index c7b0297..0bd8c71 100644
      const result1 = wasm.classless_this_get_number.call(obj1);
      assert.strictEqual(result1, 42);
 diff --git a/tests/wasm/closures.js b/tests/wasm/closures.js
-index 3fde23b..8985b39 100644
+index 3fde23bc4..8985b39cc 100644
 --- a/tests/wasm/closures.js
 +++ b/tests/wasm/closures.js
 @@ -1,80 +1,80 @@
@@ -814,7 +814,7 @@ index 3fde23b..8985b39 100644
    IMMEDIATE_FN_REENTRANT_CB();
  };
 diff --git a/tests/wasm/comments.js b/tests/wasm/comments.js
-index 1443281..2270c02 100644
+index 1443281b5..2270c02f4 100644
 --- a/tests/wasm/comments.js
 +++ b/tests/wasm/comments.js
 @@ -1,7 +1,7 @@
@@ -828,7 +828,7 @@ index 1443281..2270c02 100644
    const contents = fs.readFileSync(bindings_file);
    assert.ok(contents.includes("* annotated function ✔️ \" \\ ' {"));
 diff --git a/tests/wasm/duplicate_deps.js b/tests/wasm/duplicate_deps.js
-index b69139d..5a6b1f3 100644
+index b69139dfa..5a6b1f31a 100644
 --- a/tests/wasm/duplicate_deps.js
 +++ b/tests/wasm/duplicate_deps.js
 @@ -1,16 +1,16 @@
@@ -853,7 +853,7 @@ index b69139d..5a6b1f3 100644
    assert.strictEqual(a, next);
    next = null;
 diff --git a/tests/wasm/duplicates_a.js b/tests/wasm/duplicates_a.js
-index e52f346..1e1b84f 100644
+index e52f346bc..1e1b84f70 100644
 --- a/tests/wasm/duplicates_a.js
 +++ b/tests/wasm/duplicates_a.js
 @@ -1,2 +1,2 @@
@@ -862,7 +862,7 @@ index e52f346..1e1b84f 100644
 +export const foo = () => {};
 +export const bar = 3;
 diff --git a/tests/wasm/duplicates_b.js b/tests/wasm/duplicates_b.js
-index 75263a2..6af5e97 100644
+index 75263a245..6af5e9719 100644
 --- a/tests/wasm/duplicates_b.js
 +++ b/tests/wasm/duplicates_b.js
 @@ -1,2 +1,2 @@
@@ -871,7 +871,7 @@ index 75263a2..6af5e97 100644
 +export const foo = () => true;
 +export const bar = 4;
 diff --git a/tests/wasm/duplicates_c.js b/tests/wasm/duplicates_c.js
-index 601a99a..11da9b9 100644
+index 601a99a57..11da9b905 100644
 --- a/tests/wasm/duplicates_c.js
 +++ b/tests/wasm/duplicates_c.js
 @@ -1,2 +1,2 @@
@@ -880,7 +880,7 @@ index 601a99a..11da9b9 100644
 +export const foo = () => false;
 +export const bar = 5;
 diff --git a/tests/wasm/enum_vecs.js b/tests/wasm/enum_vecs.js
-index 8d6ce6b..297ea71 100644
+index 8d6ce6b6e..297ea71f1 100644
 --- a/tests/wasm/enum_vecs.js
 +++ b/tests/wasm/enum_vecs.js
 @@ -1,7 +1,7 @@
@@ -904,7 +904,7 @@ index 8d6ce6b..297ea71 100644
      try {
          wasm.consume_enum_vec(['not an enum value']);
 diff --git a/tests/wasm/enums.js b/tests/wasm/enums.js
-index a30aca9..ba0c885 100644
+index a30aca93d..ba0c88506 100644
 --- a/tests/wasm/enums.js
 +++ b/tests/wasm/enums.js
 @@ -1,7 +1,7 @@
@@ -983,7 +983,7 @@ index a30aca9..ba0c885 100644
 -exports.js_async_union_result = async o => wasm.async_union_roundtrip(o);
 +export const js_async_union_result = async o => wasm.async_union_roundtrip(o);
 diff --git a/tests/wasm/futures.js b/tests/wasm/futures.js
-index fd9abf3..6a6ba20 100644
+index fd9abf36d..6a6ba20fb 100644
 --- a/tests/wasm/futures.js
 +++ b/tests/wasm/futures.js
 @@ -1,7 +1,7 @@
@@ -1044,7 +1044,7 @@ index fd9abf3..6a6ba20 100644
          return e.name === "PanicError" && e.message === "Oops!";
      });
 diff --git a/tests/wasm/gc.js b/tests/wasm/gc.js
-index 8a143e7..906666a 100644
+index 8a143e7c5..906666a33 100644
 --- a/tests/wasm/gc.js
 +++ b/tests/wasm/gc.js
 @@ -1,5 +1,5 @@
@@ -1104,7 +1104,7 @@ index 8a143e7..906666a 100644
    let resolve;
  
 diff --git a/tests/wasm/generics.js b/tests/wasm/generics.js
-index 828de4f..5e550c0 100644
+index 828de4fd6..5e550c000 100644
 --- a/tests/wasm/generics.js
 +++ b/tests/wasm/generics.js
 @@ -1,15 +1,15 @@
@@ -1128,7 +1128,7 @@ index 828de4f..5e550c0 100644
    }
  };
 diff --git a/tests/wasm/getters_and_setters.js b/tests/wasm/getters_and_setters.js
-index 48379e2..48d446a 100644
+index 48379e2e8..48d446a15 100644
 --- a/tests/wasm/getters_and_setters.js
 +++ b/tests/wasm/getters_and_setters.js
 @@ -1,105 +1,105 @@
@@ -1256,7 +1256,7 @@ index 48379e2..48d446a 100644
      assert.equal(wasm.Statics.field, 4);
      x.field = 13;
 diff --git a/tests/wasm/import_class.js b/tests/wasm/import_class.js
-index 778ffd1..57d14c0 100644
+index 778ffd15b..57d14c0b8 100644
 --- a/tests/wasm/import_class.js
 +++ b/tests/wasm/import_class.js
 @@ -1,9 +1,9 @@
@@ -1391,7 +1391,7 @@ index 778ffd1..57d14c0 100644
    InnerClass: InnerClass
  }
 diff --git a/tests/wasm/imports.js b/tests/wasm/imports.js
-index a47968d..f3c73f3 100644
+index a47968d35..f3c73f38e 100644
 --- a/tests/wasm/imports.js
 +++ b/tests/wasm/imports.js
 @@ -1,31 +1,30 @@
@@ -1581,7 +1581,7 @@ index a47968d..f3c73f3 100644
 +const string_literal_breakers = () => 42;
 +export { kebab_case as "kebab-case", string_literal_breakers as "\"string'literal\nbreakers\r" };
 diff --git a/tests/wasm/imports_2.js b/tests/wasm/imports_2.js
-index 78f55be..0420a36 100644
+index 78f55be0f..0420a36bd 100644
 --- a/tests/wasm/imports_2.js
 +++ b/tests/wasm/imports_2.js
 @@ -1,5 +1,5 @@
@@ -1594,7 +1594,7 @@ index 78f55be..0420a36 100644
  }
 \ No newline at end of file
 diff --git a/tests/wasm/inheritance.js b/tests/wasm/inheritance.js
-index 2662420..c68d21f 100644
+index 26624201d..c68d21f54 100644
 --- a/tests/wasm/inheritance.js
 +++ b/tests/wasm/inheritance.js
 @@ -1,4 +1,4 @@
@@ -1712,7 +1712,7 @@ index 2662420..c68d21f 100644
  
      // new InheritanceDog should:
 diff --git a/tests/wasm/intrinsics.rs b/tests/wasm/intrinsics.rs
-index 843d2d2..de9a178 100644
+index 843d2d289..de9a1786b 100644
 --- a/tests/wasm/intrinsics.rs
 +++ b/tests/wasm/intrinsics.rs
 @@ -38,10 +38,12 @@ fn arithmetic() {
@@ -1733,7 +1733,7 @@ index 843d2d2..de9a178 100644
      assert_eq!(int(17) % int(10), 7);
      assert_eq!(int(2).pow(&int(8)), 256)
 diff --git a/tests/wasm/js_namespace_exports.js b/tests/wasm/js_namespace_exports.js
-index 1233b2e..a36344c 100644
+index 1233b2e9c..a36344c33 100644
 --- a/tests/wasm/js_namespace_exports.js
 +++ b/tests/wasm/js_namespace_exports.js
 @@ -1,14 +1,14 @@
@@ -1846,7 +1846,7 @@ index 1233b2e..a36344c 100644
    assert.ok(wasm.shapes["3d"], "shapes.3d namespace should exist");
    assert.ok(wasm.shapes["3d"].Point3D, "shapes.3d.Point3D class should exist");
 diff --git a/tests/wasm/link_to.js b/tests/wasm/link_to.js
-index 3028a6a..45ad152 100644
+index 3028a6ae8..45ad152c4 100644
 --- a/tests/wasm/link_to.js
 +++ b/tests/wasm/link_to.js
 @@ -1,4 +1,15 @@
@@ -1870,7 +1870,7 @@ index 3028a6a..45ad152 100644
 +    return xhr.responseText;
 +};
 diff --git a/tests/wasm/link_to.rs b/tests/wasm/link_to.rs
-index 91225ae..eac83e0 100644
+index 91225ae2f..eac83e0e1 100644
 --- a/tests/wasm/link_to.rs
 +++ b/tests/wasm/link_to.rs
 @@ -1,7 +1,7 @@
@@ -1892,7 +1892,7 @@ index 91225ae..eac83e0 100644
          read_file(&link).unwrap(),
          include_str!("./linked_module.js")
 diff --git a/tests/wasm/memory_growth.js b/tests/wasm/memory_growth.js
-index a7771b9..b0f0c22 100644
+index a7771b971..b0f0c2217 100644
 --- a/tests/wasm/memory_growth.js
 +++ b/tests/wasm/memory_growth.js
 @@ -1,6 +1,6 @@
@@ -1905,7 +1905,7 @@ index a7771b9..b0f0c22 100644
    return wasm.__wasm.memory.buffer.byteLength;
  };
 diff --git a/tests/wasm/no_shims.rs b/tests/wasm/no_shims.rs
-index f56701b..df353af 100644
+index f56701b69..df353af12 100644
 --- a/tests/wasm/no_shims.rs
 +++ b/tests/wasm/no_shims.rs
 @@ -12,41 +12,42 @@ use wasm_bindgen_test::*;
@@ -1977,7 +1977,7 @@ index f56701b..df353af 100644
  extern "C" {
      #[wasm_bindgen(assert_no_shim)]
 diff --git a/tests/wasm/node.js b/tests/wasm/node.js
-index b386567..09f4d74 100644
+index b38656731..09f4d74db 100644
 --- a/tests/wasm/node.js
 +++ b/tests/wasm/node.js
 @@ -1,15 +1,15 @@
@@ -2002,10 +2002,10 @@ index b386567..09f4d74 100644
  
    var r = wasm.Foo.new();
 diff --git a/tests/wasm/nullable.js b/tests/wasm/nullable.js
-index 4e70819..0753534 100644
+index 80fe446bb..85a0c4147 100644
 --- a/tests/wasm/nullable.js
 +++ b/tests/wasm/nullable.js
-@@ -1,38 +1,38 @@
+@@ -1,37 +1,37 @@
 -const wasm = require('wasm-bindgen-test.js');
 -const assert = require('assert');
 +const wasm = new Proxy({}, { get: (_t, n) => window[n] });
@@ -2025,8 +2025,7 @@ index 4e70819..0753534 100644
  
 -exports.take_nullable_null = (val) => {
 +export const take_nullable_null = (val) => {
-     assert.ok(val === null || val === undefined, 
-         `expected null or undefined, got ${val}`);
+     assert.strictEqual(val, undefined, `expected undefined, got ${val}`);
  };
  
 -exports.take_nullable_value = (val) => {
@@ -2052,11 +2051,11 @@ index 4e70819..0753534 100644
  
 -exports.test_nullable_exports = () => {
 +export const test_nullable_exports = () => {
-     // Test rust functions that return JsOption
+     // Test rust functions that return JsOption — strict: empty == undefined only.
      const nullVal = wasm.rust_return_nullable_null();
-     assert.ok(nullVal === null || nullVal === undefined,
+     assert.strictEqual(nullVal, undefined,
 diff --git a/tests/wasm/optional_primitives.js b/tests/wasm/optional_primitives.js
-index 703b64a..85b4c2c 100644
+index 703b64a8e..85b4c2c50 100644
 --- a/tests/wasm/optional_primitives.js
 +++ b/tests/wasm/optional_primitives.js
 @@ -1,5 +1,5 @@
@@ -2154,7 +2153,7 @@ index 703b64a..85b4c2c 100644
      assert.strictEqual(wasm.optional_f32_identity(wasm.optional_f32_none()), undefined);
      assert.strictEqual(wasm.optional_f32_identity(wasm.optional_f32_zero()), 0);
 diff --git a/tests/wasm/result.js b/tests/wasm/result.js
-index 41d6e75..eb42d43 100644
+index 41d6e75a7..eb42d437f 100644
 --- a/tests/wasm/result.js
 +++ b/tests/wasm/result.js
 @@ -1,18 +1,18 @@
@@ -2268,7 +2267,7 @@ index 41d6e75..eb42d43 100644
          let o = wasm.return_option_ok_some();
          assert.strictEqual(o, 10.0);
 diff --git a/tests/wasm/result_jserror.js b/tests/wasm/result_jserror.js
-index d27736d..0c79f68 100644
+index d27736d9c..0c79f687e 100644
 --- a/tests/wasm/result_jserror.js
 +++ b/tests/wasm/result_jserror.js
 @@ -1,20 +1,20 @@
@@ -2316,7 +2315,7 @@ index d27736d..0c79f68 100644
          let ok = wasm.jserror_return_string();
          assert.strictEqual(ok, "string here");
 diff --git a/tests/wasm/result_jserror.rs b/tests/wasm/result_jserror.rs
-index 338e5f1..a8579e7 100644
+index 338e5f13a..a8579e7bb 100644
 --- a/tests/wasm/result_jserror.rs
 +++ b/tests/wasm/result_jserror.rs
 @@ -1,5 +1,5 @@
@@ -2327,7 +2326,7 @@ index 338e5f1..a8579e7 100644
  
  use std::fmt;
 diff --git a/tests/wasm/simple.js b/tests/wasm/simple.js
-index 39fdbeb..376bc5b 100644
+index 39fdbeb9c..376bc5b28 100644
 --- a/tests/wasm/simple.js
 +++ b/tests/wasm/simple.js
 @@ -1,5 +1,5 @@
@@ -2519,7 +2518,7 @@ index 39fdbeb..376bc5b 100644
 +  // analogue on the native target.
  };
 diff --git a/tests/wasm/simple.rs b/tests/wasm/simple.rs
-index 5d060ca..493e227 100644
+index 5d060ca89..493e227a4 100644
 --- a/tests/wasm/simple.rs
 +++ b/tests/wasm/simple.rs
 @@ -1,3 +1,4 @@
@@ -2617,7 +2616,7 @@ index 5d060ca..493e227 100644
  fn non_null() {
      test_non_null();
 diff --git a/tests/wasm/slice.js b/tests/wasm/slice.js
-index 2038c84..fe30a29 100644
+index 2038c847d..fe30a2942 100644
 --- a/tests/wasm/slice.js
 +++ b/tests/wasm/slice.js
 @@ -1,5 +1,5 @@
@@ -3019,7 +3018,7 @@ index 2038c84..fe30a29 100644
    assert.equal(a.length, 3);
    assert.equal(a[0], offset + 0);
 diff --git a/tests/wasm/slice.rs b/tests/wasm/slice.rs
-index 6b18a63..c420100 100644
+index 6b18a6345..c42010004 100644
 --- a/tests/wasm/slice.rs
 +++ b/tests/wasm/slice.rs
 @@ -1,9 +1,10 @@
@@ -3157,7 +3156,7 @@ index 6b18a63..c420100 100644
      unsafe { &mut *(std::ptr::from_mut(slice) as *mut [MaybeUninit<T>]) }
  }
 diff --git a/tests/wasm/slice_to_array.js b/tests/wasm/slice_to_array.js
-index 9aa8898..0aa7f16 100644
+index 9aa8898a8..0aa7f169b 100644
 --- a/tests/wasm/slice_to_array.js
 +++ b/tests/wasm/slice_to_array.js
 @@ -1,7 +1,7 @@
@@ -3251,7 +3250,7 @@ index 9aa8898..0aa7f16 100644
      assert.deepStrictEqual(v, ['x', 'y']);
      return v.map(s => s + '!');
 diff --git a/tests/wasm/struct_vecs.js b/tests/wasm/struct_vecs.js
-index 23eb154..519a568 100644
+index 23eb154fd..519a56894 100644
 --- a/tests/wasm/struct_vecs.js
 +++ b/tests/wasm/struct_vecs.js
 @@ -1,7 +1,7 @@
@@ -3275,7 +3274,7 @@ index 23eb154..519a568 100644
          wasm.consume_struct_vec(['not a struct']);
      } catch (e) {
 diff --git a/tests/wasm/unwind.js b/tests/wasm/unwind.js
-index 32553ed..7aff568 100644
+index 32553ed9e..7aff56881 100644
 --- a/tests/wasm/unwind.js
 +++ b/tests/wasm/unwind.js
 @@ -1,23 +1,23 @@
@@ -3308,7 +3307,7 @@ index 32553ed..7aff568 100644
    wasm.rust_call_throwing_js();
  };
 diff --git a/tests/wasm/unwind.rs b/tests/wasm/unwind.rs
-index 1b2c8e3..a383082 100644
+index fbcb3b074..e3bc1f103 100644
 --- a/tests/wasm/unwind.rs
 +++ b/tests/wasm/unwind.rs
 @@ -1,6 +1,6 @@
@@ -3468,7 +3467,7 @@ index 1b2c8e3..a383082 100644
  
  /// Rust function exported to JS that calls a throwing JS function.
 diff --git a/tests/wasm/usize.js b/tests/wasm/usize.js
-index a1e0723..f91dc7e 100644
+index a1e0723e8..f91dc7e92 100644
 --- a/tests/wasm/usize.js
 +++ b/tests/wasm/usize.js
 @@ -1,17 +1,25 @@
@@ -3552,7 +3551,7 @@ index a1e0723..f91dc7e 100644
 +    // `futures.rs` (async_return_2 etc.) and `async_vecs.rs`.
  };
 diff --git a/tests/wasm/validate_prt.js b/tests/wasm/validate_prt.js
-index 070d71d..a366a75 100644
+index 070d71dfa..a366a753e 100644
 --- a/tests/wasm/validate_prt.js
 +++ b/tests/wasm/validate_prt.js
 @@ -1,10 +1,12 @@
@@ -3581,7 +3580,7 @@ index 070d71d..a366a75 100644
      moveMoved();
      methodMoved();
 diff --git a/tests/wasm/vendor_prefix.js b/tests/wasm/vendor_prefix.js
-index a8cd4db..e9d43f3 100644
+index a8cd4db15..e9d43f30d 100644
 --- a/tests/wasm/vendor_prefix.js
 +++ b/tests/wasm/vendor_prefix.js
 @@ -1,11 +1,11 @@
@@ -3601,7 +3600,7 @@ index a8cd4db..e9d43f3 100644
    foo() { return 125; }
  };
 diff --git a/tests/wasm/wasm64.js b/tests/wasm/wasm64.js
-index 24610b2..690d12c 100644
+index 24610b276..690d12cad 100644
 --- a/tests/wasm/wasm64.js
 +++ b/tests/wasm/wasm64.js
 @@ -1,7 +1,7 @@
@@ -3642,5 +3641,5 @@ index 24610b2..690d12c 100644
    if (typeof val !== "number") {
      throw new Error(`Expected number, got ${typeof val}: ${val}`);
 -- 
-2.49.0
+2.34.1
 
