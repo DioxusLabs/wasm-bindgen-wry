@@ -1,7 +1,7 @@
-From c4bca3c561a9c0beca58937de0938cef7d9d60ee Mon Sep 17 00:00:00 2001
+From c9ec9b6d6b103b394c3e9f835aedd1a29b5332b4 Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
 Date: Fri, 29 May 2026 10:57:02 -0500
-Subject: [PATCH 02/10] Point sys crates at the wry shim
+Subject: [PATCH 02/11] Point sys crates at the wry shim
 
 ---
  crates/futures/Cargo.toml |  9 ++-------

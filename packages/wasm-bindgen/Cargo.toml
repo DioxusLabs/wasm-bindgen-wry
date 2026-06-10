@@ -48,7 +48,7 @@ wry-bindgen = { path = "../wry-bindgen", version = "=0.2.123" }
 # but keeping the upstream dependency available lets normal wasm32 builds
 # delegate to upstream without feature-dependent target dependency tricks.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-upstream = { package = "wasm-bindgen", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122" }
+wasm-bindgen-upstream = { package = "wasm-bindgen", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.123" }
 wry-bindgen = { path = "../wry-bindgen", version = "=0.2.123", optional = true }
 
 [lints]

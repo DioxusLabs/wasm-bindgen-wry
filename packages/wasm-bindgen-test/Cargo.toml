@@ -1,13 +1,13 @@
 [package]
 name = "wasm-bindgen-test"
-version = "0.2.122"
+version = "0.2.123"
 edition = "2024"
 description = "Test-side shim that runs wasm-bindgen-test suites against the wry-bindgen native harness"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
 
 [dependencies]
-wasm-bindgen-test-macro = { path = "../wasm-bindgen-test-macro", version = "=0.2.122" }
+wasm-bindgen-test-macro = { path = "../wasm-bindgen-test-macro", version = "=0.2.123" }
 inventory = "0.3.21"
 
 [lints]

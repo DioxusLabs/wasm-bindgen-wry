@@ -13578,7 +13578,7 @@ pub fn global() -> Object {
     #[cfg_attr(target_feature = "atomics", thread_local)]
     static GLOBAL: LazyCell<Object> = LazyCell::new(get_global_object);
 
-    return GLOBAL.clone();
+    return LazyCell::force(&GLOBAL).clone();
 
     fn get_global_object() -> Object {
         // Accessing the global object is not an easy thing to do, and what we

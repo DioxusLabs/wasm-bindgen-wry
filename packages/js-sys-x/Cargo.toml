@@ -17,7 +17,7 @@ test = false
 wasm-bindgen = { path = "../wasm-bindgen", version = "=0.2.123", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-js-sys-upstream = { package = "js-sys", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122", default-features = false }
+js-sys-upstream = { package = "js-sys", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.123", default-features = false }
 js-sys-wry = { package = "js-sys-wry", path = "../../vendored/wasm-bindgen/crates/js-sys", version = "=0.3.100", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

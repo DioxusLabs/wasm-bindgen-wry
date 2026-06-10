@@ -1,0 +1,44 @@
+From f71666f95d6656949a8cfd73da855e25e74c096f Mon Sep 17 00:00:00 2001
+From: Devin AI <158243242+devin-ai-integration[bot]@users.noreply.github.com>
+Date: Wed, 10 Jun 2026 21:27:34 +0000
+Subject: [PATCH 11/11] Use explicit LazyCell::force in js-sys for wry shim
+ compat
+
+Upstream 0.2.123 switched js-sys from LazyCell::force() to relying on
+Deref. Through the wry shim path the Deref impl is not resolved, so
+restore explicit force() calls in queue.rs and lib.rs.
+
+Co-Authored-By: Evan Almloff <evanalmloff@gmail.com>
+---
+ crates/js-sys/src/futures/queue.rs | 2 +-
+ crates/js-sys/src/lib.rs           | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/crates/js-sys/src/futures/queue.rs b/crates/js-sys/src/futures/queue.rs
+index 11ec371b6..af2907980 100644
+--- a/crates/js-sys/src/futures/queue.rs
++++ b/crates/js-sys/src/futures/queue.rs
+@@ -118,6 +118,6 @@ impl Queue {
+         #[cfg_attr(target_feature = "atomics", thread_local)]
+         static QUEUE: LazyCell<Queue> = LazyCell::new(Queue::new);
+ 
+-        f(&QUEUE)
++        f(LazyCell::force(&QUEUE))
+     }
+ }
+diff --git a/crates/js-sys/src/lib.rs b/crates/js-sys/src/lib.rs
+index 9c90ca7b8..71cab9e2b 100644
+--- a/crates/js-sys/src/lib.rs
++++ b/crates/js-sys/src/lib.rs
+@@ -13578,7 +13578,7 @@ pub fn global() -> Object {
+     #[cfg_attr(target_feature = "atomics", thread_local)]
+     static GLOBAL: LazyCell<Object> = LazyCell::new(get_global_object);
+ 
+-    return GLOBAL.clone();
++    return LazyCell::force(&GLOBAL).clone();
+ 
+     fn get_global_object() -> Object {
+         // Accessing the global object is not an easy thing to do, and what we
+-- 
+2.34.1
+

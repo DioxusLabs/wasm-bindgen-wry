@@ -118,6 +118,6 @@ impl Queue {
         #[cfg_attr(target_feature = "atomics", thread_local)]
         static QUEUE: LazyCell<Queue> = LazyCell::new(Queue::new);
 
-        f(&QUEUE)
+        f(LazyCell::force(&QUEUE))
     }
 }
