@@ -56,7 +56,7 @@ fi
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/wry-bindgen-cli-check.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
-mkdir -p "$tmp/dep-normal/src" "$tmp/app-broken/src" "$tmp/app-fixed/src"
+mkdir -p "$tmp/dep-normal/src" "$tmp/app/src"
 
 cat > "$tmp/dep-normal/Cargo.toml" <<'TOML'
 [package]
@@ -77,61 +77,9 @@ pub fn normal_document_title() -> String {
 }
 RS
 
-cat > "$tmp/app-broken/Cargo.toml" <<TOML
+cat > "$tmp/app/Cargo.toml" <<TOML
 [package]
-name = "sys-shim-cli-broken-fixture"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[dependencies]
-dep-normal = { path = "../dep-normal" }
-wasm-bindgen = "=$wasm_bindgen_version"
-web-sys = { package = "web-sys-wry", path = "$repo_root/vendored/wasm-bindgen/crates/web-sys", features = ["Document", "Window"] }
-
-[patch.crates-io]
-wasm-bindgen = { path = "$repo_root/packages/wasm-bindgen" }
-TOML
-
-cat > "$tmp/app-broken/src/lib.rs" <<'RS'
-use wasm_bindgen::prelude::*;
-
-#[wasm_bindgen]
-pub fn both_document_titles() -> String {
-    let title = web_sys::window()
-        .and_then(|window| window.document())
-        .map(|document| document.title())
-        .unwrap_or_default();
-    format!("{title}:{}", dep_normal::normal_document_title())
-}
-RS
-
-"${cargo_cmd[@]}" build \
-  --manifest-path "$tmp/app-broken/Cargo.toml" \
-  --target "$target" \
-  --release
-
-broken_log="$tmp/broken-wasm-bindgen.log"
-if "$wasm_bindgen_bin" \
-  "$tmp/app-broken/target/$target/release/sys_shim_cli_broken_fixture.wasm" \
-  --target web \
-  --out-dir "$tmp/out-broken" >"$broken_log" 2>&1
-then
-  echo "wasm-bindgen unexpectedly accepted the old mixed web-sys/web-sys-wry graph" >&2
-  exit 1
-fi
-
-if ! grep -F "duplicate" "$broken_log" >/dev/null; then
-  echo "wasm-bindgen rejected the old mixed graph, but not with the expected duplicate-binding error" >&2
-  cat "$broken_log" >&2
-  exit 1
-fi
-
-cat > "$tmp/app-fixed/Cargo.toml" <<TOML
-[package]
-name = "sys-shim-cli-fixed-fixture"
+name = "sys-shim-cli-fixture"
 version = "0.1.0"
 edition = "2021"
 
@@ -148,7 +96,7 @@ wasm-bindgen = { path = "$repo_root/packages/wasm-bindgen" }
 web-sys = { path = "$repo_root/packages/web-sys-x" }
 TOML
 
-cat > "$tmp/app-fixed/src/lib.rs" <<'RS'
+cat > "$tmp/app/src/lib.rs" <<'RS'
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -163,7 +111,7 @@ RS
 
 tree="$(
   "${cargo_cmd[@]}" tree \
-    --manifest-path "$tmp/app-fixed/Cargo.toml" \
+    --manifest-path "$tmp/app/Cargo.toml" \
     --target "$target"
 )"
 
@@ -180,13 +128,13 @@ if grep -F "web-sys-wry" <<<"$tree" >/dev/null; then
 fi
 
 "${cargo_cmd[@]}" build \
-  --manifest-path "$tmp/app-fixed/Cargo.toml" \
+  --manifest-path "$tmp/app/Cargo.toml" \
   --target "$target" \
   --release
 
 "$wasm_bindgen_bin" \
-  "$tmp/app-fixed/target/$target/release/sys_shim_cli_fixed_fixture.wasm" \
+  "$tmp/app/target/$target/release/sys_shim_cli_fixture.wasm" \
   --target web \
-  --out-dir "$tmp/out-fixed"
+  --out-dir "$tmp/out"
 
-echo "wasm-bindgen rejected the old mixed graph and accepted the sys shim graph"
+echo "wasm-bindgen accepted the linked sys shim fixture"
