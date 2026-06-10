@@ -2967,6 +2967,7 @@ version = "0.3.99"
 dependencies = [
  "js-sys 0.3.99 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
  "js-sys-wry",
+ "wasm-bindgen 0.2.122",
 ]
 
 [[package]]
@@ -6163,6 +6164,8 @@ dependencies = [
 name = "wasm-bindgen-futures"
 version = "0.4.72"
 dependencies = [
+ "js-sys 0.3.99",
+ "wasm-bindgen 0.2.122",
  "wasm-bindgen-futures 0.4.72 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
  "wasm-bindgen-futures-wry",
 ]
@@ -6357,6 +6360,8 @@ dependencies = [
 name = "web-sys"
 version = "0.3.99"
 dependencies = [
+ "js-sys 0.3.99",
+ "wasm-bindgen 0.2.122",
  "web-sys 0.3.99 (git+https://github.com/wasm-bindgen/wasm-bindgen?tag=0.2.122)",
  "web-sys-wry",
 ]
