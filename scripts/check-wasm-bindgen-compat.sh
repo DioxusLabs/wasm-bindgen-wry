@@ -52,8 +52,8 @@ repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root" || exit 2
 
 WB="$repo_root/packages/wasm-bindgen"
-JS="$repo_root/vendored/wasm-bindgen/crates/js-sys"
-FUT="$repo_root/vendored/wasm-bindgen/crates/futures"
+JS="$repo_root/packages/js-sys-x"
+FUT="$repo_root/packages/wasm-bindgen-futures-x"
 PATCH=(
   --config "patch.crates-io.wasm-bindgen.path=\"$WB\""
   --config "patch.crates-io.js-sys.path=\"$JS\""

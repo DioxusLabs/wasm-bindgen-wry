@@ -9,9 +9,9 @@ version = "0.0.0"
 test = false
 
 [dependencies]
-js-sys = { path = '../../js-sys' }
+js-sys = { path = '../../js-sys', package = "js-sys-wry" }
 wasm-bindgen = { path = '../../..' }
-wasm-bindgen-futures = { path = '../../futures' }
+wasm-bindgen-futures = { path = '../../futures', package = "wasm-bindgen-futures-wry" }
 
 [dev-dependencies]
 wasm-bindgen-test = { path = '..' }

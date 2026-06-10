@@ -26,8 +26,8 @@ resolver = "2"
 
 [patch.crates-io]
 wasm-bindgen = { path = "packages/wasm-bindgen", package = "wasm-bindgen" }
-js-sys = { path = "packages/js-sys-x", package = "js-sys-x" }
-web-sys = { path = "packages/web-sys-x", package = "web-sys-x" }
-wasm-bindgen-futures = { path = "packages/wasm-bindgen-futures-x", package = "wasm-bindgen-futures-x" }
+js-sys = { path = "packages/js-sys-x" }
+web-sys = { path = "packages/web-sys-x" }
+wasm-bindgen-futures = { path = "packages/wasm-bindgen-futures-x" }
 
 [workspace.lints]

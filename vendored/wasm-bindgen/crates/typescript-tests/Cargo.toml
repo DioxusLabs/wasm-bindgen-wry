@@ -6,12 +6,12 @@ publish = false
 version = "0.0.0"
 
 [dependencies]
-js-sys = { path = '../js-sys' }
+js-sys = { path = '../js-sys', package = "js-sys-wry" }
 serde = { version = "1.0", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
 wasm-bindgen = { path = '../..' }
-wasm-bindgen-futures = { path = '../futures' }
-web-sys = { path = '../web-sys', features = ['HtmlElement', 'Node', 'Document'] }
+wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry" }
+web-sys = { path = '../web-sys', package = "web-sys-wry", features = ['HtmlElement', 'Node', 'Document'] }
 
 [lib]
 crate-type = ['cdylib']

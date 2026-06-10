@@ -561,10 +561,9 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
         ensure_lib_name(&manifest, krate.lib_name)?;
         rewrite_wry_sys_dependency_packages(&manifest, &versions)?;
 
-        rewrite_sys_shim_upstream_dependency(
-            &staging_dir.join(krate.source_manifest()),
-            krate.source_name,
-        )?;
+        let shim_manifest = staging_dir.join(krate.source_manifest());
+        rename_package(&shim_manifest, krate.source_name, krate.shim_publish_name)?;
+        rewrite_sys_shim_upstream_dependency(&shim_manifest, krate.source_name)?;
     }
 
     for krate in publish_crates().into_iter().filter(|krate| {
