@@ -760,10 +760,11 @@ fn rewrite_sys_shim_upstream_dependency(path: &Path, source_name: &str) -> Resul
             continue;
         }
 
-        let updated_table = remove_inline_table_value(table_body, "git");
-        let updated_table = remove_inline_table_value(&updated_table, "tag");
-        let updated_table =
-            upsert_inline_table_value(&updated_table, "version", &format!("={upstream_version}"));
+        let updated_table = rewrite_git_dependency_to_published_table(
+            table_body,
+            key,
+            upstream_version,
+        );
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
         changed = true;
     }
@@ -1225,7 +1226,7 @@ fn rewrite_dependency_packages(
                     updated_table = replace_inline_table_value(
                         &updated_table,
                         "version",
-                        &format!("={stable_version}"),
+                        stable_version,
                     );
                 }
                 lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
@@ -1234,23 +1235,20 @@ fn rewrite_dependency_packages(
             continue;
         }
 
-        // The wasm32 `wasm-bindgen` delegate is sourced from git so the workspace
-        // `[patch.crates-io]` does not capture it. A git source cannot be published,
-        // so repoint it at the tagged crates.io release: the published crate depends
-        // on the real upstream `wasm-bindgen` (kept under its real name, not the `-x`
-        // shim) at the same version as the tag.
+        // The wasm32 upstream delegates are sourced from git so the workspace
+        // `[patch.crates-io]` does not capture them. A git source cannot be
+        // published, so repoint it at the tagged crates.io release, keeping the
+        // real upstream package name rather than the `-x` shim.
         if inline_table_value(table_body, "git").is_some() {
-            let package = inline_table_value(table_body, "package").unwrap_or(key);
             let version = inline_table_value(table_body, "tag").ok_or_else(|| {
                 Error::new(format!(
                     "{}: git dependency `{key}` needs a `tag` to map to a crates.io version",
                     path.display()
                 ))
             })?;
-            lines.set_body(
-                index,
-                format!("{prefix} package = \"{package}\", version = \"{version}\" {suffix}"),
-            );
+            let updated_table =
+                rewrite_git_dependency_to_published_table(table_body, key, version);
+            lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
             changed = true;
             continue;
         }
@@ -1311,6 +1309,18 @@ fn rewrite_path_dependency_packages(path: &Path, versions: &BTreeMap<String, Str
         fs::write(path, lines.into_string())?;
     }
     Ok(())
+}
+
+fn rewrite_git_dependency_to_published_table(
+    table_body: &str,
+    key: &str,
+    version: &str,
+) -> String {
+    let package = inline_table_value(table_body, "package").unwrap_or(key);
+    let updated_table = remove_inline_table_value(table_body, "git");
+    let updated_table = remove_inline_table_value(&updated_table, "tag");
+    let updated_table = upsert_inline_table_value(&updated_table, "package", package);
+    upsert_inline_table_value(&updated_table, "version", version)
 }
 
 fn ensure_patch_crates_io_entry(
@@ -1866,6 +1876,29 @@ mod tests {
     }
 
     #[test]
+    fn git_dependency_rewrite_uses_floating_published_crates_io_version() {
+        let table = r#" package = "js-sys", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122", default-features = false "#;
+        let table = rewrite_git_dependency_to_published_table(table, "js-sys-upstream", "0.3.99");
+
+        assert!(table.contains(r#"package = "js-sys""#));
+        assert!(table.contains(r#"version = "0.3.99""#));
+        assert!(table.contains("default-features = false"));
+        assert!(!table.contains("git ="));
+        assert!(!table.contains("tag ="));
+    }
+
+    #[test]
+    fn git_dependency_rewrite_defaults_package_to_dependency_key() {
+        let table = r#" git = "https://github.com/example/example", tag = "1.2.3" "#;
+        let table = rewrite_git_dependency_to_published_table(table, "example-upstream", "1.2.3");
+
+        assert!(table.contains(r#"package = "example-upstream""#));
+        assert!(table.contains(r#"version = "1.2.3""#));
+        assert!(!table.contains("git ="));
+        assert!(!table.contains("tag ="));
+    }
+
+    #[test]
     fn rewrite_dependency_packages_keeps_dev_dependencies_on_registry_names() {
         let path = env::temp_dir().join(format!(
             "publish-wasm-bindgen-x-dev-dep-test-{}.toml",
@@ -1887,9 +1920,8 @@ web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=
 
         let output = fs::read_to_string(&path).unwrap();
         let _ = fs::remove_file(&path);
-        assert!(output.contains(
-            "web-sys = { version = \"=0.3.99\", features = [\"Window\", \"Document\"] }"
-        ));
+        assert!(output
+            .contains("web-sys = { version = \"0.3.99\", features = [\"Window\", \"Document\"] }"));
         assert!(!output.contains("web-sys-x"));
         assert!(!output.contains("path ="));
     }
