@@ -60,10 +60,10 @@ const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
 ];
 const WASM_BINDGEN_MACRO_SUPPORT_PACKAGE_NAMES: &[&str] =
     &["wasm-bindgen-macro-support", "wasm-bindgen-macro-support-x"];
-const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x"];
-const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x"];
+const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x", "js-sys-wry"];
+const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x", "web-sys-wry"];
 const WASM_BINDGEN_FUTURES_PACKAGE_NAMES: &[&str] =
-    &["wasm-bindgen-futures", "wasm-bindgen-futures-x"];
+    &["wasm-bindgen-futures", "wasm-bindgen-futures-x", "wasm-bindgen-futures-wry"];
 const PINNED_UPSTREAM_DEPENDENCY_MANIFESTS: &[&str] = &["packages/wry-launch/Cargo.toml"];
 
 #[derive(Debug)]

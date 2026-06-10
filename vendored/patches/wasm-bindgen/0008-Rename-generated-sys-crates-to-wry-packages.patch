@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Wed, 10 Jun 2026 00:00:00 -0500
+Subject: [PATCH 8/8] Rename generated sys crates to wry packages
+
+---
+ crates/futures/Cargo.toml | 7 +++++--
+ crates/js-sys/Cargo.toml  | 3 ++-
+ crates/web-sys/Cargo.toml | 5 +++--
+ 3 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
+index dfa17a9a1..2cd2cada5 100644
+--- a/crates/futures/Cargo.toml
++++ b/crates/futures/Cargo.toml
+@@ -6,7 +6,7 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen/"
+ include = ["/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "wasm-bindgen-futures"
++name = "wasm-bindgen-futures-wry"
+ readme = "./README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures"
+ rust-version = "1.77"
+@@ -16,8 +16,11 @@ version = "0.4.72"
+ all-features = true
+ rustdoc-args = ["--cfg", "docsrs"]
+ 
++[lib]
++name = "wasm_bindgen_futures"
++
+ [dependencies]
+-js-sys = { path = "../js-sys", package = "js-sys", default-features = false }
++js-sys = { path = "../js-sys", package = "js-sys-wry", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [features]
+diff --git a/crates/js-sys/Cargo.toml b/crates/js-sys/Cargo.toml
+index db9619d76..9f4116a31 100644
+--- a/crates/js-sys/Cargo.toml
++++ b/crates/js-sys/Cargo.toml
+@@ -10,13 +10,14 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen/"
+ include = ["/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "js-sys"
++name = "js-sys-wry"
+ readme = "./README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys"
+ rust-version = "1.77"
+ version = "0.3.99"
+ 
+ [lib]
++name = "js_sys"
+ doctest = false
+ test = false
+ 
+diff --git a/crates/web-sys/Cargo.toml b/crates/web-sys/Cargo.toml
+index ade3f2af3..e76771d4c 100644
+--- a/crates/web-sys/Cargo.toml
++++ b/crates/web-sys/Cargo.toml
+@@ -8,7 +8,7 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen/web-sys/index.html"
+ include = ["/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "web-sys"
++name = "web-sys-wry"
+ readme = "./README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys"
+ rust-version = "1.77"
+@@ -19,11 +19,12 @@ all-features = true
+ rustdoc-args = ["--cfg=web_sys_unstable_apis"]
+ 
+ [lib]
++name = "web_sys"
+ doctest = false
+ test = false
+ 
+ [dependencies]
+-js-sys = { path = '../js-sys', package = "js-sys", default-features = false }
++js-sys = { path = '../js-sys', package = "js-sys-wry", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [lints.rust]
+-- 
+2.49.0
+

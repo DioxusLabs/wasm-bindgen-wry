@@ -2964,10 +2964,32 @@ checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 [[package]]
 name = "js-sys"
 version = "0.3.99"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "142bc4740e452c1e57ade0cbc129f139c9093e354346f0872ef985f4f5cf5f11"
 dependencies = [
  "cfg-if",
+ "futures-core",
+ "futures-util",
+ "once_cell",
+ "wasm-bindgen 0.2.122",
+]
+
+[[package]]
+name = "js-sys-wry"
+version = "0.3.99"
+dependencies = [
+ "cfg-if",
+ "futures-core",
  "futures-util",
  "wasm-bindgen 0.2.122",
+]
+
+[[package]]
+name = "js-sys-x"
+version = "0.3.99"
+dependencies = [
+ "js-sys",
+ "js-sys-wry",
 ]
 
 [[package]]
@@ -6141,9 +6163,27 @@ dependencies = [
 [[package]]
 name = "wasm-bindgen-futures"
 version = "0.4.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9473dbd2991ae90b6291c3c32c30c6187ac49aa32f9905d1cce280ec1e110b0f"
 dependencies = [
  "js-sys",
  "wasm-bindgen 0.2.122",
+]
+
+[[package]]
+name = "wasm-bindgen-futures-wry"
+version = "0.4.72"
+dependencies = [
+ "js-sys-wry",
+ "wasm-bindgen 0.2.122",
+]
+
+[[package]]
+name = "wasm-bindgen-futures-x"
+version = "0.4.72"
+dependencies = [
+ "wasm-bindgen-futures",
+ "wasm-bindgen-futures-wry",
 ]
 
 [[package]]
@@ -6318,9 +6358,27 @@ dependencies = [
 [[package]]
 name = "web-sys"
 version = "0.3.99"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d621441cfc37b84979402712047321980c178f299193a3589d05b99e8763436"
 dependencies = [
  "js-sys",
  "wasm-bindgen 0.2.122",
+]
+
+[[package]]
+name = "web-sys-wry"
+version = "0.3.99"
+dependencies = [
+ "js-sys-wry",
+ "wasm-bindgen 0.2.122",
+]
+
+[[package]]
+name = "web-sys-x"
+version = "0.3.99"
+dependencies = [
+ "web-sys",
+ "web-sys-wry",
 ]
 
 [[package]]
@@ -7043,7 +7101,7 @@ dependencies = [
  "once_cell",
  "ouroboros",
  "tao",
- "web-sys",
+ "web-sys-x",
  "wry",
 ]
 

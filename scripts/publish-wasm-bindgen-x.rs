@@ -30,6 +30,9 @@ const COPY_ENTRIES: &[&str] = &[
     "packages/wry-bindgen-macro-support",
     "packages/wasm-bindgen",
     "packages/wasm-bindgen-macro",
+    "packages/js-sys-x",
+    "packages/web-sys-x",
+    "packages/wasm-bindgen-futures-x",
     "vendored/wasm-bindgen/Cargo.toml",
     "vendored/wasm-bindgen/LICENSE-APACHE",
     "vendored/wasm-bindgen/LICENSE-MIT",
@@ -59,22 +62,31 @@ const RENAMED_CRATES: &[RenamedCrate] = &[
         publish_name: "wasm-bindgen-macro-support-x",
         lib_name: "wasm_bindgen_macro_support",
     },
-    RenamedCrate {
-        manifest: "vendored/wasm-bindgen/crates/js-sys/Cargo.toml",
+];
+
+const SYS_SHIM_CRATES: &[SysShimCrate] = &[
+    SysShimCrate {
+        source_dir: "packages/js-sys-x",
+        wry_dir: "vendored/wasm-bindgen/crates/js-sys",
         source_name: "js-sys",
-        publish_name: "js-sys-x",
+        shim_publish_name: "js-sys-x",
+        wry_publish_name: "js-sys-wry",
         lib_name: "js_sys",
     },
-    RenamedCrate {
-        manifest: "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
+    SysShimCrate {
+        source_dir: "packages/web-sys-x",
+        wry_dir: "vendored/wasm-bindgen/crates/web-sys",
         source_name: "web-sys",
-        publish_name: "web-sys-x",
+        shim_publish_name: "web-sys-x",
+        wry_publish_name: "web-sys-wry",
         lib_name: "web_sys",
     },
-    RenamedCrate {
-        manifest: "vendored/wasm-bindgen/crates/futures/Cargo.toml",
+    SysShimCrate {
+        source_dir: "packages/wasm-bindgen-futures-x",
+        wry_dir: "vendored/wasm-bindgen/crates/futures",
         source_name: "wasm-bindgen-futures",
-        publish_name: "wasm-bindgen-futures-x",
+        shim_publish_name: "wasm-bindgen-futures-x",
+        wry_publish_name: "wasm-bindgen-futures-wry",
         lib_name: "wasm_bindgen_futures",
     },
 ];
@@ -114,6 +126,26 @@ struct RenamedCrate {
 struct PublishCrate {
     manifest: &'static str,
     publish_name: &'static str,
+}
+
+#[derive(Clone, Copy)]
+struct SysShimCrate {
+    source_dir: &'static str,
+    wry_dir: &'static str,
+    source_name: &'static str,
+    shim_publish_name: &'static str,
+    wry_publish_name: &'static str,
+    lib_name: &'static str,
+}
+
+impl SysShimCrate {
+    fn source_manifest(self) -> String {
+        format!("{}/Cargo.toml", self.source_dir)
+    }
+
+    fn wry_manifest(self) -> String {
+        format!("{}/Cargo.toml", self.wry_dir)
+    }
 }
 
 #[derive(Debug)]
@@ -174,6 +206,13 @@ fn run() -> Result<()> {
         println!(
             "  {} {} -> {}",
             krate.source_name, version, krate.publish_name
+        );
+    }
+    for krate in SYS_SHIM_CRATES {
+        let version = read_package_version(&staging_dir.join(krate.source_manifest()))?;
+        println!(
+            "  {} {} -> {}, {}",
+            krate.source_name, version, krate.wry_publish_name, krate.shim_publish_name
         );
     }
 
@@ -269,9 +308,9 @@ Options:
 The script rewrites package names only in the staging tree:
   wasm-bindgen -> wasm-bindgen-x
   wasm-bindgen-macro -> wasm-bindgen-macro-x
-  js-sys -> js-sys-x
-  web-sys -> web-sys-x
-  wasm-bindgen-futures -> wasm-bindgen-futures-x
+  js-sys -> js-sys-wry plus js-sys-x shim
+  web-sys -> web-sys-wry plus web-sys-x shim
+  wasm-bindgen-futures -> wasm-bindgen-futures-wry plus wasm-bindgen-futures-x shim
 "
     );
 }
@@ -362,9 +401,20 @@ fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
         return true;
     }
 
-    RENAMED_CRATES.iter().any(|renamed| {
+    if RENAMED_CRATES.iter().any(|renamed| {
         renamed.manifest == krate.manifest
             && (renamed.source_name == request || renamed.publish_name == request)
+    }) {
+        return true;
+    }
+
+    SYS_SHIM_CRATES.iter().any(|sys| {
+        let source_manifest = sys.source_manifest();
+        let wry_manifest = sys.wry_manifest();
+        (krate.manifest == source_manifest
+            && (sys.source_name == request || sys.shim_publish_name == request))
+            || (krate.manifest == wry_manifest
+                && (sys.source_name == request || sys.wry_publish_name == request))
     })
 }
 
@@ -404,14 +454,26 @@ fn publish_crates() -> Vec<PublishCrate> {
         },
         PublishCrate {
             manifest: "vendored/wasm-bindgen/crates/js-sys/Cargo.toml",
+            publish_name: "js-sys-wry",
+        },
+        PublishCrate {
+            manifest: "packages/js-sys-x/Cargo.toml",
             publish_name: "js-sys-x",
         },
         PublishCrate {
             manifest: "vendored/wasm-bindgen/crates/web-sys/Cargo.toml",
+            publish_name: "web-sys-wry",
+        },
+        PublishCrate {
+            manifest: "packages/web-sys-x/Cargo.toml",
             publish_name: "web-sys-x",
         },
         PublishCrate {
             manifest: "vendored/wasm-bindgen/crates/futures/Cargo.toml",
+            publish_name: "wasm-bindgen-futures-wry",
+        },
+        PublishCrate {
+            manifest: "packages/wasm-bindgen-futures-x/Cargo.toml",
             publish_name: "wasm-bindgen-futures-x",
         },
     ]
@@ -493,20 +555,39 @@ fn rewrite_staging_manifests(staging_dir: &Path) -> Result<()> {
         ensure_lib_name(&manifest, krate.lib_name)?;
     }
 
-    for krate in publish_crates() {
+    for krate in SYS_SHIM_CRATES {
+        let manifest = staging_dir.join(krate.wry_manifest());
+        ensure_package_is(&manifest, krate.wry_publish_name)?;
+        ensure_lib_name(&manifest, krate.lib_name)?;
+        rewrite_wry_sys_dependency_packages(&manifest, &versions)?;
+    }
+
+    for krate in publish_crates().into_iter().filter(|krate| {
+        !SYS_SHIM_CRATES
+            .iter()
+            .any(|sys| krate.manifest == sys.source_manifest() || krate.manifest == sys.wry_manifest())
+    }) {
         rewrite_dependency_packages(&staging_dir.join(krate.manifest), &versions, true)?;
     }
 
     let root_manifest = staging_dir.join("Cargo.toml");
     rewrite_root_workspace_members(&root_manifest)?;
     rewrite_dependency_packages(&root_manifest, &versions, false)?;
-    ensure_patch_crates_io_entry(
-        &root_manifest,
-        "web-sys",
-        "vendored/wasm-bindgen/crates/web-sys",
-        "web-sys-x",
-    )?;
     trim_web_sys_features_to_published(staging_dir)?;
+    for krate in SYS_SHIM_CRATES {
+        ensure_patch_crates_io_entry(
+            &root_manifest,
+            krate.source_name,
+            krate.source_dir,
+            krate.shim_publish_name,
+        )?;
+        ensure_patch_crates_io_entry(
+            &root_manifest,
+            krate.wry_publish_name,
+            krate.wry_dir,
+            krate.wry_publish_name,
+        )?;
+    }
     Ok(())
 }
 
@@ -545,11 +626,22 @@ fn trim_web_sys_features_to_published(staging_dir: &Path) -> Result<()> {
         )));
     }
 
+    trim_web_sys_manifest_features(&manifest, &retained)?;
+    trim_web_sys_manifest_features(
+        &staging_dir.join("packages/web-sys-x/Cargo.toml"),
+        &retained,
+    )?;
+    Ok(())
+}
+
+fn trim_web_sys_manifest_features(path: &Path, retained: &BTreeSet<String>) -> Result<()> {
+    let text = fs::read_to_string(path)?;
+    let features = parse_features(&text, path)?;
     let mut lines = Lines::from(&text);
     let (start, end) = lines.find_section_bounds("features").ok_or_else(|| {
         Error::new(format!(
             "{} is missing a [features] section",
-            manifest.display()
+            path.display()
         ))
     })?;
 
@@ -576,8 +668,74 @@ fn trim_web_sys_features_to_published(staging_dir: &Path) -> Result<()> {
         }
     }
 
-    fs::write(manifest, lines.into_string())?;
+    fs::write(path, lines.into_string())?;
     Ok(())
+}
+
+fn rewrite_wry_sys_dependency_packages(
+    path: &Path,
+    versions: &BTreeMap<String, String>,
+) -> Result<()> {
+    let text = fs::read_to_string(path)?;
+    let mut lines = Lines::from(&text);
+    let mut changed = false;
+    let mut current_section = None;
+
+    for index in 0..lines.len() {
+        if let Some(section) = section_name(lines.body(index)) {
+            current_section = Some(section.to_string());
+            continue;
+        }
+
+        let in_dependencies = current_section.as_deref().is_some_and(|section| {
+            section == "dependencies" || section.ends_with(".dependencies")
+        });
+        if !in_dependencies {
+            continue;
+        }
+
+        let line = lines.body(index).to_string();
+        let Some((prefix, key, table_body, suffix)) = split_inline_table(&line) else {
+            continue;
+        };
+        let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
+        let Some(publish_name) = wry_sys_dependency_package_name(dependency_name) else {
+            continue;
+        };
+
+        let mut updated_table = remove_inline_table_value(table_body, "path");
+        updated_table = upsert_inline_table_value(&updated_table, "package", publish_name);
+        if let Some(path) = wry_sys_dependency_path(publish_name) {
+            updated_table = upsert_inline_table_value(&updated_table, "path", path);
+        }
+        let version = versions.get(publish_name).ok_or_else(|| {
+            Error::new(format!("missing package version for `{publish_name}`"))
+        })?;
+        updated_table = upsert_inline_table_value(&updated_table, "version", &format!("={version}"));
+        lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+        changed = true;
+    }
+
+    if changed {
+        fs::write(path, lines.into_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn shim_feature_dependencies(feature: &Feature, upstream_dep: &str, wry_dep: &str) -> String {
+    let mut dependencies = feature.dependencies.clone();
+    if feature.name != "default" {
+        dependencies.push(format!("{upstream_dep}/{}", feature.name));
+        dependencies.push(format!("{wry_dep}/{}", feature.name));
+    }
+
+    let quoted = dependencies
+        .iter()
+        .map(|dependency| format!("\"{dependency}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{quoted}]")
 }
 
 fn published_crate_features(package: &str) -> Result<BTreeSet<String>> {
@@ -845,6 +1003,9 @@ fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
             "    \"packages/wry-bindgen-macro-support\",",
             "    \"packages/wasm-bindgen\",",
             "    \"packages/wasm-bindgen-macro\",",
+            "    \"packages/js-sys-x\",",
+            "    \"packages/web-sys-x\",",
+            "    \"packages/wasm-bindgen-futures-x\",",
             "    \"vendored/wasm-bindgen/crates/macro-support\",",
             "    \"vendored/wasm-bindgen/crates/js-sys\",",
             "    \"vendored/wasm-bindgen/crates/web-sys\",",
@@ -865,6 +1026,12 @@ fn package_versions(staging_dir: &Path) -> Result<BTreeMap<String, String>> {
         let version = read_package_version(&staging_dir.join(krate.manifest))?;
         versions.insert(krate.source_name.to_string(), version.clone());
         versions.insert(krate.publish_name.to_string(), version);
+    }
+    for krate in SYS_SHIM_CRATES {
+        let version = read_package_version(&staging_dir.join(krate.source_manifest()))?;
+        versions.insert(krate.source_name.to_string(), version.clone());
+        versions.insert(krate.shim_publish_name.to_string(), version.clone());
+        versions.insert(krate.wry_publish_name.to_string(), version);
     }
     for krate in UNRENAMED_PUBLISH_CRATES {
         let version = read_package_version(&staging_dir.join(krate.manifest))?;
@@ -899,6 +1066,17 @@ fn verify_staging(staging_dir: &Path) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+fn ensure_package_is(path: &Path, expected_name: &str) -> Result<()> {
+    let name = read_package_name(path)?;
+    if name != expected_name {
+        return Err(Error::new(format!(
+            "{} package name is `{name}`, expected `{expected_name}`",
+            path.display()
+        )));
+    }
     Ok(())
 }
 
@@ -1081,6 +1259,30 @@ fn renamed_package_name(name: &str) -> Option<&'static str> {
     RENAMED_CRATES
         .iter()
         .find_map(|krate| (krate.source_name == name).then_some(krate.publish_name))
+        .or_else(|| {
+            SYS_SHIM_CRATES
+                .iter()
+                .find_map(|krate| (krate.source_name == name).then_some(krate.shim_publish_name))
+        })
+}
+
+fn wry_sys_dependency_package_name(name: &str) -> Option<&'static str> {
+    if name == "wasm-bindgen" {
+        return Some("wasm-bindgen-x");
+    }
+
+    SYS_SHIM_CRATES.iter().find_map(|krate| {
+        (krate.source_name == name || krate.wry_publish_name == name)
+            .then_some(krate.wry_publish_name)
+    })
+}
+
+fn wry_sys_dependency_path(publish_name: &str) -> Option<&'static str> {
+    match publish_name {
+        "wasm-bindgen-x" => Some("../../../../packages/wasm-bindgen"),
+        "js-sys-wry" => Some("../js-sys"),
+        _ => None,
+    }
 }
 
 fn read_package_name(path: &Path) -> Result<String> {
@@ -1613,6 +1815,55 @@ web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=
         );
         assert_eq!(renamed_package_name("js-sys"), Some("js-sys-x"));
         assert_eq!(renamed_package_name("serde"), None);
+    }
+
+    #[test]
+    fn wry_sys_dependency_map_points_at_native_packages() {
+        assert_eq!(
+            wry_sys_dependency_package_name("wasm-bindgen"),
+            Some("wasm-bindgen-x")
+        );
+        assert_eq!(wry_sys_dependency_package_name("js-sys"), Some("js-sys-wry"));
+        assert_eq!(
+            wry_sys_dependency_package_name("web-sys"),
+            Some("web-sys-wry")
+        );
+        assert_eq!(wry_sys_dependency_package_name("serde"), None);
+        assert_eq!(
+            wry_sys_dependency_path("wasm-bindgen-x"),
+            Some("../../../../packages/wasm-bindgen")
+        );
+        assert_eq!(wry_sys_dependency_path("js-sys-wry"), Some("../js-sys"));
+        assert_eq!(wry_sys_dependency_path("web-sys-wry"), None);
+    }
+
+    #[test]
+    fn shim_features_forward_to_both_target_backends() {
+        let feature = Feature {
+            name: "Document".to_string(),
+            dependencies: vec!["Node".to_string(), "EventTarget".to_string()],
+            line: String::new(),
+        };
+
+        let output = shim_feature_dependencies(&feature, "web-sys-upstream", "web-sys-wry");
+
+        assert_eq!(
+            output,
+            "[\"Node\", \"EventTarget\", \"web-sys-upstream/Document\", \"web-sys-wry/Document\"]"
+        );
+    }
+
+    #[test]
+    fn default_shim_feature_keeps_local_dependencies_only() {
+        let feature = Feature {
+            name: "default".to_string(),
+            dependencies: vec!["std".to_string()],
+            line: String::new(),
+        };
+
+        let output = shim_feature_dependencies(&feature, "js-sys-upstream", "js-sys-wry");
+
+        assert_eq!(output, "[\"std\"]");
     }
 
     #[test]

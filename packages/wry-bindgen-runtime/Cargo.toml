@@ -21,7 +21,7 @@ lazy-js-bundle = "0.7.2"
 [dev-dependencies]
 tao = "0.34"
 wry = "0.53.5"
-web-sys = { path = "../../vendored/wasm-bindgen/crates/web-sys", version = "=0.3.99", features = ["Window", "Document", "Element", "HtmlElement"] }
+web-sys = { path = "../web-sys-x", package = "web-sys-x", version = "=0.3.99", features = ["Window", "Document", "Element", "HtmlElement"] }
 futures = "0.3"
 
 [lints]
