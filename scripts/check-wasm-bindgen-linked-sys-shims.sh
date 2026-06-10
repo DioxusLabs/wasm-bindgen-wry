@@ -15,6 +15,14 @@ if [ -z "$wasm_bindgen_version" ]; then
   exit 2
 fi
 
+web_sys_version="$(
+  sed -n 's/^version = "\(.*\)"/\1/p' vendored/wasm-bindgen/crates/web-sys/Cargo.toml | head -n 1
+)"
+if [ -z "$web_sys_version" ]; then
+  echo "could not read vendored web-sys version" >&2
+  exit 2
+fi
+
 wasm_bindgen_bin="${WASM_BINDGEN:-}"
 if [ -n "$wasm_bindgen_bin" ] && [ ! -x "$wasm_bindgen_bin" ]; then
   echo "WASM_BINDGEN is set but is not executable: $wasm_bindgen_bin" >&2
@@ -58,14 +66,14 @@ trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/dep-normal/src" "$tmp/app/src"
 
-cat > "$tmp/dep-normal/Cargo.toml" <<'TOML'
+cat > "$tmp/dep-normal/Cargo.toml" <<TOML
 [package]
 name = "dep-normal"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-web-sys = { version = "=0.3.99", features = ["Document", "Window"] }
+web-sys = { version = "=$web_sys_version", features = ["Document", "Window"] }
 TOML
 
 cat > "$tmp/dep-normal/src/lib.rs" <<'RS'
@@ -89,7 +97,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 dep-normal = { path = "../dep-normal" }
 wasm-bindgen = "=$wasm_bindgen_version"
-web-sys = { version = "=0.3.99", features = ["Document", "Window"] }
+web-sys = { version = "=$web_sys_version", features = ["Document", "Window"] }
 
 [patch.crates-io]
 wasm-bindgen = { path = "$repo_root/packages/wasm-bindgen" }
