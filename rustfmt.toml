@@ -1,0 +1,3 @@
+# Format with 2024 style across the workspace, including the edition-2021
+# crates (their parse edition still comes from each Cargo.toml).
+style_edition = "2024"

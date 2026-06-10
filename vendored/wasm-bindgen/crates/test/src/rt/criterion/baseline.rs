@@ -14,6 +14,16 @@ use wasm_bindgen::__rt::LazyCell;
 static BASELINE: LazyCell<RefCell<BTreeMap<String, BenchmarkBaseline>>> =
     LazyCell::new(|| RefCell::new(BTreeMap::new()));
 
+#[cfg(target_arch = "wasm32")]
+fn with_baseline<R>(f: impl FnOnce(&RefCell<BTreeMap<String, BenchmarkBaseline>>) -> R) -> R {
+    f(LazyCell::force(&BASELINE))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn with_baseline<R>(f: impl FnOnce(&RefCell<BTreeMap<String, BenchmarkBaseline>>) -> R) -> R {
+    BASELINE.with(f)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct BenchmarkBaseline {
     pub(crate) file: Option<String>,
@@ -26,12 +36,12 @@ pub(crate) struct BenchmarkBaseline {
 
 /// Write the corresponding benchmark ID and corresponding data into the table.
 pub(crate) fn write(id: &str, baseline: BenchmarkBaseline) {
-    BASELINE.with(|baselines| baselines.borrow_mut().insert(id.into(), baseline));
+    with_baseline(|baselines| baselines.borrow_mut().insert(id.into(), baseline));
 }
 
 /// Read the data corresponding to the benchmark ID from the table.
 pub(crate) fn read(id: &str) -> Option<BenchmarkBaseline> {
-    BASELINE.with(|baselines| baselines.borrow().get(id).cloned())
+    with_baseline(|baselines| baselines.borrow().get(id).cloned())
 }
 
 /// Used to write previous benchmark data before the benchmark, for later comparison.
@@ -39,7 +49,7 @@ pub(crate) fn read(id: &str) -> Option<BenchmarkBaseline> {
 pub fn __wbgbench_import(baseline: Vec<u8>) {
     match serde_json::from_slice(&baseline) {
         Ok(prev) => {
-            BASELINE.with(|baselines| *baselines.borrow_mut() = prev);
+            with_baseline(|baselines| *baselines.borrow_mut() = prev);
         }
         Err(e) => {
             console_log!("Failed to import previous benchmark {e:?}");
@@ -50,7 +60,7 @@ pub fn __wbgbench_import(baseline: Vec<u8>) {
 /// Used to read benchmark data, and then the runner stores it on the local disk.
 #[wasm_bindgen]
 pub fn __wbgbench_dump() -> Option<Vec<u8>> {
-    BASELINE.with(|baseline| {
+    with_baseline(|baseline| {
         let baseline = baseline.borrow();
         if baseline.is_empty() {
             return None;

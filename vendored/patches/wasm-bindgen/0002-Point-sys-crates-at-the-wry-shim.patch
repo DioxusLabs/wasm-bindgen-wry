@@ -6,11 +6,12 @@ Subject: [PATCH 2/4] Point sys crates at the wry shim
 ---
  crates/futures/Cargo.toml |  9 ++-------
  crates/js-sys/Cargo.toml  | 10 +---------
+ crates/macro/Cargo.toml   |  2 +-
  crates/shared/Cargo.toml  |  5 -----
  crates/test/Cargo.toml    |  2 +-
  crates/web-sys/Cargo.toml |  9 ++-------
  crates/web-sys/src/lib.rs |  2 +-
- 6 files changed, 7 insertions(+), 30 deletions(-)
+ 7 files changed, 8 insertions(+), 31 deletions(-)
 
 diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
 index b355ca5..dfa17a9 100644
@@ -58,6 +59,19 @@ index 1da2a7e..ee70f10 100644
  
  [lints.rust]
  unexpected_cfgs = { level = "warn", check-cfg = ['cfg(js_sys_unstable_apis)'] }
+diff --git a/crates/macro/Cargo.toml b/crates/macro/Cargo.toml
+index e76e0db..4e9ad47 100644
+--- a/crates/macro/Cargo.toml
++++ b/crates/macro/Cargo.toml
+@@ -26,7 +26,7 @@ wasm-bindgen-macro-support = { path = "../macro-support", version = "=0.2.122"
+ [dev-dependencies]
+ js-sys = { path = "../js-sys" }
+ trybuild = "1.0"
+-wasm-bindgen = { path = "../.." }
++wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen" }
+ wasm-bindgen-futures = { path = "../futures" }
+ web-sys = { path = "../web-sys", features = ["Worker"] }
+ 
 diff --git a/crates/shared/Cargo.toml b/crates/shared/Cargo.toml
 index 4b37dac..c57d1bd 100644
 --- a/crates/shared/Cargo.toml

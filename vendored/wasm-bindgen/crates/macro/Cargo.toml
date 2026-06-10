@@ -8,7 +8,7 @@ edition = "2021"
 homepage = "https://wasm-bindgen.github.io/wasm-bindgen/"
 include = ["/LICENSE-*", "/src"]
 license = "MIT OR Apache-2.0"
-name = "wasm-bindgen-macro"
+name = "not-wasm-bindgen-macro"
 repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro"
 rust-version = "1.77"
 version = "0.2.122"
@@ -26,7 +26,7 @@ wasm-bindgen-macro-support = { path = "../macro-support", version = "=0.2.122" }
 [dev-dependencies]
 js-sys = { path = "../js-sys" }
 trybuild = "1.0"
-wasm-bindgen = { path = "../.." }
+wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen" }
 wasm-bindgen-futures = { path = "../futures" }
 web-sys = { path = "../web-sys", features = ["Worker"] }
 

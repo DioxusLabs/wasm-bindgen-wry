@@ -1,0 +1,3 @@
+# main.rs pulls upstream wasm-bindgen test sources in unmodified via `#[path]`;
+# keep this directory byte-identical to upstream formatting.
+disable_all_formatting = true

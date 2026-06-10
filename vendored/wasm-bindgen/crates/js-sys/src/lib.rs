@@ -13581,7 +13581,17 @@ pub fn global() -> Object {
     #[cfg_attr(target_feature = "atomics", thread_local)]
     static GLOBAL: LazyCell<Object> = LazyCell::new(get_global_object);
 
-    return GLOBAL.with(Clone::clone);
+    #[cfg(target_arch = "wasm32")]
+    fn with_global<R>(global: &'static LazyCell<Object>, f: impl FnOnce(&Object) -> R) -> R {
+        f(LazyCell::force(global))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn with_global<R>(global: &'static LazyCell<Object>, f: impl FnOnce(&Object) -> R) -> R {
+        global.with(f)
+    }
+
+    return with_global(&GLOBAL, Clone::clone);
 
     fn get_global_object() -> Object {
         // Accessing the global object is not an easy thing to do, and what we
