@@ -15,14 +15,16 @@ test = false
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures-upstream = { package = "wasm-bindgen-futures", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122", default-features = false }
+wasm-bindgen-futures-wry = { package = "wasm-bindgen-futures-wry", path = "../../vendored/wasm-bindgen/crates/futures", version = "=0.4.72", default-features = false, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasm-bindgen-futures-wry = { package = "wasm-bindgen-futures-wry", path = "../../vendored/wasm-bindgen/crates/futures", version = "=0.4.72", default-features = false }
 
 [features]
 default = ["std"]
-futures-core-03-stream = ["wasm-bindgen-futures-upstream/futures-core-03-stream", "wasm-bindgen-futures-wry/futures-core-03-stream"]
-std = ["wasm-bindgen-futures-upstream/std", "wasm-bindgen-futures-wry/std"]
+futures-core-03-stream = ["wasm-bindgen-futures-upstream/futures-core-03-stream", "wasm-bindgen-futures-wry?/futures-core-03-stream"]
+std = ["wasm-bindgen-futures-upstream/std", "wasm-bindgen-futures-wry?/std"]
+unstable_force_wry_backend = ["dep:wasm-bindgen-futures-wry"]
 
 [lints]
 workspace = true

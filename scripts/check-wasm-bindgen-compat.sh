@@ -53,10 +53,12 @@ cd "$repo_root" || exit 2
 
 WB="$repo_root/packages/wasm-bindgen"
 JS="$repo_root/packages/js-sys-x"
+WEB="$repo_root/packages/web-sys-x"
 FUT="$repo_root/packages/wasm-bindgen-futures-x"
 PATCH=(
   --config "patch.crates-io.wasm-bindgen.path=\"$WB\""
   --config "patch.crates-io.js-sys.path=\"$JS\""
+  --config "patch.crates-io.web-sys.path=\"$WEB\""
   --config "patch.crates-io.wasm-bindgen-futures.path=\"$FUT\""
 )
 WASM_TARGET="wasm32-unknown-unknown"
@@ -236,6 +238,9 @@ build_one() {
     # wasm32 mode: force the wry backend on for the whole build graph.
     if [ "$mode" = wasm32 ]; then
       echo 'wasm-bindgen = { version = "*", features = ["unstable_force_wry_backend"] }'
+      echo 'js-sys = { version = "*", features = ["unstable_force_wry_backend"] }'
+      echo 'web-sys = { version = "*", features = ["unstable_force_wry_backend"] }'
+      echo 'wasm-bindgen-futures = { version = "*", features = ["unstable_force_wry_backend"] }'
       # getrandom refuses to build for wasm32 without an explicit RNG backend
       # (its own opt-in, unrelated to the shim). Select the JS backend the way
       # any real wasm32 app does, so transitive getrandom does not mask the
