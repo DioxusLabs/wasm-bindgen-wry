@@ -1446,6 +1446,14 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
     command.current_dir(crate_dir);
 
     println!("  {} {}", krate.publish_name, version);
+    if published_crate_version_exists(krate.publish_name, &version)? {
+        println!(
+            "  skipping {} {}; version already exists on crates.io",
+            krate.publish_name, version
+        );
+        return Ok(());
+    }
+
     let status = command.status().map_err(|error| {
         Error::new(format!(
             "failed to run cargo publish for {}: {error}",
@@ -1460,6 +1468,18 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
     }
 
     Ok(())
+}
+
+fn published_crate_version_exists(package: &str, version: &str) -> Result<bool> {
+    let output = Command::new("cargo")
+        .args(["info", &format!("{package}@{version}"), "--color", "never"])
+        .output()
+        .map_err(|error| {
+            Error::new(format!(
+                "failed to check crates.io for {package}@{version}: {error}"
+            ))
+        })?;
+    Ok(output.status.success())
 }
 
 fn run_workspace_dry_run(
@@ -1479,6 +1499,7 @@ fn run_workspace_dry_run(
     if args.no_verify {
         command.arg("--no-verify");
     }
+    command.env("CARGO_HOME", dry_run_cargo_home(staging_dir));
     command.current_dir(staging_dir);
 
     let status = command.status().map_err(|error| {
@@ -1494,6 +1515,11 @@ fn run_workspace_dry_run(
     }
 
     Ok(())
+}
+
+fn dry_run_cargo_home(staging_dir: &Path) -> PathBuf {
+    let parent = staging_dir.parent().unwrap_or(staging_dir);
+    parent.join(format!("publish-dry-run-cargo-home-{}", process::id()))
 }
 
 fn find_section<'a>(text: &'a str, section: &str) -> Option<&'a str> {
