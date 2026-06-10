@@ -1,0 +1,34 @@
+[package]
+name = "wasm-bindgen-futures"
+version = "0.4.72"
+edition = "2021"
+description = "Target-switching shim for wasm-bindgen-futures and wasm-bindgen-futures-wry"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/DioxusLabs/wasm-bindgen-wry"
+rust-version = "1.77"
+readme = "./README.md"
+
+[lib]
+name = "wasm_bindgen_futures"
+doctest = false
+test = false
+
+[dependencies]
+js-sys = { path = "../js-sys-x", version = "=0.3.99", default-features = false }
+wasm-bindgen = { path = "../wasm-bindgen", version = "=0.2.122", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures-upstream = { package = "wasm-bindgen-futures", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122", default-features = false }
+wasm-bindgen-futures-wry = { package = "wasm-bindgen-futures-wry", path = "../../vendored/wasm-bindgen/crates/futures", version = "=0.4.72", default-features = false, optional = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasm-bindgen-futures-wry = { package = "wasm-bindgen-futures-wry", path = "../../vendored/wasm-bindgen/crates/futures", version = "=0.4.72", default-features = false }
+
+[features]
+default = ["std"]
+futures-core-03-stream = ["wasm-bindgen-futures-upstream/futures-core-03-stream", "wasm-bindgen-futures-wry?/futures-core-03-stream"]
+std = ["wasm-bindgen-futures-upstream/std", "wasm-bindgen-futures-wry?/std", "js-sys/std", "wasm-bindgen/std"]
+unstable_force_wry_backend = ["dep:wasm-bindgen-futures-wry"]
+
+[lints]
+workspace = true

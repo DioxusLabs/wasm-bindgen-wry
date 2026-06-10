@@ -86,12 +86,13 @@ impl<T: SlabId> IdSlab<T> {
         true
     }
 
-    /// Release and immediately recycle an ID. Used for IDs with no remote
-    /// cleanup to wait on (e.g. Rust-owned object handles), which can be reused
-    /// as soon as they are freed.
-    pub(crate) fn free(&mut self, id: T) {
+    /// Release an ID without putting it back on the free list.
+    ///
+    /// Use this for IDs that have escaped to JavaScript without a generation
+    /// token. JS finalizers can run later than Rust-side drop, so reusing the
+    /// raw ID would let a stale finalizer affect a different object.
+    pub(crate) fn retire(&mut self, id: T) {
         self.release(id);
-        self.recycle(id);
     }
 
     /// Whether `id` is currently allocated (live).
@@ -319,13 +320,13 @@ mod tests {
     }
 
     #[test]
-    fn object_handles_reuse_released_handles() {
+    fn object_handles_can_retire_released_handles_without_reuse() {
         let mut handles = IdSlab::new(1_u32);
         let first = handles.alloc();
         let second = handles.alloc();
         assert_eq!(first, 1);
-        handles.free(first);
-        assert_eq!(handles.alloc(), first);
+        handles.retire(first);
+        assert_ne!(handles.alloc(), first);
         assert_eq!(second, first + 1);
     }
 

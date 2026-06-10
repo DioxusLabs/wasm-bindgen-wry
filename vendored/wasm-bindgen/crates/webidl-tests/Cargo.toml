@@ -11,9 +11,9 @@ path = 'lib.rs'
 test = false
 
 [dependencies]
-js-sys = { path = '../js-sys', features = ["unsafe-eval"] }
+js-sys = { path = '../js-sys', package = "js-sys-wry", features = ["unsafe-eval"] }
 wasm-bindgen = { path = '../..' }
-wasm-bindgen-futures = { path = '../futures' }
+wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry" }
 
 [build-dependencies]
 env_logger = "0.11"

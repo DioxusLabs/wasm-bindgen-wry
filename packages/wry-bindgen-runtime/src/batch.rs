@@ -631,7 +631,7 @@ impl Runtime {
         debug_assert!(Rc::ptr_eq(&removed, &slot));
         drop(removed);
         if self.object_handles.contains(raw) {
-            self.object_handles.free(raw);
+            self.object_handles.retire(raw);
         }
         Some(
             Rc::try_unwrap(slot)
@@ -1064,8 +1064,12 @@ mod take_encoder_tests {
             5
         );
 
-        let reused = runtime.insert_object_box(Box::new(9_u32));
-        assert_eq!(reused.raw(), handle_raw);
+        let next = runtime.insert_object_box(Box::new(9_u32));
+        assert_ne!(
+            next.raw(),
+            handle_raw,
+            "object handles exposed to JS must not be reused; stale finalizers only carry the raw handle"
+        );
     }
 
     #[test]
@@ -1108,8 +1112,12 @@ mod take_encoder_tests {
             handle.raw()
         });
 
-        let reused = runtime.insert_object_box(Box::new(DropFlag(Rc::new(Cell::new(false)))));
-        assert_eq!(reused.raw(), handle_raw);
+        let next = runtime.insert_object_box(Box::new(DropFlag(Rc::new(Cell::new(false)))));
+        assert_ne!(
+            next.raw(),
+            handle_raw,
+            "deferred-drop handles must be retired once the drop completes"
+        );
     }
 
     #[test]
@@ -1153,7 +1161,11 @@ mod take_encoder_tests {
             handle.raw()
         });
 
-        let reused = runtime.insert_object_box(Box::new(DropFlag(Rc::new(Cell::new(0)))));
-        assert_eq!(reused.raw(), handle_raw);
+        let next = runtime.insert_object_box(Box::new(DropFlag(Rc::new(Cell::new(0)))));
+        assert_ne!(
+            next.raw(),
+            handle_raw,
+            "deferred-drop handles must be retired once the last borrow releases"
+        );
     }
 }

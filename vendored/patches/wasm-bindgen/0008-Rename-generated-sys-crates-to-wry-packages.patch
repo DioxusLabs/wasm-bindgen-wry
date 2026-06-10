@@ -1,0 +1,220 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Wed, 10 Jun 2026 00:00:00 -0500
+Subject: [PATCH 8/8] Rename generated sys crates to wry packages
+
+---
+ crates/futures/Cargo.toml | 7 +++++--
+ crates/js-sys/Cargo.toml  | 3 ++-
+ crates/web-sys/Cargo.toml | 5 +++--
+ 3 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
+index dfa17a9a1..2cd2cada5 100644
+--- a/crates/futures/Cargo.toml
++++ b/crates/futures/Cargo.toml
+@@ -6,7 +6,7 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen/"
+ include = ["/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "wasm-bindgen-futures"
++name = "wasm-bindgen-futures-wry"
+ readme = "./README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures"
+ rust-version = "1.77"
+@@ -16,8 +16,11 @@ version = "0.4.72"
+ all-features = true
+ rustdoc-args = ["--cfg", "docsrs"]
+ 
++[lib]
++name = "wasm_bindgen_futures"
++
+ [dependencies]
+-js-sys = { path = "../js-sys", package = "js-sys", default-features = false }
++js-sys = { path = "../js-sys", package = "js-sys-wry", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [features]
+diff --git a/crates/js-sys/Cargo.toml b/crates/js-sys/Cargo.toml
+index db9619d76..9f4116a31 100644
+--- a/crates/js-sys/Cargo.toml
++++ b/crates/js-sys/Cargo.toml
+@@ -10,13 +10,14 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen/"
+ include = ["/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "js-sys"
++name = "js-sys-wry"
+ readme = "./README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys"
+ rust-version = "1.77"
+ version = "0.3.99"
+ 
+ [lib]
++name = "js_sys"
+ doctest = false
+ test = false
+ 
+diff --git a/crates/web-sys/Cargo.toml b/crates/web-sys/Cargo.toml
+index ade3f2af3..e76771d4c 100644
+--- a/crates/web-sys/Cargo.toml
++++ b/crates/web-sys/Cargo.toml
+@@ -8,7 +8,7 @@ edition = "2021"
+ homepage = "https://wasm-bindgen.github.io/wasm-bindgen/web-sys/index.html"
+ include = ["/LICENSE-*", "/src"]
+ license = "MIT OR Apache-2.0"
+-name = "web-sys"
++name = "web-sys-wry"
+ readme = "./README.md"
+ repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys"
+ rust-version = "1.77"
+@@ -19,11 +19,12 @@ all-features = true
+ rustdoc-args = ["--cfg=web_sys_unstable_apis"]
+ 
+ [lib]
++name = "web_sys"
+ doctest = false
+ test = false
+ 
+ [dependencies]
+-js-sys = { path = '../js-sys', package = "js-sys", default-features = false }
++js-sys = { path = '../js-sys', package = "js-sys-wry", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [lints.rust]
+diff --git a/crates/macro/Cargo.toml b/crates/macro/Cargo.toml
+index 4e9ad47ed..a15f82e4c 100644
+--- a/crates/macro/Cargo.toml
++++ b/crates/macro/Cargo.toml
+@@ -24,11 +24,11 @@ quote = "1.0"
+ wasm-bindgen-macro-support = { path = "../macro-support", version = "=0.2.122" }
+ 
+ [dev-dependencies]
+-js-sys = { path = "../js-sys" }
++js-sys = { path = "../js-sys", package = "js-sys-wry" }
+ trybuild = "1.0"
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen" }
+-wasm-bindgen-futures = { path = "../futures" }
+-web-sys = { path = "../web-sys", features = ["Worker"] }
++wasm-bindgen-futures = { path = "../futures", package = "wasm-bindgen-futures-wry" }
++web-sys = { path = "../web-sys", package = "web-sys-wry", features = ["Worker"] }
+ 
+ [lints]
+ workspace = true
+diff --git a/crates/msrv/lib/Cargo.toml b/crates/msrv/lib/Cargo.toml
+index 16d5f22b3..0e23c331d 100644
+--- a/crates/msrv/lib/Cargo.toml
++++ b/crates/msrv/lib/Cargo.toml
+@@ -14,11 +14,11 @@ default = [
+ ]
+ 
+ [dependencies]
+-js-sys = { path = "../../js-sys", default-features = false }
++js-sys = { path = "../../js-sys", package = "js-sys-wry", default-features = false }
+ wasm-bindgen = { path = "../../../", default-features = false }
+-wasm-bindgen-futures = { path = "../../futures", default-features = false }
++wasm-bindgen-futures = { path = "../../futures", package = "wasm-bindgen-futures-wry", default-features = false }
+ wasm-bindgen-test = { path = "../../test", default-features = false }
+-web-sys = { path = "../../web-sys", default-features = false }
++web-sys = { path = "../../web-sys", package = "web-sys-wry", default-features = false }
+ 
+ # Pinned sub-dependencies for MSRV
+ bumpalo = "=3.12.0"
+diff --git a/crates/msrv/resolver/Cargo.toml b/crates/msrv/resolver/Cargo.toml
+index 8a29eb38a..99492f6ec 100644
+--- a/crates/msrv/resolver/Cargo.toml
++++ b/crates/msrv/resolver/Cargo.toml
+@@ -15,11 +15,11 @@ default = [
+ ]
+ 
+ [dependencies]
+-js-sys = { path = "../../js-sys", default-features = false }
++js-sys = { path = "../../js-sys", package = "js-sys-wry", default-features = false }
+ wasm-bindgen = { path = "../../../", default-features = false }
+-wasm-bindgen-futures = { path = "../../futures", default-features = false }
++wasm-bindgen-futures = { path = "../../futures", package = "wasm-bindgen-futures-wry", default-features = false }
+ wasm-bindgen-test = { path = "../../test", default-features = false }
+-web-sys = { path = "../../web-sys", default-features = false }
++web-sys = { path = "../../web-sys", package = "web-sys-wry", default-features = false }
+ 
+ # Pinned sub-dependencies for MSRV
+ bumpalo = "=3.12.0"
+diff --git a/crates/test/Cargo.toml b/crates/test/Cargo.toml
+index a330cade1..7443e3a31 100644
+--- a/crates/test/Cargo.toml
++++ b/crates/test/Cargo.toml
+@@ -15,9 +15,9 @@ std = ["wasm-bindgen/std", "js-sys/std", "wasm-bindgen-futures/std"]
+ 
+ [dependencies]
+ gg-alloc = { version = "1.0", optional = true }
+-js-sys = { path = '../js-sys', version = '=0.3.99', default-features = false }
++js-sys = { path = '../js-sys', package = "js-sys-wry", version = '=0.3.99', default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+-wasm-bindgen-futures = { path = '../futures', version = '=0.4.72', default-features = false }
++wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry", version = '=0.4.72', default-features = false }
+ wasm-bindgen-test-macro = { path = '../test-macro', version = '=0.3.72' }
+ wasm-bindgen-test-shared = { path = "../test-shared", version = "=0.2.122" }
+ 
+@@ -36,7 +36,7 @@ serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
+ minicov = "0.3.8"
+ 
+ [dev-dependencies]
+-web-sys = { path = "../web-sys", features = [
++web-sys = { path = "../web-sys", package = "web-sys-wry", features = [
+   "Blob",
+   "BlobPropertyBag",
+   "ErrorEvent",
+diff --git a/crates/test/sample/Cargo.toml b/crates/test/sample/Cargo.toml
+index e6d8ea5de..95857c084 100644
+--- a/crates/test/sample/Cargo.toml
++++ b/crates/test/sample/Cargo.toml
+@@ -9,9 +9,9 @@ version = "0.0.0"
+ test = false
+ 
+ [dependencies]
+-js-sys = { path = '../../js-sys' }
++js-sys = { path = '../../js-sys', package = "js-sys-wry" }
+ wasm-bindgen = { path = '../../..' }
+-wasm-bindgen-futures = { path = '../../futures' }
++wasm-bindgen-futures = { path = '../../futures', package = "wasm-bindgen-futures-wry" }
+ 
+ [dev-dependencies]
+ wasm-bindgen-test = { path = '..' }
+diff --git a/crates/typescript-tests/Cargo.toml b/crates/typescript-tests/Cargo.toml
+index 1bd464ffb..c94443104 100644
+--- a/crates/typescript-tests/Cargo.toml
++++ b/crates/typescript-tests/Cargo.toml
+@@ -6,12 +6,12 @@ publish = false
+ version = "0.0.0"
+ 
+ [dependencies]
+-js-sys = { path = '../js-sys' }
++js-sys = { path = '../js-sys', package = "js-sys-wry" }
+ serde = { version = "1.0", features = ["derive"] }
+ serde-wasm-bindgen = "0.6"
+ wasm-bindgen = { path = '../..' }
+-wasm-bindgen-futures = { path = '../futures' }
+-web-sys = { path = '../web-sys', features = ['HtmlElement', 'Node', 'Document'] }
++wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry" }
++web-sys = { path = '../web-sys', package = "web-sys-wry", features = ['HtmlElement', 'Node', 'Document'] }
+ 
+ [lib]
+ crate-type = ['cdylib']
+diff --git a/crates/webidl-tests/Cargo.toml b/crates/webidl-tests/Cargo.toml
+index ee5683f1e..00ae71f9b 100644
+--- a/crates/webidl-tests/Cargo.toml
++++ b/crates/webidl-tests/Cargo.toml
+@@ -11,9 +11,9 @@ path = 'lib.rs'
+ test = false
+ 
+ [dependencies]
+-js-sys = { path = '../js-sys', features = ["unsafe-eval"] }
++js-sys = { path = '../js-sys', package = "js-sys-wry", features = ["unsafe-eval"] }
+ wasm-bindgen = { path = '../..' }
+-wasm-bindgen-futures = { path = '../futures' }
++wasm-bindgen-futures = { path = '../futures', package = "wasm-bindgen-futures-wry" }
+ 
+ [build-dependencies]
+ env_logger = "0.11"
+-- 
+2.49.0

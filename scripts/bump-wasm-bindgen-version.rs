@@ -58,13 +58,31 @@ const PATCHED_UPSTREAM_MANIFESTS: &[(&str, &str)] = &[
         "wasm-bindgen-futures",
     ),
 ];
+const SYS_SHIM_MANIFESTS: &[(&str, &str, &str)] = &[
+    ("packages/js-sys-x/Cargo.toml", "js-sys", "js-sys-wry"),
+    ("packages/web-sys-x/Cargo.toml", "web-sys", "web-sys-wry"),
+    (
+        "packages/wasm-bindgen-futures-x/Cargo.toml",
+        "wasm-bindgen-futures",
+        "wasm-bindgen-futures-wry",
+    ),
+];
+const SYS_LOCK_PACKAGES: &[(&str, &str)] = &[
+    ("js-sys-wry", "js-sys"),
+    ("js-sys-x", "js-sys"),
+    ("web-sys-wry", "web-sys"),
+    ("web-sys-x", "web-sys"),
+    ("wasm-bindgen-futures-wry", "wasm-bindgen-futures"),
+    ("wasm-bindgen-futures-x", "wasm-bindgen-futures"),
+];
 const WASM_BINDGEN_MACRO_SUPPORT_PACKAGE_NAMES: &[&str] =
     &["wasm-bindgen-macro-support", "wasm-bindgen-macro-support-x"];
-const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x"];
-const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x"];
+const JS_SYS_PACKAGE_NAMES: &[&str] = &["js-sys", "js-sys-x", "js-sys-wry"];
+const WEB_SYS_PACKAGE_NAMES: &[&str] = &["web-sys", "web-sys-x", "web-sys-wry"];
 const WASM_BINDGEN_FUTURES_PACKAGE_NAMES: &[&str] =
-    &["wasm-bindgen-futures", "wasm-bindgen-futures-x"];
-const PINNED_UPSTREAM_DEPENDENCY_MANIFESTS: &[&str] = &["packages/wry-launch/Cargo.toml"];
+    &["wasm-bindgen-futures", "wasm-bindgen-futures-x", "wasm-bindgen-futures-wry"];
+const PINNED_UPSTREAM_DEPENDENCY_MANIFESTS: &[&str] =
+    &["packages/wry-bindgen-runtime/Cargo.toml"];
 
 #[derive(Debug)]
 struct Error(String);
@@ -147,12 +165,39 @@ fn run() -> Result<()> {
         }
     }
 
+    for (relative_path, crate_name, wry_package_name) in SYS_SHIM_MANIFESTS {
+        let path = repo_root.join(relative_path);
+        let version = patched_upstream_versions
+            .iter()
+            .find_map(|(_, name, version)| (*name == *crate_name).then_some(version.as_str()))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "missing patched upstream version for sys shim crate `{crate_name}`"
+                ))
+            })?;
+        let current = fs::read_to_string(&path)?;
+        let updated = update_sys_shim_manifest_text(
+            &path,
+            &current,
+            patched_upstream_package_names(crate_name),
+            wry_package_name,
+            version,
+        )?;
+        if updated != current {
+            changes.push((path, updated));
+        }
+    }
+
     for relative_path in PINNED_UPSTREAM_DEPENDENCY_MANIFESTS {
         let path = repo_root.join(relative_path);
         let current = fs::read_to_string(&path)?;
         let dependency_versions = patched_upstream_versions
             .iter()
-            .map(|(_, crate_name, version)| (*crate_name, version.clone()))
+            .flat_map(|(_, crate_name, version)| {
+                patched_upstream_package_names(crate_name)
+                    .iter()
+                    .map(|name| (*name, version.clone()))
+            })
             .collect::<Vec<_>>();
         let updated = update_dependency_versions_text(&current, dependency_versions.as_slice());
         if updated != current {
@@ -162,7 +207,8 @@ fn run() -> Result<()> {
 
     let lockfile = repo_root.join("Cargo.lock");
     let current_lock = fs::read_to_string(&lockfile)?;
-    let updated_lock = update_lock_text(&lockfile, &current_lock, &local_versions)?;
+    let lock_versions = lock_versions(&local_versions, &patched_upstream_versions)?;
+    let updated_lock = update_lock_text(&lockfile, &current_lock, &lock_versions)?;
     if updated_lock != current_lock {
         changes.push((lockfile, updated_lock));
     }
@@ -242,6 +288,25 @@ fn read_local_versions(
             bindgen_version.to_string()
         };
         versions.push((*crate_name, version));
+    }
+    Ok(versions)
+}
+
+fn lock_versions(
+    local_versions: &[(&'static str, String)],
+    patched_upstream_versions: &[(&'static str, &'static str, String)],
+) -> Result<Vec<(&'static str, String)>> {
+    let mut versions = local_versions.to_vec();
+    for (package_name, crate_name) in SYS_LOCK_PACKAGES {
+        let version = patched_upstream_versions
+            .iter()
+            .find_map(|(_, name, version)| (*name == *crate_name).then_some(version.clone()))
+            .ok_or_else(|| {
+                Error::new(format!(
+                    "missing patched upstream version for lockfile package `{package_name}`"
+                ))
+            })?;
+        versions.push((*package_name, version));
     }
     Ok(versions)
 }
@@ -522,6 +587,35 @@ fn update_manifest_text(
     Ok(lines.into_string())
 }
 
+fn update_sys_shim_manifest_text(
+    path: &Path,
+    text: &str,
+    expected_names: &[&str],
+    wry_package_name: &str,
+    target_version: &str,
+) -> Result<String> {
+    let mut lines = update_package_version_lines(path, text, expected_names, target_version)?;
+
+    for index in 0..lines.len() {
+        let line = lines.body(index).to_string();
+        let Some((prefix, _key, table_body, suffix)) = split_inline_table(&line) else {
+            continue;
+        };
+        if inline_table_value(table_body, "package") != Some(wry_package_name) {
+            continue;
+        }
+        if inline_table_value(table_body, "version").is_none() {
+            continue;
+        }
+
+        let updated_table =
+            replace_inline_table_value(table_body, "version", &format!("={target_version}"));
+        lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+    }
+
+    Ok(lines.into_string())
+}
+
 fn update_package_version_lines(
     path: &Path,
     text: &str,
@@ -613,20 +707,21 @@ fn update_lock_text(path: &Path, text: &str, local_versions: &[(&str, String)]) 
         let Some(name) = read_field(&block, "name") else {
             continue;
         };
-        if !LOCAL_CRATES.contains(&name) || read_field(&block, "source").is_some() {
+        if read_field(&block, "source").is_some() {
             continue;
         }
 
+        let Some(version) = dependency_version(local_versions, name) else {
+            continue;
+        };
         found.insert(name.to_string());
-        let version = dependency_version(local_versions, name)
-            .ok_or_else(|| Error::new(format!("missing local version for package `{name}`")))?;
         replace_package_version(&mut lines, path, start, end, name, version)?;
     }
 
-    let missing: Vec<_> = LOCAL_CRATES
+    let missing: Vec<_> = local_versions
         .iter()
-        .filter(|crate_name| !found.contains(**crate_name))
-        .copied()
+        .map(|(package_name, _)| *package_name)
+        .filter(|package_name| !found.contains(*package_name))
         .collect();
     if !missing.is_empty() {
         return Err(Error::new(format!(

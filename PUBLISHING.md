@@ -8,13 +8,18 @@ The script does not modify the source tree. It copies the publish inputs to `tar
 
 The wasm-bindgen-facing packages are published with `-x` package names. Their Rust crate names and versions stay unchanged.
 
+The `js-sys`, `web-sys`, and `wasm-bindgen-futures` packages are split in source:
+
+- `*-wry` contains the generated native bindings and depends on `wasm-bindgen-x`.
+- `*-x` is a target-switching shim that re-exports upstream on `wasm32` and `*-wry` on native targets.
+
 | Source package | Published package |
 | --- | --- |
 | `wasm-bindgen` | `wasm-bindgen-x` |
 | `wasm-bindgen-macro` | `wasm-bindgen-macro-x` |
-| `js-sys` | `js-sys-x` |
-| `web-sys` | `web-sys-x` |
-| `wasm-bindgen-futures` | `wasm-bindgen-futures-x` |
+| `js-sys` | `js-sys-wry`, `js-sys-x` |
+| `web-sys` | `web-sys-wry`, `web-sys-x` |
+| `wasm-bindgen-futures` | `wasm-bindgen-futures-wry`, `wasm-bindgen-futures-x` |
 
 The local `wry-bindgen`, `wry-bindgen-macro`, and `wry-bindgen-macro-support` packages keep their package names.
 
@@ -51,9 +56,12 @@ Real publish runs crate-by-crate in dependency order:
 5. `wry-bindgen`
 6. `wasm-bindgen-macro-x`
 7. `wasm-bindgen-x`
-8. `js-sys-x`
-9. `web-sys-x`
-10. `wasm-bindgen-futures-x`
+8. `js-sys-wry`
+9. `js-sys-x`
+10. `web-sys-wry`
+11. `web-sys-x`
+12. `wasm-bindgen-futures-wry`
+13. `wasm-bindgen-futures-x`
 
 ## Useful Options
 

@@ -8,6 +8,9 @@ members = [
     "packages/wry-bindgen-macro-support",
     "packages/wasm-bindgen",
     "packages/wasm-bindgen-macro",
+    "packages/js-sys-x",
+    "packages/web-sys-x",
+    "packages/wasm-bindgen-futures-x",
     "packages/wasm-bindgen-test",
     "packages/wasm-bindgen-test-macro",
     "examples/gloo",
@@ -23,8 +26,8 @@ resolver = "2"
 
 [patch.crates-io]
 wasm-bindgen = { path = "packages/wasm-bindgen", package = "wasm-bindgen" }
-js-sys = { path = "vendored/wasm-bindgen/crates/js-sys", package = "js-sys" }
-web-sys = { path = "vendored/wasm-bindgen/crates/web-sys", package = "web-sys" }
-wasm-bindgen-futures = { path = "vendored/wasm-bindgen/crates/futures", package = "wasm-bindgen-futures" }
+js-sys = { path = "packages/js-sys-x" }
+web-sys = { path = "packages/web-sys-x" }
+wasm-bindgen-futures = { path = "packages/wasm-bindgen-futures-x" }
 
 [workspace.lints]

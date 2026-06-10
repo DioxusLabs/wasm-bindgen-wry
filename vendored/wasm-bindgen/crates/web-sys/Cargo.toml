@@ -8,7 +8,7 @@ edition = "2021"
 homepage = "https://wasm-bindgen.github.io/wasm-bindgen/web-sys/index.html"
 include = ["/LICENSE-*", "/src"]
 license = "MIT OR Apache-2.0"
-name = "web-sys"
+name = "web-sys-wry"
 readme = "./README.md"
 repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys"
 rust-version = "1.77"
@@ -19,11 +19,12 @@ all-features = true
 rustdoc-args = ["--cfg=web_sys_unstable_apis"]
 
 [lib]
+name = "web_sys"
 doctest = false
 test = false
 
 [dependencies]
-js-sys = { path = '../js-sys', package = "js-sys", default-features = false }
+js-sys = { path = "../../../../packages/js-sys-x", package = "js-sys", default-features = false }
 wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
 
 [lints.rust]

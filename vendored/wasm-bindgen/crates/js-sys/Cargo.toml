@@ -10,13 +10,14 @@ edition = "2021"
 homepage = "https://wasm-bindgen.github.io/wasm-bindgen/"
 include = ["/LICENSE-*", "/src"]
 license = "MIT OR Apache-2.0"
-name = "js-sys"
+name = "js-sys-wry"
 readme = "./README.md"
 repository = "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys"
 rust-version = "1.77"
 version = "0.3.99"
 
 [lib]
+name = "js_sys"
 doctest = false
 test = false
 

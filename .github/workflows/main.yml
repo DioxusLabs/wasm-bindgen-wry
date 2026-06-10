@@ -36,9 +36,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@98e1b82157cd469e843cb7f524c1313b4ad9492c
-        with:
-          toolchain: "1.88"
+      - uses: dtolnay/rust-toolchain@1.88
 
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
@@ -59,9 +57,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
+      - uses: dtolnay/rust-toolchain@1.88
         with:
-          toolchain: "1.88"
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -75,9 +72,7 @@ jobs:
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
           version: 1.0
-      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
-        with:
-          toolchain: "1.88"
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           cache-all-crates: "true"
@@ -89,9 +84,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
+      - uses: dtolnay/rust-toolchain@1.88
         with:
-          toolchain: "1.88"
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
@@ -99,13 +93,15 @@ jobs:
       # The wasm-bindgen shim must still compile for the browser target, where it
       # delegates to the real upstream wasm-bindgen instead of wry-bindgen.
       - run: cargo check --manifest-path packages/wasm-bindgen/Cargo.toml --target wasm32-unknown-unknown
-      # The vendored patched crates must also compile for plain wasm32, where
-      # they build against upstream's runtime API instead of the wry backend.
+      # The sys shims must also compile for plain wasm32, where they build
+      # against upstream's runtime API instead of the wry backend.
       - run: |
-          cargo check --manifest-path vendored/wasm-bindgen/crates/js-sys/Cargo.toml --target wasm32-unknown-unknown
-          cargo check --manifest-path vendored/wasm-bindgen/crates/futures/Cargo.toml --target wasm32-unknown-unknown
-          cargo check --manifest-path vendored/wasm-bindgen/crates/web-sys/Cargo.toml --features console,Window --target wasm32-unknown-unknown
+          cargo check --manifest-path packages/js-sys-x/Cargo.toml --target wasm32-unknown-unknown
+          cargo check --manifest-path packages/wasm-bindgen-futures-x/Cargo.toml --target wasm32-unknown-unknown
+          cargo check --manifest-path packages/web-sys-x/Cargo.toml --features console,Window --target wasm32-unknown-unknown
           cargo check --manifest-path vendored/wasm-bindgen/crates/test/Cargo.toml --target wasm32-unknown-unknown
+      - name: Run wasm-bindgen on linked sys shim fixture
+        run: ./scripts/check-wasm-bindgen-linked-sys-shims.sh
 
   clippy:
     if: github.event.pull_request.draft == false
@@ -117,9 +113,8 @@ jobs:
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
           version: 1.0
-      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
+      - uses: dtolnay/rust-toolchain@1.88
         with:
-          toolchain: "1.88"
           components: clippy
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
@@ -137,9 +132,7 @@ jobs:
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
           version: 1.0
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2
-        with:
-          toolchain: nightly
+      - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           cache-all-crates: "true"
@@ -172,9 +165,7 @@ jobs:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev libxkbcommon-x11-dev xvfb
           version: 1.0
 
-      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
-        with:
-          toolchain: "1.88"
+      - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           cache-all-crates: "true"
@@ -204,9 +195,12 @@ jobs:
         with:
           packages: libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
           version: 1.0
-      - uses: dtolnay/rust-toolchain@b5826f8eb73f40ac7c19ef631dce17a9680f8129
+      # The probes build the latest crates.io release of every dependent, and
+      # those releases' MSRVs rise over time (egui 0.34.3 needs rustc 1.92,
+      # bevy_ecs 0.18.1 needs 1.89), so this job tracks stable. The repo's own
+      # pinned-toolchain coverage comes from the other jobs.
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
