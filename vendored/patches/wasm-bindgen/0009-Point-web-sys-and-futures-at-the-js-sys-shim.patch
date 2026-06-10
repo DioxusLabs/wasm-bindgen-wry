@@ -1,0 +1,47 @@
+From db8e6c7c240dcbee86350e58d80ec5eac3fe3be4 Mon Sep 17 00:00:00 2001
+From: Evan Almloff <evanalmloff@gmail.com>
+Date: Wed, 10 Jun 2026 14:04:55 -0500
+Subject: [PATCH] Point web-sys and futures at the js-sys shim
+
+The wry sys crates re-export `pub use js_sys;` at their root (upstream
+behavior). When that re-export resolves to js-sys-wry while consumers'
+js-sys resolves to the shim, a `use web_sys::*` glob alongside a
+`js_sys::...` import is a genuine E0659 ambiguity (two different
+crates). Routing the dependency through the shim makes both names the
+same crate, which rustc permits. The shim's unstable_force_wry_backend
+feature keeps the underlying types the wry ones whenever these crates
+are built.
+---
+ crates/futures/Cargo.toml | 2 +-
+ crates/web-sys/Cargo.toml | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/crates/futures/Cargo.toml b/crates/futures/Cargo.toml
+index 2cd2cad..c213214 100644
+--- a/crates/futures/Cargo.toml
++++ b/crates/futures/Cargo.toml
+@@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
+ name = "wasm_bindgen_futures"
+ 
+ [dependencies]
+-js-sys = { path = "../js-sys", package = "js-sys-wry", default-features = false }
++js-sys = { path = "../../../../packages/js-sys-x", package = "js-sys", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [features]
+diff --git a/crates/web-sys/Cargo.toml b/crates/web-sys/Cargo.toml
+index e76771d..df634d7 100644
+--- a/crates/web-sys/Cargo.toml
++++ b/crates/web-sys/Cargo.toml
+@@ -24,7 +24,7 @@ doctest = false
+ test = false
+ 
+ [dependencies]
+-js-sys = { path = '../js-sys', package = "js-sys-wry", default-features = false }
++js-sys = { path = "../../../../packages/js-sys-x", package = "js-sys", default-features = false }
+ wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
+ 
+ [lints.rust]
+-- 
+2.49.0
+

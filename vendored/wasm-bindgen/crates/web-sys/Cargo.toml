@@ -24,7 +24,7 @@ doctest = false
 test = false
 
 [dependencies]
-js-sys = { path = '../js-sys', package = "js-sys-wry", default-features = false }
+js-sys = { path = "../../../../packages/js-sys-x", package = "js-sys", default-features = false }
 wasm-bindgen = { path = "../../../../packages/wasm-bindgen", package = "wasm-bindgen", default-features = false }
 
 [lints.rust]

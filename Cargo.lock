@@ -6180,7 +6180,7 @@ dependencies = [
 name = "wasm-bindgen-futures-wry"
 version = "0.4.72"
 dependencies = [
- "js-sys-wry",
+ "js-sys 0.3.99",
  "wasm-bindgen 0.2.122",
 ]
 
@@ -6374,7 +6374,7 @@ dependencies = [
 name = "web-sys-wry"
 version = "0.3.99"
 dependencies = [
- "js-sys-wry",
+ "js-sys 0.3.99",
  "wasm-bindgen 0.2.122",
 ]
 
