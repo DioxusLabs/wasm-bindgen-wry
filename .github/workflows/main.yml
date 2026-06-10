@@ -101,8 +101,6 @@ jobs:
           cargo check --manifest-path packages/web-sys-x/Cargo.toml --features console,Window --target wasm32-unknown-unknown
           cargo check --manifest-path vendored/wasm-bindgen/crates/test/Cargo.toml --target wasm32-unknown-unknown
       - name: Run wasm-bindgen on linked sys shim fixture
-        env:
-          CARGO: cargo +1.88
         run: ./scripts/check-wasm-bindgen-linked-sys-shims.sh
 
   clippy:
