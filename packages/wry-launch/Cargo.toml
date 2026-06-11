@@ -1,6 +1,6 @@
 [package]
 name = "wry-launch"
-version = "0.1.0"
+version = "0.1.0-alpha.10"
 # Edition 2021 so the vendored upstream `tests/wasm/*.rs` files compile when
 # pulled in unmodified via `#[path]`: some of them use edition-2021 attribute
 # syntax (e.g. a bare `#[no_mangle]`) that edition 2024 rejects.

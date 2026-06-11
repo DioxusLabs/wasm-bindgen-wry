@@ -7066,7 +7066,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen-core"
-version = "0.1.0"
+version = "0.1.0-alpha.10"
 dependencies = [
  "once_cell",
  "wry-bindgen-runtime",
@@ -7092,7 +7092,7 @@ dependencies = [
 
 [[package]]
 name = "wry-bindgen-runtime"
-version = "0.1.0"
+version = "0.1.0-alpha.10"
 dependencies = [
  "atomic-waker",
  "base64",
@@ -7110,7 +7110,7 @@ dependencies = [
 
 [[package]]
 name = "wry-launch"
-version = "0.1.0"
+version = "0.1.0-alpha.10"
 dependencies = [
  "base64",
  "bytemuck",
