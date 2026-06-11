@@ -273,6 +273,43 @@ impl<T: TryFromJsValue, E: From<JsValue>> FromJsFuture for Result<T, E> {
 }
 
 /// Marker for type-safe generic upcast relationships.
+///
+/// `Null` is a present JavaScript value, so it must not model absence by
+/// upcasting into [`JsOption`](crate::sys::JsOption):
+///
+/// ```compile_fail
+/// use wry_bindgen::convert::UpcastFrom;
+/// use wry_bindgen::sys::{JsOption, Null};
+/// use wry_bindgen::JsValue;
+///
+/// fn assert_upcast<S, T>()
+/// where
+///     T: UpcastFrom<S>,
+/// {
+/// }
+///
+/// assert_upcast::<Null, JsOption<JsValue>>();
+/// ```
+///
+/// Mutable references are invariant, so widening `&mut T` to `&mut Target`
+/// requires both directions to be valid:
+///
+/// ```compile_fail
+/// use wry_bindgen::convert::UpcastFrom;
+///
+/// struct Specific;
+/// struct General;
+///
+/// impl UpcastFrom<Specific> for General {}
+///
+/// fn assert_upcast<S, T: ?Sized>()
+/// where
+///     T: UpcastFrom<S>,
+/// {
+/// }
+///
+/// assert_upcast::<&mut Specific, &mut General>();
+/// ```
 pub trait UpcastFrom<S: ?Sized> {}
 
 /// Type-safe generic upcast helper.
@@ -309,8 +346,13 @@ where
 {
 }
 
+impl<'a, T: ?Sized, Target: ?Sized> UpcastFrom<&'a mut T> for &'a mut Target
+where
+    Target: UpcastFrom<T>,
+    T: UpcastFrom<Target>,
+{
+}
 impl<'a, T, Target> UpcastFrom<&'a T> for &'a Target where Target: UpcastFrom<T> {}
-impl<'a, T, Target> UpcastFrom<&'a mut T> for &'a mut Target where Target: UpcastFrom<T> {}
 
 macro_rules! impl_tuple_upcast {
     ([$($ty:ident)+] [$($target:ident)+]) => {

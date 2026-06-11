@@ -34,7 +34,7 @@ impl<T> LazyCell<T> {
     }
 
     /// Return the cached value, initializing it if needed.
-    pub fn force(&'static self) -> &'static T {
+    pub fn force(&self) -> &'static T {
         let init = self.init;
         // Take the value out of the runtime, initializing it if it isn't there
         // yet. We initialize outside the runtime borrow because init() may
@@ -52,6 +52,14 @@ impl<T> LazyCell<T> {
             runtime.insert_thread_local_box(self, Box::new(value));
         });
         value
+    }
+}
+
+impl<T> core::ops::Deref for LazyCell<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        Self::force(self)
     }
 }
 

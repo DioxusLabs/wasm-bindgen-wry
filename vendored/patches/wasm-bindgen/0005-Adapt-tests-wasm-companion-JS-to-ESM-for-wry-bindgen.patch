@@ -1,7 +1,7 @@
-From 0000000000000000000000000000000000000006 Mon Sep 17 00:00:00 2001
+From cf0179edeaac906dd4d66ee110df4968187f39df Mon Sep 17 00:00:00 2001
 From: Evan Almloff <evanalmloff@gmail.com>
-Date: Thu, 5 Jun 2026 13:00:00 -0500
-Subject: [PATCH 6/6] Adapt tests/wasm companion JS to ESM for wry-bindgen
+Date: Fri, 5 Jun 2026 13:00:00 -0500
+Subject: [PATCH 5/9] Adapt tests/wasm companion JS to ESM for wry-bindgen
 
 wry-bindgen loads `module` snippets as native ES modules, so the upstream
 CommonJS companions are rewritten in place:
@@ -11,6 +11,21 @@ CommonJS companions are rewritten in place:
 The `__wbgAssert` global is provided by the test crate. Only the companions whose
 Rust files currently pass against wry-bindgen are converted.
 ---
+ tests/wasm/final.js         |  4 ++--
+ tests/wasm/js_keywords.js   | 12 +++++-----
+ tests/wasm/js_objects.js    | 48 ++++++++++++++++++-------------------
+ tests/wasm/js_vec.js        |  6 ++---
+ tests/wasm/jscast.js        |  8 +++----
+ tests/wasm/math.js          | 10 ++++----
+ tests/wasm/option.js        | 28 +++++++++++-----------
+ tests/wasm/reexport.js      |  8 +++----
+ tests/wasm/rethrow.js       |  8 +++----
+ tests/wasm/slice_jsvalue.js |  6 ++---
+ tests/wasm/string_vecs.js   |  8 +++----
+ tests/wasm/structural.js    |  6 ++---
+ tests/wasm/variadic.js      | 32 ++++++++++++-------------
+ 13 files changed, 92 insertions(+), 92 deletions(-)
+
 diff --git a/tests/wasm/final.js b/tests/wasm/final.js
 index 15b576d02..7b1bc6d13 100644
 --- a/tests/wasm/final.js
@@ -469,3 +484,6 @@ index 6094bc881..8f68f890b 100644
  
 -exports.variadic_compare_pairs = variadic_compare_pairs;
 +export { variadic_compare_pairs };
+-- 
+2.34.1
+

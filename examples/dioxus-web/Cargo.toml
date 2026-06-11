@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 dioxus = { git = "https://github.com/ealmloff/dioxus", branch = "web-desktop", features = ["web"] }
 web-sys = { version = "0.3", features = ["Document", "HtmlElement", "Node"] }
-wasm-bindgen = "0.2.122"
+wasm-bindgen = "0.2.123"
 wry-launch = { version = "0.1.0", path = "../../packages/wry-launch" }
 
 [lints]

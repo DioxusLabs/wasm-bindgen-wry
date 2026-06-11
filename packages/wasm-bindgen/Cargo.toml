@@ -1,6 +1,6 @@
 [package]
 name = "wasm-bindgen"
-version = "0.2.122"
+version = "0.2.123"
 edition = "2024"
 description = "Shim crate that re-exports either wry-bindgen (desktop) or wasm-bindgen (wasm32)"
 license = "MIT OR Apache-2.0"
@@ -34,11 +34,11 @@ xxx_debug_only_print_generated_code = []
 unstable_force_wry_backend = ["wasm-bindgen-macro/unstable_force_wry_backend", "dep:wry-bindgen"]
 
 [dependencies]
-wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-macro", version = "=0.2.122" }
+wasm-bindgen-macro = { path = "../wasm-bindgen-macro", package = "wasm-bindgen-macro", version = "=0.2.123" }
 
 # Desktop implementation
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122" }
+wry-bindgen = { path = "../wry-bindgen", version = "=0.2.123" }
 
 # wasm32 implementation: delegate to the real upstream wasm-bindgen. It is pulled
 # from git (not crates.io) so the workspace `[patch.crates-io]` that redirects
@@ -48,8 +48,8 @@ wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122" }
 # but keeping the upstream dependency available lets normal wasm32 builds
 # delegate to upstream without feature-dependent target dependency tricks.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen-upstream = { package = "wasm-bindgen", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122" }
-wry-bindgen = { path = "../wry-bindgen", version = "=0.2.122", optional = true }
+wasm-bindgen-upstream = { package = "wasm-bindgen", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.123" }
+wry-bindgen = { path = "../wry-bindgen", version = "=0.2.123", optional = true }
 
 [lints]
 workspace = true

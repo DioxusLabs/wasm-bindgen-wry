@@ -1,6 +1,6 @@
 [package]
 name = "wasm-bindgen-test-macro"
-version = "0.2.122"
+version = "0.2.123"
 edition = "2024"
 description = "Desktop #[wasm_bindgen_test] macro that registers tests with the wry-bindgen test harness"
 license = "MIT OR Apache-2.0"

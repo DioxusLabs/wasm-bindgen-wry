@@ -11,7 +11,66 @@
 
 ### Removed
 
---------------------------------------------------------------------------------
+## [0.2.123](https://github.com/wasm-bindgen/wasm-bindgen/compare/0.2.122...0.2.123)
+
+### Added
+
+* Added the `maxAge` attribute to the `CookieInit` dictionary in `web-sys`,
+  matching the current Cookie Store API specification.
+  [#5169](https://github.com/wasm-bindgen/wasm-bindgen/pull/5169)
+
+* The js-sys futures codegen opt-in can now also be enabled via the
+  `WASM_BINDGEN_USE_JS_SYS=1` environment variable, in addition to
+  `--cfg=wasm_bindgen_use_js_sys`. This works on stable when `--target`
+  is in use, where Cargo does not propagate the cfg to host proc-macros.
+  [#5164](https://github.com/wasm-bindgen/wasm-bindgen/pull/5164)
+
+### Changed
+
+* `JsOption<T>` now treats only `undefined` as empty, aligning it with
+  TypeScript's strict `T | undefined` semantics and with `Option<T>`'s wire
+  shape (`None` ↔ `undefined`). Previously `is_empty`, `as_option`,
+  `into_option`, `unwrap`, `expect`, `unwrap_or_default`, and
+  `unwrap_or_else` treated both `null` and `undefined` as absent; JS `null`
+  is now a distinct present value. The `impl<T> UpcastFrom<Null> for
+  JsOption<T>` is removed (`Undefined` still models absence), and the
+  `Debug`/`Display` absent placeholder changed from `"null"` to
+  `"undefined"`. Code relying on `null → None` should return `undefined`
+  from the JS side, or check explicitly with
+  `val.as_option().filter(|v| !v.is_null())`.
+  [#5170](https://github.com/wasm-bindgen/wasm-bindgen/pull/5170)
+
+### Fixed
+
+* Removed invalid `js_sys::Array<T>` to `js_sys::ArrayTuple<(...)>` upcasts.
+  `ArrayTuple` encodes a fixed tuple arity, while a plain JavaScript array does
+  not prove that arity statically.
+
+* Fixed incorrect variance in `&mut` reference upcasting. `&mut T` upcasts
+  were covariant in the pointee, so a `&mut T` could be widened to a `&mut`
+  of a supertype and used to write back a value the original type would not
+  accept, leaving a reference whose static type no longer matches the value
+  it points to. Mutable references are now *invariant* in their pointee:
+  `&mut T` only upcasts to `&mut Target` when both `Target: UpcastFrom<T>`
+  and `T: UpcastFrom<Target>` hold. This rejects the invalid widening but is
+  a breaking change for callers that relied on widening `&mut` references.
+  [#5176](https://github.com/wasm-bindgen/wasm-bindgen/issues/5176)
+
+* Fixed WASI targets (`wasm32-wasip1`/`wasm32-wasip2`) emitting unresolved
+  `__wbindgen_placeholder__` imports, which broke component linking. The
+  codegen and runtime gates now exclude `target_os = "wasi"` (restoring the
+  pre-0.2.115 stub behavior), including the `panic = "unwind"` paths in
+  `wasm-bindgen-futures`.
+  [#5175](https://github.com/wasm-bindgen/wasm-bindgen/pull/5175)
+
+* Fixed a panic ("Unhandled load width 8") in the descriptor interpreter when
+  processing `-Cinstrument-coverage`-instrumented modules, unblocking
+  `cargo llvm-cov --target wasm32-unknown-unknown` for crates whose describe
+  helpers get instrumented.
+  [#5179](https://github.com/wasm-bindgen/wasm-bindgen/pull/5179)
+
+* Fixed `main` silently never running on wasm64 for bin crates.
+  [#5181](https://github.com/wasm-bindgen/wasm-bindgen/pull/5181)
 
 ## [0.2.122](https://github.com/wasm-bindgen/wasm-bindgen/compare/0.2.121...0.2.122)
 
@@ -134,8 +193,6 @@
   fallback chains that only papered over the pre-#5154 keying.
 
   [#5160](https://github.com/wasm-bindgen/wasm-bindgen/pull/5160)
-
---------------------------------------------------------------------------------
 
 ## [0.2.121](https://github.com/rustwasm/wasm-bindgen/compare/0.2.120...0.2.121)
 
@@ -262,8 +319,6 @@
   the next major release to better reflect the WebIDL spec name covering
   both `DataView` and the typed-array types.
   [#5135](https://github.com/wasm-bindgen/wasm-bindgen/pull/5135)
-
---------------------------------------------------------------------------------
 
 ## [0.2.119](https://github.com/rustwasm/wasm-bindgen/compare/0.2.118...0.2.119)
 
