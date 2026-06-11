@@ -25,7 +25,7 @@ xxx_debug_only_print_generated_code = []
 
 [dependencies]
 inventory = "0.3.21"
-wry-bindgen-core = { path = "../wry-bindgen-core", version = "=0.1.0" }
+wry-bindgen-core = { path = "../wry-bindgen-core", version = "0.1.0" }
 wry-bindgen-macro = { path = "../wry-bindgen-macro", version = "=0.2.123" }
 # We use this instead of std because wasm bindgen supports no_std environments
 cfg-if = "1.0.0"
