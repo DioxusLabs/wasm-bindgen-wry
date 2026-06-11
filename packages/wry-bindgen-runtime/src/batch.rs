@@ -682,14 +682,12 @@ impl Runtime {
         ObjectHandle::from_raw(handle)
     }
 
-    pub fn take_thread_local_box<K>(&mut self, key: &'static K) -> Option<Box<dyn Any>> {
-        self.thread_locals
-            .remove(&core::ptr::from_ref(key).cast::<()>())
+    pub fn take_thread_local_box<K>(&mut self, id_pointer: *const K) -> Option<Box<dyn Any>> {
+        self.thread_locals.remove(&id_pointer.cast::<()>())
     }
 
-    pub fn insert_thread_local_box<K>(&mut self, key: &'static K, value: Box<dyn Any>) {
-        self.thread_locals
-            .insert(core::ptr::from_ref(key).cast::<()>(), value);
+    pub fn insert_thread_local_box<K>(&mut self, id_pointer: *const K, value: Box<dyn Any>) {
+        self.thread_locals.insert(id_pointer.cast::<()>(), value);
     }
 
     pub(crate) fn get_next_inbound_js_ref(&mut self) -> JsRef {
