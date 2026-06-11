@@ -2,7 +2,9 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{ToTokens, format_ident, quote, quote_spanned};
 use wasm_bindgen_macro_support::ast::ImportType;
 
-use super::common::{generate_js_reexport_spec, generate_wry_call_js_function, namespace_tokens};
+use super::common::{
+    clippy_allows, generate_js_reexport_spec, generate_wry_call_js_function, namespace_tokens,
+};
 use super::erasure::add_static_bounds;
 use super::js::namespace_prefix;
 
@@ -259,6 +261,7 @@ pub(super) fn generate_type(
         .push(syn::parse_quote!(#ref_self_ty: 'static));
     let (argabi_owned_impl_generics, _, argabi_owned_where_clause) =
         argabi_owned_generics.split_for_impl();
+    let allows = clippy_allows();
     let argabi_impls = quote_spanned! {span=>
         // `ArgAbi<S>` for the borrowed `&Self` argument, so an exported function
         // decoding a borrowed imported type goes through the uniform `<#arg_ty as
@@ -268,6 +271,7 @@ pub(super) fn generate_type(
         // (`CallScoped`) borrow rides JS's borrow stack (gated on `Self: JsCast`),
         // while an async (`Anchored`) borrow anchors an owned copy that outlives
         // the `Promise`.
+        #allows
         impl #argabi_ref_impl_generics #krate::convert::ArgAbi<#krate::convert::CallScoped> for &#rust_name #ty_generics #argabi_ref_where_clause {
             type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
             type Guard = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
@@ -291,6 +295,7 @@ pub(super) fn generate_type(
             }
         }
 
+        #allows
         impl #argabi_owned_impl_generics #krate::convert::ArgAbi<#krate::convert::Anchored> for &#rust_name #ty_generics #argabi_owned_where_clause {
             type Wire = #rust_name #ty_generics;
             type Guard = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;

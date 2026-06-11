@@ -3,11 +3,7 @@ use quote::{format_ident, quote, quote_spanned};
 
 pub(super) fn clippy_allows() -> TokenStream {
     quote! {
-        #[allow(clippy::unused_unit)]
-        #[allow(clippy::too_many_arguments)]
-        #[allow(clippy::type_complexity)]
-        #[allow(clippy::should_implement_trait)]
-        #[allow(clippy::await_holding_refcell_ref)]
+        #[allow(clippy::all, clippy::nursery, clippy::pedantic, clippy::restriction)]
     }
 }
 

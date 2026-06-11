@@ -7,8 +7,8 @@ use wasm_bindgen_macro_support::ast::{
 };
 
 use super::common::{
-    ClassMemberSpec, ClassSpec, generate_js_class_member_spec, generate_js_class_spec,
-    generate_js_export_registration, namespace_tokens,
+    ClassMemberSpec, ClassSpec, clippy_allows, generate_js_class_member_spec,
+    generate_js_class_spec, generate_js_export_registration, namespace_tokens,
 };
 
 fn path_last_segment(path: &syn::Path) -> Option<String> {
@@ -640,6 +640,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
     // Borrowed-argument support so this struct can be a `&T` export or callback
     // argument. The routed handle rides the wire as a plain `u32`, decoded and
     // checked out without consuming the wrapper.
+    let allows = clippy_allows();
     let borrow_arg_impls = quote_spanned! {span=>
         // `ArgAbi<S>` for the *full* `&Self`/`&mut Self` argument types, so an
         // exported function decodes a borrowed struct argument through the uniform
@@ -650,6 +651,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         // the synchronous `project` lends the checkout into `with`, while
         // `project_async` moves the checkout into the `async` export's future and
         // lends it across the `.await`.
+        #allows
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &#rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
             type Guard = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
@@ -672,6 +674,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
                 async move { with(&*guard).await }
             }
         }
+        #allows
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &mut #rust_name {
             type Wire = #krate::convert::RefMutArg<#rust_name>;
             type Guard = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
