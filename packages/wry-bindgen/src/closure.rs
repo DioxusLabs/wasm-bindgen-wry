@@ -54,19 +54,6 @@ impl CallbackOwnership {
 /// Owned closure handle. This follows upstream wasm-bindgen's alias direction.
 pub type Closure<T> = ScopedClosure<'static, T>;
 
-use crate::__rt::WasmWord;
-
-/// Drop hook exported for compatibility with wasm-bindgen-generated code.
-///
-/// # Safety
-///
-/// This is an ABI entry point called by generated glue code. The arguments
-/// must be the encoded closure metadata expected by that glue.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn __wbindgen_destroy_closure(a: WasmWord, b: WasmWord) {
-    let _ = (a, b);
-}
-
 impl<T: ?Sized> ScopedClosure<'static, T> {
     /// Wrap a raw closure. Only for use by generated code.
     pub(crate) fn wrap_encode_decode<FnPtr>(
