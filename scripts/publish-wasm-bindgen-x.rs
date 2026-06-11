@@ -1347,20 +1347,28 @@ fn rewrite_dependency_packages(
         }
 
         let dependency_name = inline_table_value(table_body, "package").unwrap_or(key);
-        let Some(publish_name) = renamed_package_name(dependency_name) else {
+        if let Some(publish_name) = renamed_package_name(dependency_name) {
+            let mut updated_table = upsert_inline_table_value(table_body, "package", publish_name);
+            if add_versions {
+                let version = versions.get(publish_name).ok_or_else(|| {
+                    Error::new(format!("missing package version for `{publish_name}`"))
+                })?;
+                updated_table =
+                    upsert_inline_table_value(&updated_table, "version", &format!("={version}"));
+            }
+            lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+            changed = true;
             continue;
-        };
-
-        let mut updated_table = upsert_inline_table_value(table_body, "package", publish_name);
-        if add_versions {
-            let version = versions.get(publish_name).ok_or_else(|| {
-                Error::new(format!("missing package version for `{publish_name}`"))
-            })?;
-            updated_table =
-                upsert_inline_table_value(&updated_table, "version", &format!("={version}"));
         }
-        lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
-        changed = true;
+
+        if add_versions && inline_table_value(table_body, "path").is_some() {
+            if let Some(version) = versions.get(dependency_name) {
+                let updated_table =
+                    upsert_inline_table_value(table_body, "version", &format!("={version}"));
+                lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
+                changed = true;
+            }
+        }
     }
 
     if changed {
@@ -2079,6 +2087,31 @@ wasm-bindgen-shared = { path = \"../shared\", version = \"=0.2.122\" }
         let _ = fs::remove_file(&path);
         assert!(output.contains("package = \"wasm-bindgen-shared-x\""));
         assert!(output.contains("version = \"=0.2.122\""));
+    }
+
+    #[test]
+    fn rewrite_dependency_packages_exact_pins_unrenamed_publish_dependencies() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-unrenamed-dep-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"wry-bindgen-core\"
+version = \"0.1.0-alpha.9\"
+
+[dependencies]
+wry-bindgen-runtime = { path = \"../wry-bindgen-runtime\", version = \"0.1.0-alpha.9\" }
+";
+        fs::write(&path, input).unwrap();
+
+        let mut versions = BTreeMap::new();
+        versions.insert("wry-bindgen-runtime".to_string(), "0.1.0-alpha.9".to_string());
+        rewrite_dependency_packages(&path, &versions, true).unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains("wry-bindgen-runtime = { path = \"../wry-bindgen-runtime\", version = \"=0.1.0-alpha.9\" }"));
     }
 
     #[test]
