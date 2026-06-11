@@ -20,7 +20,6 @@ const WEB_SYS_MANIFEST: &str = "vendored/wasm-bindgen/crates/web-sys/Cargo.toml"
 const PUBLISHED_WEB_SYS_PACKAGE: &str = "web-sys-x";
 const CRATES_IO_FEATURE_LIMIT: usize = 300;
 const WEB_SYS_SHIM_FEATURES: &[&str] = &["unstable_force_wry_backend"];
-
 const COPY_ENTRIES: &[&str] = &[
     "Cargo.toml",
     "Cargo.lock",
@@ -45,6 +44,12 @@ const COPY_ENTRIES: &[&str] = &[
 ];
 
 const RENAMED_CRATES: &[RenamedCrate] = &[
+    RenamedCrate {
+        manifest: "vendored/wasm-bindgen/crates/shared/Cargo.toml",
+        source_name: "wasm-bindgen-shared",
+        publish_name: "wasm-bindgen-shared-x",
+        lib_name: "wasm_bindgen_shared",
+    },
     RenamedCrate {
         manifest: "packages/wasm-bindgen/Cargo.toml",
         source_name: "wasm-bindgen",
@@ -199,7 +204,7 @@ fn run() -> Result<()> {
 
     prepare_staging(&repo_root, &staging_dir)?;
 
-    let publish_crates = selected_publish_crates(&args)?;
+    let publish_crates = selected_publish_crates(&args, &staging_dir)?;
     println!("prepared publish staging tree: {}", staging_dir.display());
     println!("renamed crates.io packages:");
     for krate in RENAMED_CRATES {
@@ -356,7 +361,7 @@ fn repo_root_from_source_env() -> Result<Option<PathBuf>> {
     Ok(None)
 }
 
-fn selected_publish_crates(args: &Args) -> Result<Vec<PublishCrate>> {
+fn selected_publish_crates(args: &Args, staging_dir: &Path) -> Result<Vec<PublishCrate>> {
     let all = publish_crates();
     if args.packages.is_empty() {
         return Ok(all);
@@ -394,7 +399,7 @@ fn selected_publish_crates(args: &Args) -> Result<Vec<PublishCrate>> {
         )));
     }
 
-    Ok(selected)
+    include_publish_dependencies(staging_dir, &selected)
 }
 
 fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
@@ -421,6 +426,10 @@ fn package_request_matches(krate: &PublishCrate, request: &str) -> bool {
 
 fn publish_crates() -> Vec<PublishCrate> {
     vec![
+        PublishCrate {
+            manifest: "vendored/wasm-bindgen/crates/shared/Cargo.toml",
+            publish_name: "wasm-bindgen-shared-x",
+        },
         PublishCrate {
             manifest: "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
             publish_name: "wasm-bindgen-macro-support-x",
@@ -478,6 +487,86 @@ fn publish_crates() -> Vec<PublishCrate> {
             publish_name: "wasm-bindgen-futures-x",
         },
     ]
+}
+
+fn include_publish_dependencies(
+    staging_dir: &Path,
+    selected: &[PublishCrate],
+) -> Result<Vec<PublishCrate>> {
+    let all = publish_crates();
+    let mut included: BTreeSet<&'static str> =
+        selected.iter().map(|krate| krate.manifest).collect();
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let current = included.clone();
+
+        for krate in all.iter().filter(|krate| current.contains(krate.manifest)) {
+            for dependency in publish_dependencies(&staging_dir.join(krate.manifest))? {
+                let Some(dependency_crate) = all
+                    .iter()
+                    .find(|candidate| candidate.publish_name == dependency)
+                else {
+                    continue;
+                };
+                if included.insert(dependency_crate.manifest) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    Ok(all
+        .into_iter()
+        .filter(|krate| included.contains(krate.manifest))
+        .collect())
+}
+
+fn publish_dependencies(path: &Path) -> Result<BTreeSet<String>> {
+    let text = fs::read_to_string(path)?;
+    let lines = Lines::from(&text);
+    let publish_names: BTreeSet<_> = publish_crates()
+        .into_iter()
+        .map(|krate| krate.publish_name)
+        .collect();
+    let mut dependencies = BTreeSet::new();
+    let mut current_section = None;
+
+    for index in 0..lines.len() {
+        if let Some(section) = section_name(lines.body(index)) {
+            current_section = Some(section.to_string());
+            continue;
+        }
+
+        if !current_section
+            .as_deref()
+            .is_some_and(is_publish_dependency_section)
+        {
+            continue;
+        }
+
+        let Some((_, key, table_body, _)) = split_inline_table(lines.body(index)) else {
+            continue;
+        };
+        let package = inline_table_value(table_body, "package").unwrap_or(key);
+        if publish_names.contains(package) {
+            dependencies.insert(package.to_string());
+        }
+    }
+
+    Ok(dependencies)
+}
+
+fn is_publish_dependency_section(section: &str) -> bool {
+    if section == "dev-dependencies" || section.ends_with(".dev-dependencies") {
+        return false;
+    }
+
+    section == "dependencies"
+        || section == "build-dependencies"
+        || section.ends_with(".dependencies")
+        || section.ends_with(".build-dependencies")
 }
 
 fn prepare_staging(repo_root: &Path, staging_dir: &Path) -> Result<()> {
@@ -760,10 +849,11 @@ fn rewrite_sys_shim_upstream_dependency(path: &Path, source_name: &str) -> Resul
             continue;
         }
 
-        let updated_table = remove_inline_table_value(table_body, "git");
-        let updated_table = remove_inline_table_value(&updated_table, "tag");
-        let updated_table =
-            upsert_inline_table_value(&updated_table, "version", &format!("={upstream_version}"));
+        let updated_table = rewrite_git_dependency_to_published_table(
+            table_body,
+            key,
+            upstream_version,
+        );
         lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
         changed = true;
     }
@@ -792,7 +882,7 @@ fn shim_feature_dependencies(feature: &Feature, upstream_dep: &str, wry_dep: &st
 
 fn published_crate_features(package: &str) -> Result<BTreeSet<String>> {
     let output = Command::new("cargo")
-        .args(["info", package, "--verbose", "--color", "never"])
+        .args(cargo_info_registry_args(package, true))
         .output()
         .map_err(|error| Error::new(format!("failed to run `cargo info {package}`: {error}")))?;
     if !output.status.success() {
@@ -991,7 +1081,10 @@ fn merge_vendored_workspace_lints(staging_dir: &Path) -> Result<()> {
 }
 
 fn remove_local_vendored_workspace_roots(staging_dir: &Path) -> Result<()> {
-    for relative in ["vendored/wasm-bindgen/crates/macro-support/Cargo.toml"] {
+    for relative in [
+        "vendored/wasm-bindgen/crates/shared/Cargo.toml",
+        "vendored/wasm-bindgen/crates/macro-support/Cargo.toml",
+    ] {
         remove_manifest_sections(
             &staging_dir.join(relative),
             &[
@@ -1061,12 +1154,12 @@ fn rewrite_root_workspace_members(path: &Path) -> Result<()> {
             "    \"packages/js-sys-x\",",
             "    \"packages/web-sys-x\",",
             "    \"packages/wasm-bindgen-futures-x\",",
+            "    \"vendored/wasm-bindgen/crates/shared\",",
             "    \"vendored/wasm-bindgen/crates/macro-support\",",
             "    \"vendored/wasm-bindgen/crates/js-sys\",",
             "    \"vendored/wasm-bindgen/crates/web-sys\",",
             "    \"vendored/wasm-bindgen/crates/futures\",",
             "]",
-            "exclude = [\"vendored/wasm-bindgen/crates/shared\"]",
             "resolver = \"2\"",
         ],
     );
@@ -1225,7 +1318,7 @@ fn rewrite_dependency_packages(
                     updated_table = replace_inline_table_value(
                         &updated_table,
                         "version",
-                        &format!("={stable_version}"),
+                        stable_version,
                     );
                 }
                 lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
@@ -1234,23 +1327,20 @@ fn rewrite_dependency_packages(
             continue;
         }
 
-        // The wasm32 `wasm-bindgen` delegate is sourced from git so the workspace
-        // `[patch.crates-io]` does not capture it. A git source cannot be published,
-        // so repoint it at the tagged crates.io release: the published crate depends
-        // on the real upstream `wasm-bindgen` (kept under its real name, not the `-x`
-        // shim) at the same version as the tag.
+        // The wasm32 upstream delegates are sourced from git so the workspace
+        // `[patch.crates-io]` does not capture them. A git source cannot be
+        // published, so repoint it at the tagged crates.io release, keeping the
+        // real upstream package name rather than the `-x` shim.
         if inline_table_value(table_body, "git").is_some() {
-            let package = inline_table_value(table_body, "package").unwrap_or(key);
             let version = inline_table_value(table_body, "tag").ok_or_else(|| {
                 Error::new(format!(
                     "{}: git dependency `{key}` needs a `tag` to map to a crates.io version",
                     path.display()
                 ))
             })?;
-            lines.set_body(
-                index,
-                format!("{prefix} package = \"{package}\", version = \"{version}\" {suffix}"),
-            );
+            let updated_table =
+                rewrite_git_dependency_to_published_table(table_body, key, version);
+            lines.set_body(index, format!("{prefix}{updated_table}{suffix}"));
             changed = true;
             continue;
         }
@@ -1311,6 +1401,18 @@ fn rewrite_path_dependency_packages(path: &Path, versions: &BTreeMap<String, Str
         fs::write(path, lines.into_string())?;
     }
     Ok(())
+}
+
+fn rewrite_git_dependency_to_published_table(
+    table_body: &str,
+    key: &str,
+    version: &str,
+) -> String {
+    let package = inline_table_value(table_body, "package").unwrap_or(key);
+    let updated_table = remove_inline_table_value(table_body, "git");
+    let updated_table = remove_inline_table_value(&updated_table, "tag");
+    let updated_table = upsert_inline_table_value(&updated_table, "package", package);
+    upsert_inline_table_value(&updated_table, "version", version)
 }
 
 fn ensure_patch_crates_io_entry(
@@ -1424,6 +1526,14 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
     command.current_dir(crate_dir);
 
     println!("  {} {}", krate.publish_name, version);
+    if published_crate_version_exists(krate.publish_name, &version)? {
+        println!(
+            "  skipping {} {}; version already exists on crates.io",
+            krate.publish_name, version
+        );
+        return Ok(());
+    }
+
     let status = command.status().map_err(|error| {
         Error::new(format!(
             "failed to run cargo publish for {}: {error}",
@@ -1438,6 +1548,28 @@ fn run_cargo_publish(staging_dir: &Path, krate: PublishCrate, args: &Args) -> Re
     }
 
     Ok(())
+}
+
+fn published_crate_version_exists(package: &str, version: &str) -> Result<bool> {
+    let package_spec = format!("{package}@{version}");
+    let output = Command::new("cargo")
+        .args(cargo_info_registry_args(&package_spec, false))
+        .output()
+        .map_err(|error| {
+            Error::new(format!(
+                "failed to check crates.io for {package}@{version}: {error}"
+            ))
+        })?;
+    Ok(output.status.success())
+}
+
+fn cargo_info_registry_args(package: &str, verbose: bool) -> Vec<&str> {
+    let mut args = vec!["info", "--registry", "crates-io", package];
+    if verbose {
+        args.push("--verbose");
+    }
+    args.extend(["--color", "never"]);
+    args
 }
 
 fn run_workspace_dry_run(
@@ -1457,6 +1589,7 @@ fn run_workspace_dry_run(
     if args.no_verify {
         command.arg("--no-verify");
     }
+    command.env("CARGO_HOME", dry_run_cargo_home(staging_dir));
     command.current_dir(staging_dir);
 
     let status = command.status().map_err(|error| {
@@ -1472,6 +1605,11 @@ fn run_workspace_dry_run(
     }
 
     Ok(())
+}
+
+fn dry_run_cargo_home(staging_dir: &Path) -> PathBuf {
+    let parent = staging_dir.parent().unwrap_or(staging_dir);
+    parent.join(format!("publish-dry-run-cargo-home-{}", process::id()))
 }
 
 fn find_section<'a>(text: &'a str, section: &str) -> Option<&'a str> {
@@ -1866,6 +2004,29 @@ mod tests {
     }
 
     #[test]
+    fn git_dependency_rewrite_uses_floating_published_crates_io_version() {
+        let table = r#" package = "js-sys", git = "https://github.com/wasm-bindgen/wasm-bindgen", tag = "0.2.122", default-features = false "#;
+        let table = rewrite_git_dependency_to_published_table(table, "js-sys-upstream", "0.3.99");
+
+        assert!(table.contains(r#"package = "js-sys""#));
+        assert!(table.contains(r#"version = "0.3.99""#));
+        assert!(table.contains("default-features = false"));
+        assert!(!table.contains("git ="));
+        assert!(!table.contains("tag ="));
+    }
+
+    #[test]
+    fn git_dependency_rewrite_defaults_package_to_dependency_key() {
+        let table = r#" git = "https://github.com/example/example", tag = "1.2.3" "#;
+        let table = rewrite_git_dependency_to_published_table(table, "example-upstream", "1.2.3");
+
+        assert!(table.contains(r#"package = "example-upstream""#));
+        assert!(table.contains(r#"version = "1.2.3""#));
+        assert!(!table.contains("git ="));
+        assert!(!table.contains("tag ="));
+    }
+
+    #[test]
     fn rewrite_dependency_packages_keeps_dev_dependencies_on_registry_names() {
         let path = env::temp_dir().join(format!(
             "publish-wasm-bindgen-x-dev-dep-test-{}.toml",
@@ -1887,11 +2048,36 @@ web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=
 
         let output = fs::read_to_string(&path).unwrap();
         let _ = fs::remove_file(&path);
-        assert!(output.contains(
-            "web-sys = { version = \"=0.3.99\", features = [\"Window\", \"Document\"] }"
-        ));
+        assert!(output
+            .contains("web-sys = { version = \"0.3.99\", features = [\"Window\", \"Document\"] }"));
         assert!(!output.contains("web-sys-x"));
         assert!(!output.contains("path ="));
+    }
+
+    #[test]
+    fn rewrite_dependency_packages_renames_wasm_bindgen_shared() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-shared-dep-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"wasm-bindgen-macro-support-x\"
+version = \"0.2.122-alpha.7\"
+
+[dependencies]
+wasm-bindgen-shared = { path = \"../shared\", version = \"=0.2.122\" }
+";
+        fs::write(&path, input).unwrap();
+
+        let mut versions = BTreeMap::new();
+        versions.insert("wasm-bindgen-shared-x".to_string(), "0.2.122".to_string());
+        rewrite_dependency_packages(&path, &versions, true).unwrap();
+
+        let output = fs::read_to_string(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(output.contains("package = \"wasm-bindgen-shared-x\""));
+        assert!(output.contains("version = \"=0.2.122\""));
     }
 
     #[test]
@@ -1907,6 +2093,10 @@ web-sys = { path = \"../../vendored/wasm-bindgen/crates/web-sys\", version = \"=
 
     #[test]
     fn renamed_package_map_contains_expected_crates() {
+        assert_eq!(
+            renamed_package_name("wasm-bindgen-shared"),
+            Some("wasm-bindgen-shared-x")
+        );
         assert_eq!(renamed_package_name("wasm-bindgen"), Some("wasm-bindgen-x"));
         assert_eq!(
             renamed_package_name("wasm-bindgen-macro-support"),
@@ -2053,5 +2243,124 @@ web-sys = { path = \"vendored/wasm-bindgen/crates/web-sys\", package = \"web-sys
         let _ = fs::remove_file(&path);
         assert!(output.contains(r#"package = "web-sys-x""#));
         assert!(!output.contains(r#"package = "web-sys""#));
+    }
+
+    #[test]
+    fn selected_package_includes_publish_dependency_closure() {
+        let staging_dir = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-dependency-closure-test-{}",
+            process::id()
+        ));
+
+        write_test_manifest(
+            &staging_dir.join("packages/wasm-bindgen-macro/Cargo.toml"),
+            "\
+[package]
+name = \"wasm-bindgen-macro-x\"
+
+[dependencies]
+wry-bindgen-macro-support = { path = \"../wry-bindgen-macro-support\", version = \"=0.2.122-alpha.8\" }
+",
+        );
+        write_test_manifest(
+            &staging_dir.join("packages/wry-bindgen-macro-support/Cargo.toml"),
+            "\
+[package]
+name = \"wry-bindgen-macro-support\"
+
+[dependencies]
+wasm-bindgen-macro-support = { path = \"../../vendored/wasm-bindgen/crates/macro-support\", version = \"=0.2.122-alpha.8\", package = \"wasm-bindgen-macro-support-x\" }
+",
+        );
+        write_test_manifest(
+            &staging_dir.join("vendored/wasm-bindgen/crates/macro-support/Cargo.toml"),
+            "\
+[package]
+name = \"wasm-bindgen-macro-support-x\"
+
+[dependencies]
+wasm-bindgen-shared = { path = \"../shared\", version = \"=0.2.122-alpha.8\", package = \"wasm-bindgen-shared-x\" }
+",
+        );
+        write_test_manifest(
+            &staging_dir.join("vendored/wasm-bindgen/crates/shared/Cargo.toml"),
+            "\
+[package]
+name = \"wasm-bindgen-shared-x\"
+",
+        );
+
+        let selected = [PublishCrate {
+            manifest: "packages/wasm-bindgen-macro/Cargo.toml",
+            publish_name: "wasm-bindgen-macro-x",
+        }];
+        let packages = include_publish_dependencies(&staging_dir, &selected).unwrap();
+        let package_names = packages
+            .iter()
+            .map(|krate| krate.publish_name)
+            .collect::<Vec<_>>();
+
+        let _ = fs::remove_dir_all(&staging_dir);
+        assert_eq!(
+            package_names,
+            vec![
+                "wasm-bindgen-shared-x",
+                "wasm-bindgen-macro-support-x",
+                "wry-bindgen-macro-support",
+                "wasm-bindgen-macro-x",
+            ]
+        );
+    }
+
+    #[test]
+    fn publish_dependencies_ignore_dev_dependencies() {
+        let path = env::temp_dir().join(format!(
+            "publish-wasm-bindgen-x-dev-dependency-ignore-test-{}.toml",
+            process::id()
+        ));
+        let input = "\
+[package]
+name = \"example\"
+
+[dev-dependencies]
+wasm-bindgen = { path = \"../wasm-bindgen\", version = \"=0.2.122-alpha.8\", package = \"wasm-bindgen-x\" }
+";
+        fs::write(&path, input).unwrap();
+
+        let dependencies = publish_dependencies(&path).unwrap();
+        let _ = fs::remove_file(&path);
+        assert!(dependencies.is_empty());
+    }
+
+    #[test]
+    fn cargo_info_checks_use_crates_io_registry() {
+        assert_eq!(
+            cargo_info_registry_args("wry-bindgen@0.2.122-alpha.8", false),
+            vec![
+                "info",
+                "--registry",
+                "crates-io",
+                "wry-bindgen@0.2.122-alpha.8",
+                "--color",
+                "never",
+            ]
+        );
+        assert_eq!(
+            cargo_info_registry_args("web-sys-x", true),
+            vec![
+                "info",
+                "--registry",
+                "crates-io",
+                "web-sys-x",
+                "--verbose",
+                "--color",
+                "never",
+            ]
+        );
+    }
+
+    fn write_test_manifest(path: &Path, text: &str) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
     }
 }

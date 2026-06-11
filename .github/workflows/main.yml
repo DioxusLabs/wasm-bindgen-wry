@@ -100,8 +100,13 @@ jobs:
           cargo check --manifest-path packages/wasm-bindgen-futures-x/Cargo.toml --target wasm32-unknown-unknown
           cargo check --manifest-path packages/web-sys-x/Cargo.toml --features console,Window --target wasm32-unknown-unknown
           cargo check --manifest-path vendored/wasm-bindgen/crates/test/Cargo.toml --target wasm32-unknown-unknown
-      - name: Run wasm-bindgen on linked sys shim fixture
-        run: ./scripts/check-wasm-bindgen-linked-sys-shims.sh
+      # Downstream consumer fixtures: a fully shimmed graph (deps binding
+      # web-sys normally are linked through the sys shims), and a mixed graph
+      # where the shim coexists with genuine upstream wasm-bindgen (dioxus
+      # pulls both via gloo-timers/gloo-net/wasm-streams). Each must build,
+      # link (natively and for wasm32), and survive wasm-bindgen-cli.
+      - name: Check downstream wasm-bindgen graphs
+        run: ./scripts/check-wasm-bindgen-downstream.sh
 
   clippy:
     if: github.event.pull_request.draft == false
