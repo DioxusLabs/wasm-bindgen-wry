@@ -699,6 +699,7 @@ fn trim_web_sys_features_to_published(staging_dir: &Path) -> Result<()> {
     let missing: Vec<_> = published_features
         .iter()
         .filter(|feature| !local_names.contains(feature.as_str()))
+        .filter(|feature| !feature.starts_with("unstable_"))
         .cloned()
         .collect();
     if !missing.is_empty() {
