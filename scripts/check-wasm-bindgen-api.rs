@@ -58,6 +58,9 @@ const IGNORED_CONSTRUCTIBLE_TYPES: &[&str] = &["JsThreadLocal"];
 // rather than the re-exported import path.
 const IGNORED_RELOCATED_STRUCTS: &[&str] = &["wry_bindgen::Clamped", "wry_bindgen::JsThreadLocal"];
 
+// Unstable upstream internals that are not part of the supported desktop API surface.
+const IGNORED_MISSING_FUNCTIONS: &[&str] = &["__wbindgen_destroy_closure"];
+
 #[derive(Debug)]
 struct Error(String);
 
@@ -593,7 +596,8 @@ fn run_semver_checks(repo_root: &Path, baseline_root: &Path, target: Option<&str
     if suppressed > 0 {
         println!(
             "note: ignored {suppressed} known intentional difference(s): wasm-ABI-trait derives \
-             (convert/describe), JsThreadLocal's private fields, and relocated re-exports."
+             (convert/describe), JsThreadLocal's private fields, relocated re-exports, and \
+             unstable internal functions."
         );
     }
 
@@ -704,6 +708,7 @@ fn ignored_finding_predicate(lint: &str) -> Option<fn(&str) -> bool> {
         "derive_trait_impl_removed" => Some(is_ignored_derive_failure),
         "constructible_struct_adds_private_field" => Some(is_ignored_constructible_field),
         "struct_missing" => Some(is_ignored_relocated_struct),
+        "function_missing" => Some(is_ignored_missing_function),
         _ => None,
     }
 }
@@ -743,6 +748,17 @@ fn is_ignored_relocated_struct(line: &str) -> bool {
     IGNORED_RELOCATED_STRUCTS.contains(&type_name)
 }
 
+/// Whether a `Failed in:` detail line is an unstable upstream internal function that
+/// `wry-bindgen` intentionally does not expose.
+fn is_ignored_missing_function(line: &str) -> bool {
+    let Some(rest) = line.trim_start().strip_prefix("function ") else {
+        return false;
+    };
+    let function_path = rest.split(',').next().unwrap_or("");
+    let function_name = function_path.rsplit("::").next().unwrap_or(function_path);
+    IGNORED_MISSING_FUNCTIONS.contains(&function_name)
+}
+
 struct TempDir {
     path: PathBuf,
 }
@@ -774,7 +790,8 @@ impl Drop for TempDir {
 mod tests {
     use super::{
         filter_ignored_failures, hide_convert_module_text, is_ignored_constructible_field,
-        is_ignored_derive_failure, is_ignored_relocated_struct, rename_package_text,
+        is_ignored_derive_failure, is_ignored_missing_function, is_ignored_relocated_struct,
+        rename_package_text,
     };
 
     #[test]
@@ -815,6 +832,19 @@ mod tests {
         ));
         assert!(!is_ignored_relocated_struct(
             "  struct wry_bindgen::JsValue, previously in file /p/src/lib.rs:1742"
+        ));
+    }
+
+    #[test]
+    fn detects_ignored_missing_function() {
+        assert!(is_ignored_missing_function(
+            "  function wry_bindgen::closure::__wbindgen_destroy_closure, previously in file /p/src/closure.rs:755"
+        ));
+        assert!(is_ignored_missing_function(
+            "  function __wbindgen_destroy_closure, previously in file /p/src/closure.rs:755"
+        ));
+        assert!(!is_ignored_missing_function(
+            "  function wry_bindgen::throw_str, previously in file /p/src/lib.rs:1460"
         ));
     }
 
@@ -883,6 +913,20 @@ Failed in:
         assert_eq!(suppressed, 1);
         assert_eq!(remaining, 0);
         assert!(!out.contains("struct_missing"));
+    }
+
+    #[test]
+    fn drops_function_missing_block_for_ignored_internal_function() {
+        let input = "\
+--- failure function_missing: pub function removed or renamed ---
+
+Failed in:
+  function wry_bindgen::closure::__wbindgen_destroy_closure, previously in file /p/src/closure.rs:755
+";
+        let (out, suppressed, remaining) = filter_ignored_failures(input);
+        assert_eq!(suppressed, 1);
+        assert_eq!(remaining, 0);
+        assert!(!out.contains("function_missing"));
     }
 
     #[test]
