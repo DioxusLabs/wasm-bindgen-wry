@@ -34,7 +34,7 @@ impl<T> LazyCell<T> {
     }
 
     /// Return the cached value, initializing it if needed.
-    pub fn force(&'static self) -> &'static T {
+    pub fn force(&self) -> &'static T {
         let init = self.init;
         // Take the value out of the runtime, initializing it if it isn't there
         // yet. We initialize outside the runtime borrow because init() may
@@ -59,10 +59,7 @@ impl<T> core::ops::Deref for LazyCell<T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        // SAFETY: LazyCell is only constructed in `static` position by generated
-        // code, so `self` is always `&'static Self`.
-        let static_self: &'static Self = unsafe { &*(self as *const Self) };
-        Self::force(static_self)
+        Self::force(self)
     }
 }
 
