@@ -242,11 +242,9 @@ pub(super) fn generate_type(
         .make_where_clause()
         .predicates
         .push(syn::parse_quote!(#ref_self_ty: #krate::JsCast));
-    // `ArgAbi`'s `Projected<'a>` GAT carries no `Self: 'a` bound — it lends a
-    // `for<'a>` borrow through a continuation — so `&'a #rust_name` is only
-    // well-formed when the type outlives every `'a`. A generic extern type (e.g.
-    // `JsOption<T>`) needs `T: 'static` for that; non-generic types satisfy it
-    // trivially. Mirror the hand-written `&[T]` impl's `'static` bound.
+    // A generic extern type (e.g. `JsOption<T>`) needs `T: 'static` to be
+    // well-formed for borrowed argument projection. Mirror the hand-written
+    // `&[T]` impl's `'static` bound.
     let mut argabi_ref_generics = ref_generics.clone();
     argabi_ref_generics
         .make_where_clause()
@@ -254,6 +252,12 @@ pub(super) fn generate_type(
         .push(syn::parse_quote!(#ref_self_ty: 'static));
     let (argabi_ref_impl_generics, _, argabi_ref_where_clause) =
         argabi_ref_generics.split_for_impl();
+    let mut argabi_ref_project_generics = argabi_ref_generics.clone();
+    argabi_ref_project_generics
+        .params
+        .insert(0, syn::parse_quote!('__wry));
+    let (argabi_ref_project_impl_generics, _, argabi_ref_project_where_clause) =
+        argabi_ref_project_generics.split_for_impl();
     let mut argabi_owned_generics = generics.clone();
     argabi_owned_generics
         .make_where_clause()
@@ -261,11 +265,17 @@ pub(super) fn generate_type(
         .push(syn::parse_quote!(#ref_self_ty: 'static));
     let (argabi_owned_impl_generics, _, argabi_owned_where_clause) =
         argabi_owned_generics.split_for_impl();
+    let mut argabi_owned_project_generics = argabi_owned_generics.clone();
+    argabi_owned_project_generics
+        .params
+        .insert(0, syn::parse_quote!('__wry));
+    let (argabi_owned_project_impl_generics, _, argabi_owned_project_where_clause) =
+        argabi_owned_project_generics.split_for_impl();
     let allows = clippy_allows();
     let argabi_impls = quote_spanned! {span=>
         // `ArgAbi<S>` for the borrowed `&Self` argument, so an exported function
         // decoding a borrowed imported type goes through the uniform `<#arg_ty as
-        // ArgAbi<S>>` projection (also when it arrives behind an alias). Callback
+        // ArgAbi<S>>` decode path (also when it arrives behind an alias). Callback
         // decoding uses the same `CallScoped` impl for borrowed first arguments.
         // This is the one borrow shape that differs by scope: a synchronous
         // (`CallScoped`) borrow rides JS's borrow stack (gated on `Self: JsCast`),
@@ -276,11 +286,14 @@ pub(super) fn generate_type(
             type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
             type Value = ();
             type Anchor = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
-            type Projected<'__wry> = &'__wry #rust_name #ty_generics;
             fn decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
                 #krate::__rt::core::result::Result::Ok(((), #krate::convert::JsCastAnchor::next_borrowed()))
             }
-            fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+        }
+
+        #allows
+        impl #argabi_ref_project_impl_generics #krate::convert::ArgAbiProject<'__wry, #krate::convert::CallScoped> for &'__wry #rust_name #ty_generics #argabi_ref_project_where_clause {
+            fn project(_value: Self::Value, anchor: &'__wry mut Self::Anchor) -> Self {
                 &**anchor
             }
         }
@@ -290,13 +303,16 @@ pub(super) fn generate_type(
             type Wire = #rust_name #ty_generics;
             type Value = ();
             type Anchor = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
-            type Projected<'__wry> = &'__wry #rust_name #ty_generics;
             fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
                 #krate::__rt::core::result::Result::Ok(((), #krate::convert::OwnedArgAnchor::from_value(
                     <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
                 )))
             }
-            fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+        }
+
+        #allows
+        impl #argabi_owned_project_impl_generics #krate::convert::ArgAbiProject<'__wry, #krate::convert::Anchored> for &'__wry #rust_name #ty_generics #argabi_owned_project_where_clause {
+            fn project(_value: Self::Value, anchor: &'__wry mut Self::Anchor) -> Self {
                 &**anchor
             }
         }

@@ -46,9 +46,10 @@ impl BorrowScope for Anchored {}
 /// front: the [`Value`](ArgAbi::Value) (the owned value itself for a by-value
 /// argument, `()` for a borrow) and the [`Anchor`](ArgAbi::Anchor) (whatever
 /// backs a borrowed argument, `()` for a by-value one).
-/// [`project`](ArgAbi::project) then consumes the value and lends the
-/// [`Projected`](ArgAbi::Projected) argument the Rust function actually
-/// receives (`&T`, `&mut T`, or an owned `T`) out of the caller-owned anchor.
+/// [`project`](ArgAbiProject::project) then consumes the value and returns the
+/// argument the Rust function actually receives (`&T`, `&mut T`, or an owned
+/// `T`) out of the caller-owned anchor. Projection carries the borrow lifetime
+/// on [`ArgAbiProject`]; decode, metadata, and write-back stay lifetime-free.
 ///
 /// Because the *caller* owns the anchor, one projection serves both call
 /// shapes: a synchronous wrapper keeps it on its stack, while an `async`
@@ -68,19 +69,20 @@ pub trait ArgAbi<S: BorrowScope> {
     /// keeps it alive across the call and any later write-back.
     type Anchor;
 
-    /// What the Rust function receives, borrowed from the anchor for `'a`.
-    type Projected<'a>;
-
     /// Decode both argument parts from the incoming wire bytes.
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError>;
-
-    /// Produce the call argument: move the by-value part out of `value`, or
-    /// borrow it from the caller-owned `anchor`.
-    fn project(value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_>;
 
     /// Append any post-call write-back data to the export response, consuming
     /// the anchor.
     fn write_back(_anchor: Self::Anchor, _encoder: &mut EncodedData) {}
+}
+
+/// Project a decoded argument into the exact type the Rust function receives.
+#[doc(hidden)]
+pub trait ArgAbiProject<'a, S: BorrowScope>: ArgAbi<S> {
+    /// Produce the call argument: move the by-value part out of `value`, or
+    /// borrow it from the caller-owned `anchor`.
+    fn project(value: Self::Value, anchor: &'a mut Self::Anchor) -> Self;
 }
 
 impl<S, T> ArgAbi<S> for T
@@ -91,13 +93,18 @@ where
     type Wire = T;
     type Value = T;
     type Anchor = ();
-    type Projected<'a> = T;
 
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok((<T as BinaryDecode>::decode(decoder)?, ()))
     }
+}
 
-    fn project(value: Self::Value, _anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+impl<'a, S, T> ArgAbiProject<'a, S> for T
+where
+    S: BorrowScope,
+    T: BinaryDecode + EncodeTypeDef,
+{
+    fn project(value: Self::Value, _anchor: &'a mut Self::Anchor) -> Self {
         value
     }
 }
@@ -106,13 +113,14 @@ impl<S: BorrowScope> ArgAbi<S> for &str {
     type Wire = String;
     type Value = ();
     type Anchor = String;
-    type Projected<'a> = &'a str;
 
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok(((), <String as BinaryDecode>::decode(decoder)?))
     }
+}
 
-    fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+impl<'a, S: BorrowScope> ArgAbiProject<'a, S> for &'a str {
+    fn project(_value: Self::Value, anchor: &'a mut Self::Anchor) -> Self {
         anchor
     }
 }
@@ -125,13 +133,18 @@ where
     type Wire = Vec<T>;
     type Value = ();
     type Anchor = Vec<T>;
-    type Projected<'a> = &'a [T];
 
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok(((), <Vec<T> as BinaryDecode>::decode(decoder)?))
     }
+}
 
-    fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+impl<'a, S, T> ArgAbiProject<'a, S> for &'a [T]
+where
+    S: BorrowScope,
+    T: BinaryDecode + EncodeTypeDef + 'static,
+{
+    fn project(_value: Self::Value, anchor: &'a mut Self::Anchor) -> Self {
         anchor
     }
 }
@@ -144,18 +157,23 @@ where
     type Wire = MutSliceArg<T>;
     type Value = ();
     type Anchor = MutSliceArg<T>;
-    type Projected<'a> = &'a mut [T];
 
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok(((), <MutSliceArg<T> as BinaryDecode>::decode(decoder)?))
     }
 
-    fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
-        anchor.as_mut_slice()
-    }
-
     fn write_back(anchor: Self::Anchor, encoder: &mut EncodedData) {
         MutSliceArg::write_back(anchor, encoder);
+    }
+}
+
+impl<'a, S, T> ArgAbiProject<'a, S> for &'a mut [T]
+where
+    S: BorrowScope,
+    T: BinaryDecode + BinaryEncode + EncodeTypeDef + 'static,
+{
+    fn project(_value: Self::Value, anchor: &'a mut Self::Anchor) -> Self {
+        anchor.as_mut_slice()
     }
 }
 

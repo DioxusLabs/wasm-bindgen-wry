@@ -9,7 +9,7 @@ use crate::JsValue;
 use crate::encode::BinaryDecode;
 use crate::ipc::{DecodeError, DecodedData};
 
-pub use crate::encode::{Anchored, ArgAbi, BorrowScope, CallScoped};
+pub use crate::encode::{Anchored, ArgAbi, ArgAbiProject, BorrowScope, CallScoped};
 
 use super::{JsCastAnchor, OwnedArgAnchor, RefArg, RefMutArg};
 
@@ -27,13 +27,14 @@ impl ArgAbi<CallScoped> for &JsValue {
     type Wire = RefArg<JsValue>;
     type Value = ();
     type Anchor = JsCastAnchor<JsValue>;
-    type Projected<'a> = &'a JsValue;
 
     fn decode(_decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok(((), JsCastAnchor::next_borrowed()))
     }
+}
 
-    fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+impl<'a> ArgAbiProject<'a, CallScoped> for &'a JsValue {
+    fn project(_value: Self::Value, anchor: &'a mut Self::Anchor) -> Self {
         anchor
     }
 }
@@ -42,7 +43,6 @@ impl ArgAbi<Anchored> for &JsValue {
     type Wire = JsValue;
     type Value = ();
     type Anchor = OwnedArgAnchor<JsValue>;
-    type Projected<'a> = &'a JsValue;
 
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok((
@@ -50,8 +50,10 @@ impl ArgAbi<Anchored> for &JsValue {
             OwnedArgAnchor::from_value(<JsValue as BinaryDecode>::decode(decoder)?),
         ))
     }
+}
 
-    fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+impl<'a> ArgAbiProject<'a, Anchored> for &'a JsValue {
+    fn project(_value: Self::Value, anchor: &'a mut Self::Anchor) -> Self {
         anchor
     }
 }
@@ -60,7 +62,6 @@ impl<S: BorrowScope> ArgAbi<S> for &mut JsValue {
     type Wire = RefMutArg<JsValue>;
     type Value = ();
     type Anchor = OwnedArgAnchor<JsValue>;
-    type Projected<'a> = &'a mut JsValue;
 
     fn decode(decoder: &mut DecodedData) -> Result<(Self::Value, Self::Anchor), DecodeError> {
         Ok((
@@ -68,8 +69,10 @@ impl<S: BorrowScope> ArgAbi<S> for &mut JsValue {
             OwnedArgAnchor::from_value(<JsValue as BinaryDecode>::decode(decoder)?),
         ))
     }
+}
 
-    fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+impl<'a, S: BorrowScope> ArgAbiProject<'a, S> for &'a mut JsValue {
+    fn project(_value: Self::Value, anchor: &'a mut Self::Anchor) -> Self {
         anchor
     }
 }
