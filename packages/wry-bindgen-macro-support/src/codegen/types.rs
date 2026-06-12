@@ -274,50 +274,30 @@ pub(super) fn generate_type(
         #allows
         impl #argabi_ref_impl_generics #krate::convert::ArgAbi<#krate::convert::CallScoped> for &#rust_name #ty_generics #argabi_ref_where_clause {
             type Wire = #krate::convert::RefArg<#rust_name #ty_generics>;
-            type Guard = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
-            type ProjectedGuard = ();
+            type Value = ();
+            type Anchor = #krate::convert::JsCastAnchor<#rust_name #ty_generics>;
             type Projected<'__wry> = &'__wry #rust_name #ty_generics;
-            fn decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
-                #krate::__rt::core::result::Result::Ok(#krate::convert::JsCastAnchor::next_borrowed())
+            fn decode(_decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(((), #krate::convert::JsCastAnchor::next_borrowed()))
             }
-            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
-            where
-                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                let __wry_result = with(&*guard);
-                (__wry_result, ())
-            }
-            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
-            where
-                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                #krate::convert::__wry_project_ref_async(guard, with)
+            fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+                &**anchor
             }
         }
 
         #allows
         impl #argabi_owned_impl_generics #krate::convert::ArgAbi<#krate::convert::Anchored> for &#rust_name #ty_generics #argabi_owned_where_clause {
             type Wire = #rust_name #ty_generics;
-            type Guard = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
-            type ProjectedGuard = Self::Guard;
+            type Value = ();
+            type Anchor = #krate::convert::OwnedArgAnchor<#rust_name #ty_generics>;
             type Projected<'__wry> = &'__wry #rust_name #ty_generics;
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
-                #krate::__rt::core::result::Result::Ok(#krate::convert::OwnedArgAnchor::from_value(
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(((), #krate::convert::OwnedArgAnchor::from_value(
                     <#rust_name #ty_generics as #krate::__rt::BinaryDecode>::decode(decoder)?
-                ))
+                )))
             }
-            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
-            where
-                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                let __wry_result = with(&*guard);
-                (__wry_result, guard)
-            }
-            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
-            where
-                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                #krate::convert::__wry_project_ref_async(guard, with)
+            fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+                &**anchor
             }
         }
     };

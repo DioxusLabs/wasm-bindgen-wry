@@ -266,7 +266,7 @@ macro_rules! impl_into_rust_callback_borrow_first {
             for &'borrow mut (dyn FnMut(&$first, $($rest),*) -> R + 'object)
         where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -282,9 +282,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
                     unsafe { scoped_callback_ref_mut(self) };
                 RustCallback::new_fn_mut(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__guard, $($rest),*);
+                        let result = f(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -297,7 +297,7 @@ macro_rules! impl_into_rust_callback_borrow_first {
             for &'borrow (dyn Fn(&$first, $($rest),*) -> R + 'object)
         where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -312,9 +312,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
                     unsafe { scoped_callback_ref(self) };
                 RustCallback::new_fn(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__guard, $($rest),*);
+                        let result = f(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -327,7 +327,7 @@ macro_rules! impl_into_rust_callback_borrow_first {
             for &'borrow mut (dyn Fn(&$first, $($rest),*) -> R + 'object)
         where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -342,9 +342,9 @@ macro_rules! impl_into_rust_callback_borrow_first {
                     unsafe { scoped_callback_ref(&*self) };
                 RustCallback::new_fn(
                     move |_decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(_decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(_decoder)?;)*
-                        let result = f(&*__guard, $($rest),*);
+                        let result = f(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -443,7 +443,7 @@ macro_rules! encode_callback_borrow_first {
         impl<R, $first, $($rest,)*> BinaryEncode for $($self_ty)*
         where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,

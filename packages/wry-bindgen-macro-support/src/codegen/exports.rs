@@ -36,7 +36,7 @@ fn unwrap_group(mut ty: &syn::Type) -> &syn::Type {
 /// Drop the explicit lifetime from a top-level reference type so the generated
 /// export wrapper — which has none of the function's lifetime parameters in
 /// scope — can name it in `<#ty as ArgAbi<S>>`. `&'a [u8]` becomes `&[u8]`, whose
-/// borrow lifetime is then inferred from the decoded guard; non-reference types
+/// borrow lifetime is then inferred from the decoded anchor; non-reference types
 /// are returned unchanged.
 fn strip_ref_lifetime(ty: &syn::Type) -> syn::Type {
     match ty {
@@ -647,54 +647,33 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         // `<#arg_ty as ArgAbi<S>>` projection — including when the type reaches the
         // macro behind an alias. Callback decoding uses the same shared-borrow impl
         // for borrowed first arguments. A store checkout is valid across an await,
-        // so one impl serves both borrow scopes:
-        // the synchronous `project` lends the checkout into `with`, while
-        // `project_async` moves the checkout into the `async` export's future and
-        // lends it across the `.await`.
+        // so one impl serves both borrow scopes: the caller owns the checkout
+        // (a sync export on its stack, an `async` one inside its future) and
+        // `project` lends the borrow out of it.
         #allows
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &#rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
-            type Guard = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            type ProjectedGuard = Self::Guard;
+            type Value = ();
+            type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
             type Projected<'__wry> = &'__wry #rust_name;
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
-                #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(((), #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)?))
             }
-            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
-            where
-                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                let __wry_result = with(&*guard);
-                (__wry_result, guard)
-            }
-            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
-            where
-                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                async move { with(&*guard).await }
+            fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+                &**anchor
             }
         }
         #allows
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &mut #rust_name {
             type Wire = #krate::convert::RefMutArg<#rust_name>;
-            type Guard = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
-            type ProjectedGuard = Self::Guard;
+            type Value = ();
+            type Anchor = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
             type Projected<'__wry> = &'__wry mut #rust_name;
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
-                #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(((), #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)?))
             }
-            fn project<__WryR, __WryF>(mut guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
-            where
-                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                let __wry_result = with(&mut *guard);
-                (__wry_result, guard)
-            }
-            fn project_async<__WryR, __WryF>(mut guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
-            where
-                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                async move { with(&mut *guard).await }
+            fn project(_value: Self::Value, anchor: &mut Self::Anchor) -> Self::Projected<'_> {
+                &mut **anchor
             }
         }
     };

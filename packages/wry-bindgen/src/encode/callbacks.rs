@@ -351,7 +351,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, $first, $($rest,)*> crate::WryWasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn FnMut(&$first, $($rest),*) -> R
             where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -361,9 +361,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_js_closure(mut boxed: Box<Self>) -> crate::Closure<Self> {
                 crate::Closure::wrap_encode_decode_mut::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = boxed(&*__guard, $($rest),*);
+                        let result = boxed(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -388,7 +388,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, $first, $($rest,)*> crate::WryWasmClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R)> for dyn Fn(&$first, $($rest),*) -> R
             where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -398,9 +398,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_js_closure(boxed: Box<Self>) -> crate::Closure<Self> {
                 crate::Closure::wrap_encode_decode::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = boxed(&*__guard, $($rest),*);
+                        let result = boxed(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -423,7 +423,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R), crate::Closure<dyn FnMut(&$first, $($rest),*) -> R>> for F
             where F: FnMut(&$first, $($rest),*) -> R + 'static,
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -433,9 +433,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_closure(mut self) -> crate::Closure<dyn FnMut(&$first, $($rest),*) -> R> {
                 crate::Closure::wrap_encode_decode_mut::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = self(&*__guard, $($rest),*);
+                        let result = self(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -447,7 +447,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, F, $first, $($rest,)*> IntoClosure<(BorrowedFirstArg, fn(&$first, $($rest),*) -> R), crate::Closure<dyn Fn(&$first, $($rest),*) -> R>> for F
             where F: Fn(&$first, $($rest),*) -> R + 'static,
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -457,9 +457,9 @@ macro_rules! impl_fnmut_stub_ref {
             fn into_closure(self) -> crate::Closure<dyn Fn(&$first, $($rest),*) -> R> {
                 crate::Closure::wrap_encode_decode::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = self(&*__guard, $($rest),*);
+                        let result = self(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -471,7 +471,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, F, $first, $($rest,)*> IntoWasmClosure<dyn FnMut(&$first, $($rest),*) -> R> for F
             where F: FnMut(&$first, $($rest),*) -> R + 'static,
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -489,7 +489,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, $first, $($rest,)*> IntoWasmClosure<dyn FnMut(&$first, $($rest),*) -> R> for dyn FnMut(&$first, $($rest),*) -> R
             where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -503,7 +503,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, F, $first, $($rest,)*> IntoWasmClosure<dyn Fn(&$first, $($rest),*) -> R> for F
             where F: Fn(&$first, $($rest),*) -> R + 'static,
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -521,7 +521,7 @@ macro_rules! impl_fnmut_stub_ref {
         impl<R, $first, $($rest,)*> IntoWasmClosure<dyn Fn(&$first, $($rest),*) -> R> for dyn Fn(&$first, $($rest),*) -> R
             where
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -603,7 +603,7 @@ macro_rules! impl_fn_once_ref {
         where
             F: FnOnce(&$first, $($rest),*) -> R + 'static,
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
@@ -615,9 +615,9 @@ macro_rules! impl_fn_once_ref {
                 crate::Closure::wrap_once_encode_decode_mut::<fn(&$first, $($rest),*) -> R>(
                     move |decoder: &mut DecodedData, encoder: &mut EncodedData| {
                         let f = me.take().expect("FnOnce closure called more than once");
-                        let __guard = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
+                        let (_, __anchor) = <&'static $first as ArgAbi<CallScoped>>::decode(decoder)?;
                         $(let $rest = <$rest as BinaryDecode>::decode(decoder)?;)*
-                        let result = f(&*__guard, $($rest),*);
+                        let result = f(&*__anchor, $($rest),*);
                         result.encode(encoder);
                         Ok(())
                     },
@@ -629,7 +629,7 @@ macro_rules! impl_fn_once_ref {
         where
             F: FnOnce(&$first, $($rest),*) -> R + 'static,
             &'static $first: ArgAbi<CallScoped>,
-            <&'static $first as ArgAbi<CallScoped>>::Guard: core::ops::Deref<Target = $first>,
+            <&'static $first as ArgAbi<CallScoped>>::Anchor: core::ops::Deref<Target = $first>,
             $first: 'static,
             $($rest: BinaryDecode + EncodeTypeDef + 'static,)*
             R: BinaryEncode + EncodeTypeDef + 'static,
