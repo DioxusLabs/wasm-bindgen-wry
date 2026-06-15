@@ -124,8 +124,8 @@ where
 }
 
 /// The wire type advertised to JS for a return value, in borrow scope `S` — the
-/// return-side analog of [`ArgAbi<S>::Wire`](crate::convert::ArgAbi::Wire). For
-/// [`CallScoped`] it is the value's own wire type; for [`Anchored`] it is the
+/// return-side analog of [`ArgAbi<S>::Wire`](crate::convert::ArgAbi::Wire).
+/// For [`CallScoped`] it is the value's own wire type; for [`Anchored`] it is the
 /// `Promise` *resolution* (the export macro wraps it in the configured
 /// `js_sys::Promise<…>`, since `Promise` lives in the external `js-sys` crate).
 /// The encode/lower behavior lives on the [`ReturnSync`]/[`ReturnAsync`]

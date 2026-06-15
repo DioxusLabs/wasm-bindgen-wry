@@ -35,9 +35,10 @@ fn unwrap_group(mut ty: &syn::Type) -> &syn::Type {
 
 /// Drop the explicit lifetime from a top-level reference type so the generated
 /// export wrapper — which has none of the function's lifetime parameters in
-/// scope — can name it in `<#ty as ArgAbi<S>>`. `&'a [u8]` becomes `&[u8]`, whose
-/// borrow lifetime is then inferred from the decoded guard; non-reference types
-/// are returned unchanged.
+/// scope — can name it in `<#ty as ArgAbi<S>>` and
+/// `<#ty as ArgAbiProject<'_, S>>`. `&'a [u8]` becomes `&[u8]`, whose borrow
+/// lifetime is then inferred from the decoded anchor; non-reference types are
+/// returned unchanged.
 fn strip_ref_lifetime(ty: &syn::Type) -> syn::Type {
     match ty {
         syn::Type::Reference(reference) => {
@@ -138,7 +139,7 @@ fn async_receiver_callable_with_handle(
     span: proc_macro2::Span,
 ) -> TokenStream {
     let store = quote_spanned! {span=> #krate::__rt::object_store };
-    let params = annotated_params(decoded, krate, span);
+    let params = annotated_params(decoded, span);
     let handle = &decoded.arg_idents[0];
     match self_ty {
         MethodSelf::RefShared => quote_spanned! {span=>
@@ -172,7 +173,7 @@ fn receiver_callable_with_handle(
     span: proc_macro2::Span,
 ) -> TokenStream {
     let store = quote_spanned! {span=> #krate::__rt::object_store };
-    let params = annotated_params(decoded, krate, span);
+    let params = annotated_params(decoded, span);
     let handle = &decoded.arg_idents[0];
     match self_ty {
         MethodSelf::RefShared => quote_spanned! {span=>
@@ -197,44 +198,35 @@ fn receiver_callable_with_handle(
 }
 
 /// A receiver/wrapper closure's parameter list with each argument explicitly
-/// typed as `<Ty as ArgAbi<S>>::Projected<'_>`. The elided lifetime is
-/// late-bound, which forces the closure to be higher-ranked (`for<'a>`) — without
-/// the annotation a closure taking a *borrowed* projected argument infers one
-/// fixed lifetime and fails the `CallExport` bound ("implementation of `Fn`
-/// is not general enough").
-fn annotated_params(
-    decoded: &DecodedArgs,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    let scope = &decoded.scope;
+/// typed as the declared Rust argument type. Export invocation is generated at
+/// the wrapper site, so the concrete borrow lifetime is inferred by
+/// `<Ty as ArgAbiProject<'_, S>>::project`.
+fn annotated_params(decoded: &DecodedArgs, span: proc_macro2::Span) -> TokenStream {
     let params = decoded
         .arg_idents
         .iter()
         .zip(&decoded.arg_tys)
         .map(|(ident, ty)| {
-            quote_spanned! {span=> #ident: <#ty as #krate::convert::ArgAbi<#scope>>::Projected<'_> }
+            quote_spanned! {span=> #ident: #ty }
         });
     quote_spanned! {span=> #(#params),* }
 }
 
-/// The callable handed to [`CallExport`]/[`CallExportAsync`] for a free function
-/// or static method named by `path`. A safe `fn`/`async fn` satisfies the
-/// `Fn`/`AsyncFn` bound directly, so it is passed by path. An `unsafe fn`
-/// does not implement those traits, so it is wrapped in a safe closure whose body
-/// supplies the `unsafe` block (`allow(unused_unsafe)` keeps the safe case quiet).
+/// The callable generated for a free function or static method named by `path`.
+/// A safe `fn`/`async fn` is passed by path. An `unsafe fn` is wrapped in a safe
+/// closure whose body supplies the `unsafe` block (`allow(unused_unsafe)` keeps
+/// the safe case quiet).
 fn free_callable(
     path: TokenStream,
     decoded: &DecodedArgs,
     is_unsafe: bool,
     is_async: bool,
-    krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
     if !is_unsafe {
         return path;
     }
-    let params = annotated_params(decoded, krate, span);
+    let params = annotated_params(decoded, span);
     let arg_idents = &decoded.arg_idents;
     let call = unsafe_call(quote_spanned! {span=> #path(#(#arg_idents),*) }, span);
     if is_async {
@@ -247,7 +239,7 @@ fn free_callable(
 #[derive(Clone)]
 struct DecodedArgs {
     /// The full spelled argument types, in declaration order. They form the
-    /// `(A0, A1, …)` tuple naming the `CallExport`/`CallExportAsync` arity.
+    /// `(A0, A1, …)` tuple naming the `CallExportArgs` arity.
     arg_tys: Vec<syn::Type>,
     /// The argument bindings, in declaration order — used as the receiver
     /// closure's parameters and as the call's arguments.
@@ -285,6 +277,19 @@ fn call_export_return_type(
     quote_spanned! {span=> || #krate::__rt::TypeDef::of::<#return_type>() }
 }
 
+fn sync_return_wire_type(
+    ret: Option<TokenStream>,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    match ret {
+        Some(ret) => quote_spanned! {span=>
+            <#ret as #krate::convert::ReturnAbi<#krate::convert::CallScoped>>::Wire
+        },
+        None => quote_spanned! {span=> () },
+    }
+}
+
 fn call_export_type_fns(
     decoded: &DecodedArgs,
     return_type: TokenStream,
@@ -296,10 +301,129 @@ fn call_export_type_fns(
     (arg_types, return_type)
 }
 
+fn export_signature(
+    decoded: &DecodedArgs,
+    return_type: TokenStream,
+    export_name: TokenStream,
+    namespace: TokenStream,
+    arg_names: TokenStream,
+    this: TokenStream,
+    public: TokenStream,
+    start: TokenStream,
+    variadic: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let arg_types = call_export_arg_types(decoded, krate, span);
+    quote_spanned! {span=>
+        {
+            let __wry_arg_names: &'static [&'static str] = #arg_names;
+            let __wry_arg_types = #arg_types();
+            let __wry_hidden_args = __wry_arg_types.len().saturating_sub(__wry_arg_names.len());
+            let __wry_args = __wry_arg_types
+                .into_iter()
+                .enumerate()
+                .map(|(__wry_i, __wry_ty)| #krate::__rt::JsFunctionArg {
+                    name: if __wry_i < __wry_hidden_args {
+                        ""
+                    } else {
+                        __wry_arg_names[__wry_i - __wry_hidden_args]
+                    },
+                    ty: __wry_ty,
+                })
+                .collect();
+            #krate::__rt::JsFunctionSignature::new(
+                #export_name,
+                #namespace,
+                __wry_args,
+                #krate::__rt::TypeDef::of::<#return_type>(),
+                #this,
+                #public,
+                #start,
+                #variadic,
+            )
+        }
+    }
+}
+
+fn decode_anchor_statements(
+    decoded: &DecodedArgs,
+    value_idents: &[Ident],
+    anchor_idents: &[Ident],
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let scope = &decoded.scope;
+    let statements = decoded
+        .arg_tys
+        .iter()
+        .zip(value_idents)
+        .zip(anchor_idents)
+        .map(|((ty, value), anchor)| {
+            quote_spanned! {span=>
+                let (#value, mut #anchor) =
+                    <#ty as #krate::convert::ArgAbi<#scope>>::decode(__wry_decoder)?;
+            }
+        });
+    quote_spanned! {span=> #(#statements)* }
+}
+
+fn project_arg_statements(
+    decoded: &DecodedArgs,
+    value_idents: &[Ident],
+    anchor_idents: &[Ident],
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let scope = &decoded.scope;
+    let statements = decoded
+        .arg_tys
+        .iter()
+        .zip(&decoded.arg_idents)
+        .zip(value_idents)
+        .zip(anchor_idents)
+        .map(|(((ty, arg), value), anchor)| {
+            quote_spanned! {span=>
+                let #arg = <#ty as #krate::convert::ArgAbiProject<'_, #scope>>::project(#value, &mut #anchor);
+            }
+        });
+    quote_spanned! {span=> #(#statements)* }
+}
+
+fn write_back_statements(
+    decoded: &DecodedArgs,
+    anchor_idents: &[Ident],
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    let scope = &decoded.scope;
+    let statements = decoded
+        .arg_tys
+        .iter()
+        .zip(anchor_idents)
+        .map(|(ty, anchor)| {
+            quote_spanned! {span=>
+                <#ty as #krate::convert::ArgAbi<#scope>>::write_back(#anchor, &mut __wry_encoder);
+            }
+        });
+    quote_spanned! {span=> #(#statements)* }
+}
+
+fn export_arg_temps(decoded: &DecodedArgs) -> (Vec<Ident>, Vec<Ident>) {
+    let value_idents = (0..decoded.arg_tys.len())
+        .map(|i| format_ident!("__wry_value_{i}"))
+        .collect();
+    let anchor_idents = (0..decoded.arg_tys.len())
+        .map(|i| format_ident!("__wry_anchor_{i}"))
+        .collect();
+    (value_idents, anchor_idents)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn call_export_free_spec(
     decoded: &DecodedArgs,
     callable: TokenStream,
+    return_type: TokenStream,
     is_async: bool,
     resolve_async: Option<TokenStream>,
     export_name: TokenStream,
@@ -312,35 +436,69 @@ fn call_export_free_spec(
     krate: &TokenStream,
     span: proc_macro2::Span,
 ) -> TokenStream {
-    let arg_tys = &decoded.arg_tys;
-    let scope = &decoded.scope;
+    let signature = export_signature(
+        decoded,
+        return_type.clone(),
+        export_name,
+        namespace,
+        arg_names,
+        this,
+        public,
+        start,
+        variadic,
+        krate,
+        span,
+    );
+    let (value_idents, anchor_idents) = export_arg_temps(decoded);
+    let decode_anchors =
+        decode_anchor_statements(decoded, &value_idents, &anchor_idents, krate, span);
+    let project_args = project_arg_statements(decoded, &value_idents, &anchor_idents, krate, span);
+    let arg_idents = &decoded.arg_idents;
     if is_async {
         let resolve_async = resolve_async.expect("async exports always provide a Promise resolver");
         quote_spanned! {span=>
-            #krate::convert::CallExportAsync::<(#(#arg_tys,)*), #scope>::export_spec(
-                #callable,
-                #resolve_async,
-                #export_name,
-                #namespace,
-                #arg_names,
-                #this,
-                #public,
-                #start,
-                #variadic,
-            )
+            {
+                let __wry_signature = #signature;
+                #krate::__rt::JsExportSpec::new(__wry_signature, move |__wry_decoder| {
+                    #decode_anchors
+                    let __wry_future: #krate::__rt::core::pin::Pin<
+                        #krate::__rt::alloc::boxed::Box<
+                            dyn #krate::__rt::core::future::Future<
+                                Output = #krate::__rt::core::result::Result<#krate::JsValue, #krate::JsValue>
+                            > + 'static
+                        >
+                    > = #krate::__rt::alloc::boxed::Box::pin(async move {
+                        let __wry_ret = {
+                            #project_args
+                            (#callable)(#(#arg_idents),*).await
+                        };
+                        #krate::convert::ReturnAsync::into_js_result(__wry_ret)
+                    });
+                    let __wry_result = #resolve_async(__wry_future);
+                    let mut __wry_encoder = #krate::__rt::EncodedData::default();
+                    <&#return_type as #krate::__rt::BinaryEncode>::encode(&__wry_result, &mut __wry_encoder);
+                    #krate::__rt::core::mem::forget(__wry_result);
+                    #krate::__rt::core::result::Result::Ok(__wry_encoder)
+                })
+            }
         }
     } else {
+        let write_back = write_back_statements(decoded, &anchor_idents, krate, span);
         quote_spanned! {span=>
-            #krate::convert::CallExport::<(#(#arg_tys,)*), #scope>::export_spec(
-                #callable,
-                #export_name,
-                #namespace,
-                #arg_names,
-                #this,
-                #public,
-                #start,
-                #variadic,
-            )
+            {
+                let __wry_signature = #signature;
+                #krate::__rt::JsExportSpec::new(__wry_signature, move |__wry_decoder| {
+                    #decode_anchors
+                    let __wry_ret = {
+                        #project_args
+                        (#callable)(#(#arg_idents),*)
+                    };
+                    let mut __wry_encoder = #krate::__rt::EncodedData::default();
+                    #krate::convert::ReturnSync::return_abi(__wry_ret, &mut __wry_encoder);
+                    #write_back
+                    #krate::__rt::core::result::Result::Ok(__wry_encoder)
+                })
+            }
         }
     }
 }
@@ -349,33 +507,8 @@ fn call_export_free_spec(
 fn call_export_async_method_spec(
     decoded: &DecodedArgs,
     callable: TokenStream,
+    return_type: TokenStream,
     resolve_async: TokenStream,
-    export_name: TokenStream,
-    arg_names: TokenStream,
-    variadic: TokenStream,
-    krate: &TokenStream,
-    span: proc_macro2::Span,
-) -> TokenStream {
-    let arg_tys = &decoded.arg_tys;
-    let scope = &decoded.scope;
-    quote_spanned! {span=>
-        #krate::convert::CallExportAsync::<(#(#arg_tys,)*), #scope>::export_spec(
-            #callable,
-            #resolve_async,
-            #export_name,
-            &[],
-            #arg_names,
-            false,
-            false,
-            false,
-            #variadic,
-        )
-    }
-}
-
-fn call_export_sync_private_spec(
-    decoded: &DecodedArgs,
-    callable: TokenStream,
     export_name: TokenStream,
     arg_names: TokenStream,
     variadic: TokenStream,
@@ -385,6 +518,35 @@ fn call_export_sync_private_spec(
     call_export_free_spec(
         decoded,
         callable,
+        return_type,
+        true,
+        Some(resolve_async),
+        export_name,
+        quote_spanned! {span=> &[] },
+        arg_names,
+        quote_spanned! {span=> false },
+        quote_spanned! {span=> false },
+        quote_spanned! {span=> false },
+        variadic,
+        krate,
+        span,
+    )
+}
+
+fn call_export_sync_private_spec(
+    decoded: &DecodedArgs,
+    callable: TokenStream,
+    return_type: TokenStream,
+    export_name: TokenStream,
+    arg_names: TokenStream,
+    variadic: TokenStream,
+    krate: &TokenStream,
+    span: proc_macro2::Span,
+) -> TokenStream {
+    call_export_free_spec(
+        decoded,
+        callable,
+        return_type,
         false,
         None,
         export_name,
@@ -403,6 +565,7 @@ fn call_export_sync_private_registration(
     static_name: &str,
     decoded: &DecodedArgs,
     callable: TokenStream,
+    return_type: TokenStream,
     export_name: TokenStream,
     arg_names: TokenStream,
     variadic: TokenStream,
@@ -412,6 +575,7 @@ fn call_export_sync_private_registration(
     let export_spec = call_export_sync_private_spec(
         decoded,
         callable,
+        return_type,
         export_name,
         arg_names,
         variadic,
@@ -544,7 +708,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
         arg_names: Vec::new(),
         scope: quote_spanned! {span=> #krate::convert::CallScoped },
     };
-    let drop_params = annotated_params(&drop_args, krate, span);
+    let drop_params = annotated_params(&drop_args, span);
     let drop_impl = call_export_sync_private_registration(
         "__DROP_SPEC",
         &drop_args,
@@ -553,6 +717,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
                 #krate::__rt::object_store::drop_object(#drop_handle);
             }
         },
+        quote_spanned! {span=> () },
         quote_spanned! {span=> #drop_fn_name },
         quote_spanned! {span=> &[] },
         quote_spanned! {span=> false },
@@ -644,57 +809,37 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
     let borrow_arg_impls = quote_spanned! {span=>
         // `ArgAbi<S>` for the *full* `&Self`/`&mut Self` argument types, so an
         // exported function decodes a borrowed struct argument through the uniform
-        // `<#arg_ty as ArgAbi<S>>` projection — including when the type reaches the
-        // macro behind an alias. Callback decoding uses the same shared-borrow impl
-        // for borrowed first arguments. A store checkout is valid across an await,
-        // so one impl serves both borrow scopes:
-        // the synchronous `project` lends the checkout into `with`, while
-        // `project_async` moves the checkout into the `async` export's future and
-        // lends it across the `.await`.
+        // `<#arg_ty as ArgAbi<S>>` decode path — including when the type reaches the
+        // macro behind an alias. `ArgAbiProject<'a, S>` separately lends the
+        // borrowed value out of the caller-owned checkout.
         #allows
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &#rust_name {
             type Wire = #krate::convert::RefArg<#rust_name>;
-            type Guard = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
-            type ProjectedGuard = Self::Guard;
-            type Projected<'__wry> = &'__wry #rust_name;
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
-                #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)
+            type Value = ();
+            type Anchor = #krate::__rt::object_store::ObjectRefAnchor<#rust_name>;
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(((), #krate::__rt::object_store::ObjectRefAnchor::checkout_from_decoder(decoder)?))
             }
-            fn project<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
-            where
-                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                let __wry_result = with(&*guard);
-                (__wry_result, guard)
-            }
-            fn project_async<__WryR, __WryF>(guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
-            where
-                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                async move { with(&*guard).await }
+        }
+        #allows
+        impl<'__wry, __WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbiProject<'__wry, __WryScope> for &'__wry #rust_name {
+            fn project(_value: Self::Value, anchor: &'__wry mut Self::Anchor) -> Self {
+                &**anchor
             }
         }
         #allows
         impl<__WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbi<__WryScope> for &mut #rust_name {
             type Wire = #krate::convert::RefMutArg<#rust_name>;
-            type Guard = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
-            type ProjectedGuard = Self::Guard;
-            type Projected<'__wry> = &'__wry mut #rust_name;
-            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<Self::Guard, #krate::__rt::DecodeError> {
-                #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)
+            type Value = ();
+            type Anchor = #krate::__rt::object_store::ObjectRefMutAnchor<#rust_name>;
+            fn decode(decoder: &mut #krate::__rt::DecodedData) -> #krate::__rt::core::result::Result<(Self::Value, Self::Anchor), #krate::__rt::DecodeError> {
+                #krate::__rt::core::result::Result::Ok(((), #krate::__rt::object_store::ObjectRefMutAnchor::checkout_from_decoder(decoder)?))
             }
-            fn project<__WryR, __WryF>(mut guard: Self::Guard, with: __WryF) -> (__WryR, Self::ProjectedGuard)
-            where
-                __WryF: for<'__wry> FnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                let __wry_result = with(&mut *guard);
-                (__wry_result, guard)
-            }
-            fn project_async<__WryR, __WryF>(mut guard: Self::Guard, with: __WryF) -> impl #krate::__rt::core::future::Future<Output = __WryR>
-            where
-                __WryF: for<'__wry> #krate::__rt::core::ops::AsyncFnOnce(Self::Projected<'__wry>) -> __WryR,
-            {
-                async move { with(&mut *guard).await }
+        }
+        #allows
+        impl<'__wry, __WryScope: #krate::convert::BorrowScope> #krate::convert::ArgAbiProject<'__wry, __WryScope> for &'__wry mut #rust_name {
+            fn project(_value: Self::Value, anchor: &'__wry mut Self::Anchor) -> Self {
+                &mut **anchor
             }
         }
     };
@@ -778,7 +923,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
             arg_names: Vec::new(),
             scope: quote_spanned! {span=> #krate::convert::CallScoped },
         };
-        let upcast_params = annotated_params(&upcast_args, krate, span);
+        let upcast_params = annotated_params(&upcast_args, span);
         call_export_sync_private_registration(
             "__UPCAST_SPEC",
             &upcast_args,
@@ -790,6 +935,7 @@ pub(super) fn generate_export_struct(s: &Struct, krate: &TokenStream) -> syn::Re
                     #krate::__rt::object_store::insert_object(ancestor)
                 }
             },
+            quote_spanned! {span=> #krate::__rt::object_store::ObjectHandle },
             quote_spanned! {span=> #upcast_name },
             quote_spanned! {span=> &[] },
             quote_spanned! {span=> false },
@@ -837,9 +983,9 @@ pub(super) fn generate_export_function(
 
     let ret = function.function.ret.as_ref().map(|ret| &ret.r#type);
     let is_async = function.function.r#async;
-    // The exported function is dispatched through `CallExport`, which decodes,
-    // projects, calls, and encodes by arity. A safe `fn` is passed by path; an
-    // `unsafe fn` is wrapped in a closure that supplies the `unsafe` block.
+    // The exported function decodes, projects, calls, and encodes in the
+    // generated wrapper. A safe `fn` is passed by path; an `unsafe fn` is
+    // wrapped in a closure that supplies the `unsafe` block.
     let this = matches!(
         function.method_kind,
         MethodKind::Operation(ast::Operation {
@@ -864,7 +1010,6 @@ pub(super) fn generate_export_function(
         &decoded_args,
         function.function.r#unsafe,
         is_async,
-        krate,
         span,
     );
     let resolve_async = if is_async {
@@ -872,9 +1017,11 @@ pub(super) fn generate_export_function(
     } else {
         None
     };
+    let export_return_type = return_wire_type(ret, is_async, krate, js_sys, span);
     let free_export = call_export_free_spec(
         &decoded_args,
         export_callable,
+        export_return_type,
         is_async,
         resolve_async,
         quote_spanned! {span=> #js_name },
@@ -910,6 +1057,7 @@ pub(super) fn generate_main_function(
     let free_export = call_export_free_spec(
         &decoded_args,
         quote_spanned! {span=> || { #main(); } },
+        quote_spanned! {span=> () },
         false,
         None,
         quote_spanned! {span=> #export_name },
@@ -962,7 +1110,7 @@ fn generate_field_accessor(
         arg_names: Vec::new(),
         scope: quote_spanned! {span=> #krate::convert::CallScoped },
     };
-    let getter_params = annotated_params(&getter_args, krate, span);
+    let getter_params = annotated_params(&getter_args, span);
 
     // Generate getter
     let getter_value = if field.getter_with_clone.is_some() {
@@ -985,6 +1133,7 @@ fn generate_field_accessor(
                 #getter_value
             }
         },
+        sync_return_wire_type(Some(quote_spanned! {span=> #field_ty }), krate, span),
         quote_spanned! {span=> #getter_name },
         quote_spanned! {span=> &[] },
         quote_spanned! {span=> false },
@@ -1007,7 +1156,7 @@ fn generate_field_accessor(
             arg_names: Vec::new(),
             scope: quote_spanned! {span=> #krate::convert::CallScoped },
         };
-        let setter_params = annotated_params(&setter_args, krate, span);
+        let setter_params = annotated_params(&setter_args, span);
         call_export_sync_private_registration(
             "__SETTER_SPEC",
             &setter_args,
@@ -1017,6 +1166,7 @@ fn generate_field_accessor(
                     __wry_obj.#field_name = #setter_val;
                 }
             },
+            quote_spanned! {span=> () },
             quote_spanned! {span=> #setter_name },
             quote_spanned! {span=> &[] },
             quote_spanned! {span=> false },
@@ -1127,6 +1277,7 @@ pub(super) fn generate_export_method(
             .map(|ty| return_wire_type(Some(ty), false, krate, js_sys, span))
             .unwrap_or_else(|| quote_spanned! {span=> () }),
     };
+    let export_return_type = member_return_type.clone();
     let (member_arg_types, member_return_type) =
         call_export_type_fns(&decoded_args, member_return_type, krate, span);
     let (member_name, member_kind) = match &method.method_kind {
@@ -1211,7 +1362,7 @@ pub(super) fn generate_export_method(
     let arg_idents = &decoded_args.arg_idents;
     let (export_decoded_args, export_callable) = match &method.method_kind {
         MethodKind::Constructor => {
-            let params = annotated_params(&decoded_args, krate, span);
+            let params = annotated_params(&decoded_args, span);
             let callable = if is_async {
                 let class_name = class_id.clone();
                 quote_spanned! {span=>
@@ -1236,7 +1387,6 @@ pub(super) fn generate_export_method(
                 &decoded_args,
                 method.function.r#unsafe,
                 is_async,
-                krate,
                 span,
             );
             (decoded_args.clone(), callable)
@@ -1326,6 +1476,7 @@ pub(super) fn generate_export_method(
         let export_spec = call_export_async_method_spec(
             &export_decoded_args,
             export_callable,
+            export_return_type,
             resolve_async,
             quote_spanned! {span=> #export_name },
             arg_names,
@@ -1338,6 +1489,7 @@ pub(super) fn generate_export_method(
         let export_spec = call_export_sync_private_spec(
             &export_decoded_args,
             export_callable,
+            export_return_type,
             quote_spanned! {span=> #export_name },
             arg_names,
             quote_spanned! {span=> #variadic },

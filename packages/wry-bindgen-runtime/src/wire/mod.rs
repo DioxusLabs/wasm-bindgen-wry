@@ -22,8 +22,8 @@ mod registry;
 
 pub use callback::{CallbackKey, IntoRustCallback, RustCallback};
 pub use encode::{
-    Anchored, ArgAbi, BinaryDecode, BinaryEncode, BorrowScope, CallScoped, EncodeTypeDef,
-    FunctionTypeInfo, JsRefEncode, MutSliceArg, ThrowingResult, TypeDef,
+    Anchored, ArgAbi, ArgAbiProject, BinaryDecode, BinaryEncode, BorrowScope, CallScoped,
+    EncodeTypeDef, FunctionTypeInfo, JsRefEncode, MutSliceArg, ThrowingResult, TypeDef,
 };
 pub use ipc::{DecodeError, DecodedData, EncodedData};
 pub use js_ref::JsRef;

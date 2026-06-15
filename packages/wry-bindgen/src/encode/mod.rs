@@ -1,8 +1,8 @@
 //! Semantic encoding extensions for types owned by `wry-bindgen`.
 
 pub use wry_bindgen_core::{
-    Anchored, ArgAbi, BatchableResult, BinaryDecode, BinaryEncode, BorrowScope, CallScoped,
-    EncodeTypeDef, JsRef, JsRefEncode, ThrowingResult, TypeDef,
+    Anchored, ArgAbi, ArgAbiProject, BatchableResult, BinaryDecode, BinaryEncode, BorrowScope,
+    CallScoped, EncodeTypeDef, JsRef, JsRefEncode, ThrowingResult, TypeDef,
 };
 
 // Internal wire marker — used within this module's encoders, not part of the

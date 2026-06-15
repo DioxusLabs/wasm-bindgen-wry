@@ -28,8 +28,9 @@ pub use inventory;
 pub use wry_bindgen_core::Runtime;
 #[doc(hidden)]
 pub use wry_bindgen_core::{
-    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpecRegistration, JsFunction,
-    JsFunctionSpec, JsModuleSpec, JsReexportSpec, LazyCell,
+    JsClassMemberKind, JsClassMemberSpec, JsClassSpec, JsExportSpec, JsExportSpecRegistration,
+    JsFunction, JsFunctionArg, JsFunctionSignature, JsFunctionSpec, JsModuleSpec, JsReexportSpec,
+    LazyCell,
 };
 #[doc(hidden)]
 pub use wry_bindgen_core::{link_to_raw_specifier, register_linked_module};
